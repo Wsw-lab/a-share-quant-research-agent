@@ -1,0 +1,235 @@
+{
+  "ideas": [
+    {
+      "category": "stable_paper_candidate_repair",
+      "hypothesis": "Strict-lagged margin-trade flow quality may add leverage-attention alpha only when paired with cashflow, liquidity, price-stability, and single-name risk guards.",
+      "idea_id": "margin_leverage_flow_quality_guard",
+      "name": "Margin Leverage Flow Quality Guard",
+      "spec": {
+        "name": "Margin Leverage Flow Quality Guard",
+        "description": "PIT margin-trade quality with existing financial quality, liquidity, and price-stability controls.",
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 70,
+          "weighting": "equal",
+          "selection_bucket_field": "amount",
+          "selection_bucket_count": 8,
+          "max_selection_bucket_share": 0.22
+        },
+        "costs": {
+          "commission_rate": 0.0003,
+          "stamp_tax_rate": 0.0005,
+          "slippage_bps": 10
+        },
+        "factors": [
+          {
+            "field": "margin_trade_quality_score",
+            "direction": "desc",
+            "weight": 0.2
+          },
+          {
+            "field": "margin_leverage_flow_score",
+            "direction": "desc",
+            "weight": 0.16
+          },
+          {
+            "field": "cashflow_quality_score",
+            "direction": "desc",
+            "weight": 0.16
+          },
+          {
+            "field": "price_trend_stability_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "liquidity_exposure_guard_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "single_name_risk_guard_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "downside_volatility_score",
+            "direction": "desc",
+            "weight": 0.1
+          }
+        ],
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.016,
+          "position_stop_loss_limit": -0.13,
+          "position_stop_cooldown_days": 35,
+          "risk_overlay": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "category": "stable_paper_candidate_repair",
+      "hypothesis": "Margin deleveraging, balance-crowding, and short-pressure guards may reduce exposure to unstable leverage unwind windows when paired with defensive quality controls.",
+      "idea_id": "margin_deleveraging_defensive_guard",
+      "name": "Margin Deleveraging Defensive Guard",
+      "spec": {
+        "name": "Margin Deleveraging Defensive Guard",
+        "description": "PIT margin deleveraging and crowding guards with downside-volatility and balance-sheet controls.",
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 70,
+          "weighting": "equal",
+          "selection_bucket_field": "amount",
+          "selection_bucket_count": 8,
+          "max_selection_bucket_share": 0.22
+        },
+        "costs": {
+          "commission_rate": 0.0003,
+          "stamp_tax_rate": 0.0005,
+          "slippage_bps": 10
+        },
+        "factors": [
+          {
+            "field": "margin_deleveraging_guard_score",
+            "direction": "desc",
+            "weight": 0.2
+          },
+          {
+            "field": "margin_balance_crowding_guard_score",
+            "direction": "desc",
+            "weight": 0.18
+          },
+          {
+            "field": "margin_short_pressure_guard_score",
+            "direction": "desc",
+            "weight": 0.16
+          },
+          {
+            "field": "downside_volatility_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "balance_sheet_quality_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "liquidity_exposure_guard_score",
+            "direction": "desc",
+            "weight": 0.1
+          },
+          {
+            "field": "price_trend_stability_score",
+            "direction": "desc",
+            "weight": 0.1
+          }
+        ],
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.016,
+          "position_stop_loss_limit": -0.13,
+          "position_stop_cooldown_days": 35,
+          "risk_overlay": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "category": "stable_paper_candidate_repair",
+      "hypothesis": "Positive margin net-buy repair may be more useful when it agrees with growth, cashflow, announcement stability, capital-flow quality, and single-name risk controls.",
+      "idea_id": "margin_net_buy_repair_guard",
+      "name": "Margin Net Buy Repair Guard",
+      "spec": {
+        "name": "Margin Net Buy Repair Guard",
+        "description": "PIT margin net-buy strength blended with quality, announcement stability, and existing capital-flow controls.",
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 70,
+          "weighting": "equal",
+          "selection_bucket_field": "amount",
+          "selection_bucket_count": 8,
+          "max_selection_bucket_share": 0.22
+        },
+        "costs": {
+          "commission_rate": 0.0003,
+          "stamp_tax_rate": 0.0005,
+          "slippage_bps": 10
+        },
+        "factors": [
+          {
+            "field": "margin_net_buy_strength_score",
+            "direction": "desc",
+            "weight": 0.18
+          },
+          {
+            "field": "margin_deleveraging_guard_score",
+            "direction": "desc",
+            "weight": 0.16
+          },
+          {
+            "field": "growth_quality_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "cashflow_quality_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "price_trend_stability_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "margin_trade_quality_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "single_name_risk_guard_score",
+            "direction": "desc",
+            "weight": 0.14
+          }
+        ],
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.016,
+          "position_stop_loss_limit": -0.13,
+          "position_stop_cooldown_days": 35,
+          "risk_overlay": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  ]
+}

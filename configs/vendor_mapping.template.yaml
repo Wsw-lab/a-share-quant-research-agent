@@ -1,0 +1,88 @@
+vendor: example_vendor
+assets:
+  stock_master:
+    path: /path/to/vendor_stock_master.csv
+    format: csv
+    columns:
+      symbol: ts_code
+      stockCode: code
+      exchangeCode: exchange
+      stockName: name
+      stockType: stock_type
+      listDate: list_date
+      delistDate: delist_date
+      listStatus: list_status
+      sharesTotal: total_share
+      sharesFloat: float_share
+  daily_quotes:
+    path: /path/to/vendor_daily_quotes.csv
+    format: csv
+    columns:
+      date: trade_date
+      symbol: ts_code
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+      amount: amount
+      pe: pe_ttm
+      pb: pb
+      turnover: turnover_rate
+  fundamental_factors:
+    path: /path/to/vendor_fundamental_factors.csv
+    format: csv
+    columns:
+      date: publish_date
+      symbol: ts_code
+      roe: roe
+      dividend_yield: dividend_yield
+      pe: pe_ttm
+      pb: pb
+      publishDate: publish_date
+      reportPeriodEnd: report_period_end
+      factorSource: source
+  margin_trades:
+    path: /path/to/vendor_margin_trades.csv
+    format: csv
+    columns:
+      date: trade_date
+      symbol: ts_code
+      stockCode: code
+      stockName: name
+      marginBalance: margin_balance
+      marginBuyAmount: margin_buy_amount
+      marginRepayAmount: margin_repay_amount
+      shortBalanceVolume: short_balance_volume
+      shortSellVolume: short_sell_volume
+      shortBalanceAmount: short_balance_amount
+      marginShortBalance: margin_short_balance
+      marginTradeSource: source
+  index_constituents:
+    path: /path/to/vendor_index_constituents.csv
+    format: csv
+    columns:
+      date: trade_date
+      indexCode: index_code
+      symbol: ts_code
+      weight: weight
+      indexName: index_name
+  industry_classification:
+    path: /path/to/vendor_industry_classification.csv
+    format: csv
+    columns:
+      date: effective_date
+      symbol: ts_code
+      industryLV1Name: industry_level_1
+      industryName: industry_name
+  announcements:
+    path: /path/to/vendor_announcements.csv
+    format: csv
+    columns:
+      date: publish_date
+      symbol: ts_code
+      title: title
+      announcementType: category
+      announcementId: announcement_id
+      url: url
+      announcementSource: source

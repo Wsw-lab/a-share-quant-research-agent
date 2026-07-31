@@ -1,0 +1,347 @@
+{
+  "ideas": [
+    {
+      "category": "quality_value",
+      "hypothesis": "高 ROE、低估值、近 60 日动量强的股票可能同时获得基本面质量和趋势确认。",
+      "idea_id": "quality_value_momentum",
+      "name": "质量价值动量",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 8,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Quality, value, and medium-term momentum blend.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "roe",
+            "weight": 0.35
+          },
+          {
+            "direction": "asc",
+            "field": "pe",
+            "weight": 0.25
+          },
+          {
+            "direction": "desc",
+            "field": "momentum_60d",
+            "weight": 0.4
+          }
+        ],
+        "name": "质量价值动量",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 20,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.08
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 5000000
+        }
+      }
+    },
+    {
+      "category": "defensive_income",
+      "hypothesis": "低波动、高股息、低 PB 的股票在震荡期可能有更好的回撤控制。",
+      "idea_id": "low_vol_dividend",
+      "name": "低波红利",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 8,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Low volatility dividend proxy.",
+        "factors": [
+          {
+            "direction": "asc",
+            "field": "volatility_20d",
+            "weight": 0.4
+          },
+          {
+            "direction": "desc",
+            "field": "dividend_yield",
+            "weight": 0.35
+          },
+          {
+            "direction": "asc",
+            "field": "pb",
+            "weight": 0.25
+          }
+        ],
+        "name": "低波红利",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 25,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.06
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 3000000
+        }
+      }
+    },
+    {
+      "category": "earnings_repair",
+      "hypothesis": "ROE 较高且短期动量改善的股票可能反映盈利修复预期。",
+      "idea_id": "profit_repair",
+      "name": "盈利修复",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 8,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Profitability plus short-term repair momentum.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "roe",
+            "weight": 0.45
+          },
+          {
+            "direction": "desc",
+            "field": "momentum_20d",
+            "weight": 0.35
+          },
+          {
+            "direction": "asc",
+            "field": "pe",
+            "weight": 0.2
+          }
+        ],
+        "name": "盈利修复",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 20,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.08
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 5000000
+        }
+      }
+    },
+    {
+      "category": "event_momentum",
+      "hypothesis": "短期强动量和成交额放大的股票可能代理公告、产业催化或资金关注。",
+      "idea_id": "event_momentum_proxy",
+      "name": "事件动量代理",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 12,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Short-term momentum and liquidity attention proxy.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "momentum_20d",
+            "weight": 0.5
+          },
+          {
+            "direction": "desc",
+            "field": "amount",
+            "weight": 0.3
+          },
+          {
+            "direction": "asc",
+            "field": "volatility_20d",
+            "weight": 0.2
+          }
+        ],
+        "name": "事件动量代理",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 15,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "weekly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.08
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 8000000
+        }
+      }
+    },
+    {
+      "category": "rotation",
+      "hypothesis": "中期趋势和流动性共振可作为行业轮动在个股层面的代理信号。",
+      "idea_id": "industry_rotation_proxy",
+      "name": "行业轮动代理",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 10,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Medium-term momentum and liquidity rotation proxy.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "momentum_60d",
+            "weight": 0.55
+          },
+          {
+            "direction": "desc",
+            "field": "amount",
+            "weight": 0.3
+          },
+          {
+            "direction": "asc",
+            "field": "volatility_20d",
+            "weight": 0.15
+          }
+        ],
+        "name": "行业轮动代理",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 30,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.05
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        }
+      }
+    },
+    {
+      "category": "liquidity_momentum",
+      "hypothesis": "成交额高、趋势强且波动抬升的股票可能处在资金推动阶段，但需要更严执行成本约束。",
+      "idea_id": "liquidity_breakout",
+      "name": "流动性突破",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 15,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Liquidity and trend breakout proxy with higher slippage.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "amount",
+            "weight": 0.35
+          },
+          {
+            "direction": "desc",
+            "field": "momentum_60d",
+            "weight": 0.45
+          },
+          {
+            "direction": "desc",
+            "field": "volatility_20d",
+            "weight": 0.2
+          }
+        ],
+        "name": "流动性突破",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 12,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "weekly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.08
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 15000000
+        }
+      }
+    },
+    {
+      "category": "defensive_quality",
+      "hypothesis": "高股息、低波动、合理估值的组合可作为现金流防御型策略候选。",
+      "idea_id": "defensive_cashflow_proxy",
+      "name": "防御现金流代理",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 8,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Dividend, low volatility, and valuation defensive proxy.",
+        "factors": [
+          {
+            "direction": "desc",
+            "field": "dividend_yield",
+            "weight": 0.45
+          },
+          {
+            "direction": "asc",
+            "field": "volatility_20d",
+            "weight": 0.35
+          },
+          {
+            "direction": "asc",
+            "field": "pe",
+            "weight": 0.2
+          }
+        ],
+        "name": "防御现金流代理",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 30,
+          "weighting": "equal"
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.05
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 3000000
+        }
+      }
+    }
+  ]
+}

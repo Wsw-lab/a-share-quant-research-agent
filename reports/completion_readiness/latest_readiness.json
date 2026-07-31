@@ -1,0 +1,394 @@
+{
+  "completion_level": 3,
+  "compliance_boundary": "This readiness report never enables live trading by itself. Live execution requires a separate approved broker adapter, operator identity, compliance sign-off, and manual kill-switch process.",
+  "generated_at": "2026-07-31T15:22:21",
+  "next_actions": [
+    "Keep rejected ideas in research_only; do not override the decision gate manually.",
+    "Use failed-window diagnostics to add genuinely new PIT alpha or event data before rerunning Strategy Factory.",
+    "Run the daily pipeline through a stable candidate for the required paper observation window.",
+    "Clear or acknowledge critical paper-control alerts only after the underlying risk issue is fixed.",
+    "Run examples/ops_smoke_test.py, refresh health, and ack or resolve open action-required notifications.",
+    "Do not connect a broker adapter until long paper validation, operator identity, compliance approval, and kill-switch drills are complete.",
+    "When those controls exist, write live_readiness/approval.json with explicit approval fields and rerun this check in --strict live_ready mode."
+  ],
+  "readiness_id": "completion_20260731_152221_011",
+  "stages": [
+    {
+      "checks": [
+        {
+          "detail": "Core research modules must exist.",
+          "name": "source_modules",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "At least one research run must be registered.",
+          "name": "registry",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Run registry CSV must be available for review.",
+          "name": "archived_outputs",
+          "passed": true,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 0,
+      "metrics": {
+        "latest_run_id": "factory_20260731_150855_557",
+        "registry_rows": 43
+      },
+      "name": "Research MVP",
+      "next_actions": [],
+      "passed": true,
+      "stage": "research_mvp",
+      "status": "pass",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "production_data_readiness.json must exist.",
+          "name": "readiness_file",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Production data readiness must be true.",
+          "name": "production_ready",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Production validation must have zero hard failures.",
+          "name": "hard_failures",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Daily quote rows 3894242; required >= 1000000.",
+          "name": "quote_rows",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Canonical required assets must be ready.",
+          "name": "required_assets",
+          "passed": true,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 0,
+      "metrics": {
+        "eligible_symbol_coverage_rate": 1.0,
+        "quote_rows": 3894242,
+        "roe_symbol_coverage_rate": 1.0,
+        "status": "production_ready"
+      },
+      "name": "Production Data",
+      "next_actions": [],
+      "passed": true,
+      "stage": "production_data",
+      "status": "pass",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "Strategy Factory latest board must exist.",
+          "name": "board_file",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Strategy Factory must evaluate at least one idea.",
+          "name": "records",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Strategy Factory errors: 0.",
+          "name": "errors",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Latest factory run should use canonical historical production assets.",
+          "name": "production_source",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Unresolved skipped templates: 0.",
+          "name": "no_unresolved_skips",
+          "passed": true,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 0,
+      "metrics": {
+        "factory_id": "factory_batch_20260731_150745_106",
+        "generated_at": "2026-07-31T15:09:56",
+        "latest_board_skipped": 0,
+        "latest_board_source": "historical_asset:daily_quotes+historical_stock_master_csv+full_historical_stock_master+pit_stock_master_filter+fundamental_factor_asset+pit_fundamental_factors+pit_liquidity_universe+production_panel_cache_hit+benchmark_market_regime_features",
+        "latest_registry_run_id": "factory_20260731_150855_557",
+        "paper_candidates": 0,
+        "registry_production_records": 43,
+        "rejected": 0,
+        "retirement_screen": false,
+        "total": 2
+      },
+      "name": "Strategy Factory",
+      "next_actions": [],
+      "passed": true,
+      "stage": "strategy_factory",
+      "status": "pass",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "Run registry must be available.",
+          "name": "registry",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Production paper candidates 0; required >= 3.",
+          "name": "candidate_count",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Distinct candidate dates 0; required >= 3.",
+          "name": "candidate_days",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Latest candidate age n/a days; max 30.",
+          "name": "candidate_freshness",
+          "passed": false,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 3,
+      "metrics": {
+        "candidate_days": 0,
+        "candidate_runs": 0,
+        "latest_candidate_age_days": null,
+        "latest_candidate_run_id": ""
+      },
+      "name": "Stable Paper Candidate",
+      "next_actions": [
+        "Keep rejected ideas in research_only; do not override the decision gate manually.",
+        "Use failed-window diagnostics to add genuinely new PIT alpha or event data before rerunning Strategy Factory."
+      ],
+      "passed": false,
+      "stage": "paper_candidate",
+      "status": "fail",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "Stable paper candidate stage must pass first.",
+          "name": "candidate_gate",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Risk-passing paper controls 0; required >= 20.",
+          "name": "risk_pass_controls",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Paper observation days 0; required >= 30.",
+          "name": "calendar_days",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Simulated trade days 0; required >= 5.",
+          "name": "trade_days",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Latest paper risk gate must pass.",
+          "name": "latest_risk_gate",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Open critical paper alerts: 0.",
+          "name": "critical_alerts",
+          "passed": true,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 5,
+      "metrics": {
+        "latest_control_id": "",
+        "latest_control_status": "",
+        "open_critical_alerts": 0,
+        "paper_observation_days": 0,
+        "risk_pass_controls": 0,
+        "trade_days": 0
+      },
+      "name": "Long Paper Validation",
+      "next_actions": [
+        "Run the daily pipeline through a stable candidate for the required paper observation window.",
+        "Clear or acknowledge critical paper-control alerts only after the underlying risk issue is fixed."
+      ],
+      "passed": false,
+      "stage": "paper_validation",
+      "status": "fail",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "health_status.json must exist.",
+          "name": "health_file",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Health state must be ok.",
+          "name": "health_state",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Data freshness gate must pass.",
+          "name": "freshness",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Failed jobs must be zero.",
+          "name": "failed_jobs",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Interrupted jobs must be zero.",
+          "name": "interrupted_jobs",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "ops_snapshot.json must exist.",
+          "name": "ops_snapshot",
+          "passed": true,
+          "severity": "hard"
+        },
+        {
+          "detail": "Latest pipeline status is n/a.",
+          "name": "latest_pipeline",
+          "passed": true,
+          "severity": "warn"
+        },
+        {
+          "detail": "Open action-required notifications: 0.",
+          "name": "open_action_notifications",
+          "passed": true,
+          "severity": "warn"
+        }
+      ],
+      "hard_blockers": 2,
+      "metrics": {
+        "action_required_open": 0,
+        "failed_jobs": 0,
+        "freshness_verdict": "stale",
+        "health_state": "stale_data",
+        "interrupted_jobs": 0,
+        "open_notifications": 0
+      },
+      "name": "Operations Control",
+      "next_actions": [
+        "Run examples/ops_smoke_test.py, refresh health, and ack or resolve open action-required notifications."
+      ],
+      "passed": false,
+      "stage": "ops",
+      "status": "fail",
+      "warn_blockers": 0
+    },
+    {
+      "checks": [
+        {
+          "detail": "Research, data, candidate, paper, and ops stages must all pass.",
+          "name": "all_prior_stages",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "live_readiness/approval.json must exist for live readiness.",
+          "name": "approval_file",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Compliance approval must be explicit.",
+          "name": "compliance_approved",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "Initial live mode must be manual-order-only.",
+          "name": "manual_order_only",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "A tested kill switch is required.",
+          "name": "kill_switch",
+          "passed": false,
+          "severity": "hard"
+        },
+        {
+          "detail": "A named broker adapter must be approved.",
+          "name": "broker_adapter",
+          "passed": false,
+          "severity": "hard"
+        }
+      ],
+      "hard_blockers": 6,
+      "metrics": {
+        "approval_path": "reports/live_readiness/approval.json",
+        "approved_by": "",
+        "broker_adapter": "",
+        "max_capital": ""
+      },
+      "name": "Live Readiness",
+      "next_actions": [
+        "Do not connect a broker adapter until long paper validation, operator identity, compliance approval, and kill-switch drills are complete.",
+        "When those controls exist, write live_readiness/approval.json with explicit approval fields and rerun this check in --strict live_ready mode."
+      ],
+      "passed": false,
+      "stage": "live_readiness",
+      "status": "blocked_by_compliance_boundary",
+      "warn_blockers": 0
+    }
+  ],
+  "status": "production_research_ready_no_stable_candidate",
+  "summary": {
+    "first_failed_stage": "paper_candidate",
+    "hard_blockers": 16,
+    "passed_stages": 3,
+    "total_stages": 7,
+    "warn_blockers": 0
+  },
+  "thresholds": {
+    "max_candidate_age_days": 30,
+    "min_candidate_days": 3,
+    "min_candidate_runs": 3,
+    "min_paper_calendar_days": 30,
+    "min_paper_control_runs": 20,
+    "min_paper_trade_days": 5,
+    "min_quote_rows": 1000000
+  }
+}

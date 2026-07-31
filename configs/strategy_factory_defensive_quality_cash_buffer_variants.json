@@ -1,0 +1,67 @@
+{
+  "ideas": [
+    {
+      "idea_id": "defensive_quality_cash_buffer_045",
+      "name": "Defensive Quality Cash Buffer 045",
+      "category": "defensive_quality_cash_buffer",
+      "hypothesis": "A lower-risk defensive quality sleeve may let cash yield absorb weak OOS windows while retaining enough factor exposure to validate the alpha signal.",
+      "spec": {
+        "name": "Defensive Quality Cash Buffer 045",
+        "description": "Defensive quality sleeve with substantial cash buffer and fast fuse.",
+        "factors": [
+          {"field": "dividend_yield_capped", "direction": "desc", "weight": 0.28},
+          {"field": "roe_sane", "direction": "desc", "weight": 0.26},
+          {"field": "volatility_60d", "direction": "asc", "weight": 0.26},
+          {"field": "valuation_sanity_score", "direction": "desc", "weight": 0.20}
+        ],
+        "portfolio": {"initial_cash": 1000000, "cash_yield_annualized": 0.018, "max_positions": 80, "max_selection_bucket_share": 0.14, "selection_bucket_count": 8, "selection_bucket_field": "amount", "weighting": "equal"},
+        "rebalance": {"frequency": "monthly"},
+        "risk": {"benchmark": "CSI300", "max_single_position_weight": 0.008, "risk_overlay": {"enabled": true, "risk_on_weight": 0.45, "risk_off_weight": 0.14, "crisis_weight": 0.02, "risk_off_trigger_count": 2, "crisis_trigger_count": 3, "use_trend": true, "trend_field": "benchmark_trend_200d_lag1", "use_momentum": true, "momentum_field": "benchmark_momentum_60d_lag1", "momentum_threshold": 0.0, "use_recovery": true, "recovery_field": "benchmark_momentum_20d_lag1", "recovery_threshold": 0.0, "recovery_weight": 0.30, "recovery_requires_trend_bad": false, "recovery_allows_drawdown_lift": true, "portfolio_drawdown_limit": -0.045, "drawdown_weight": 0.06, "use_alpha_health_filter": true, "alpha_health_field": "market_alpha_health_score_lag1", "alpha_health_min": 0.42, "alpha_health_warning": 0.54, "alpha_health_off_weight": 0.02, "alpha_health_weak_weight": 0.10, "use_market_breadth_filter": true, "market_breadth_field": "market_breadth_60d_lag1", "market_breadth_min": 0.36, "market_breadth_warning": 0.48, "market_breadth_off_weight": 0.02, "market_breadth_weak_weight": 0.10, "use_window_fuse": true, "fuse_drawdown_limit": -0.010, "fuse_rolling_return_limit": -0.008, "fuse_rolling_days": 8, "fuse_consecutive_loss_days": 2, "fuse_weight": 0.00, "fuse_cooldown_days": 4, "fuse_reentry_weight": 0.24, "fuse_reentry_initial_weight": 0.04, "fuse_reentry_step_weight": 0.05, "fuse_reentry_step_days": 4, "fuse_reentry_days": 10, "fuse_reentry_confirmation_days": 1, "fuse_reentry_requires_drawdown_repair": false, "fuse_reentry_rolling_return_floor": -0.006, "fuse_reentry_requires_market_recovery": true, "fuse_reentry_field": "benchmark_momentum_20d_lag1", "fuse_reentry_threshold": 0.0, "fuse_rebalance_buffer": 0.005, "fuse_reentry_refuse_drawdown_buffer": 0.012, "fuse_reentry_refuse_rolling_return_limit": -0.012}},
+        "costs": {"commission_rate": 0.0003, "stamp_tax_rate": 0.0005, "slippage_bps": 10},
+        "universe": {"exclude_st": true, "exclude_suspended": true, "min_amount": 10000000}
+      }
+    },
+    {
+      "idea_id": "defensive_quality_cash_buffer_055",
+      "name": "Defensive Quality Cash Buffer 055",
+      "category": "defensive_quality_cash_buffer",
+      "hypothesis": "A 55% risk-on sleeve may improve return versus the lower-risk sleeve while still using cash and fuse controls to stabilize OOS windows.",
+      "spec": {
+        "name": "Defensive Quality Cash Buffer 055",
+        "description": "Defensive quality sleeve with moderate cash buffer and fast fuse.",
+        "factors": [
+          {"field": "dividend_yield_capped", "direction": "desc", "weight": 0.28},
+          {"field": "roe_sane", "direction": "desc", "weight": 0.26},
+          {"field": "volatility_60d", "direction": "asc", "weight": 0.26},
+          {"field": "valuation_sanity_score", "direction": "desc", "weight": 0.20}
+        ],
+        "portfolio": {"initial_cash": 1000000, "cash_yield_annualized": 0.018, "max_positions": 80, "max_selection_bucket_share": 0.14, "selection_bucket_count": 8, "selection_bucket_field": "amount", "weighting": "equal"},
+        "rebalance": {"frequency": "monthly"},
+        "risk": {"benchmark": "CSI300", "max_single_position_weight": 0.009, "risk_overlay": {"enabled": true, "risk_on_weight": 0.55, "risk_off_weight": 0.18, "crisis_weight": 0.03, "risk_off_trigger_count": 2, "crisis_trigger_count": 3, "use_trend": true, "trend_field": "benchmark_trend_200d_lag1", "use_momentum": true, "momentum_field": "benchmark_momentum_60d_lag1", "momentum_threshold": 0.0, "use_recovery": true, "recovery_field": "benchmark_momentum_20d_lag1", "recovery_threshold": 0.0, "recovery_weight": 0.36, "recovery_requires_trend_bad": false, "recovery_allows_drawdown_lift": true, "portfolio_drawdown_limit": -0.055, "drawdown_weight": 0.08, "use_alpha_health_filter": true, "alpha_health_field": "market_alpha_health_score_lag1", "alpha_health_min": 0.40, "alpha_health_warning": 0.52, "alpha_health_off_weight": 0.03, "alpha_health_weak_weight": 0.12, "use_market_breadth_filter": true, "market_breadth_field": "market_breadth_60d_lag1", "market_breadth_min": 0.34, "market_breadth_warning": 0.46, "market_breadth_off_weight": 0.03, "market_breadth_weak_weight": 0.12, "use_window_fuse": true, "fuse_drawdown_limit": -0.014, "fuse_rolling_return_limit": -0.010, "fuse_rolling_days": 8, "fuse_consecutive_loss_days": 2, "fuse_weight": 0.01, "fuse_cooldown_days": 4, "fuse_reentry_weight": 0.30, "fuse_reentry_initial_weight": 0.06, "fuse_reentry_step_weight": 0.06, "fuse_reentry_step_days": 4, "fuse_reentry_days": 10, "fuse_reentry_confirmation_days": 1, "fuse_reentry_requires_drawdown_repair": false, "fuse_reentry_rolling_return_floor": -0.008, "fuse_reentry_requires_market_recovery": true, "fuse_reentry_field": "benchmark_momentum_20d_lag1", "fuse_reentry_threshold": 0.0, "fuse_rebalance_buffer": 0.005, "fuse_reentry_refuse_drawdown_buffer": 0.014, "fuse_reentry_refuse_rolling_return_limit": -0.014}},
+        "costs": {"commission_rate": 0.0003, "stamp_tax_rate": 0.0005, "slippage_bps": 10},
+        "universe": {"exclude_st": true, "exclude_suspended": true, "min_amount": 10000000}
+      }
+    },
+    {
+      "idea_id": "defensive_quality_cash_buffer_065",
+      "name": "Defensive Quality Cash Buffer 065",
+      "category": "defensive_quality_cash_buffer",
+      "hypothesis": "A 65% risk-on sleeve tests the upper exposure bound that may preserve OOS stability after the fast fuse is added.",
+      "spec": {
+        "name": "Defensive Quality Cash Buffer 065",
+        "description": "Defensive quality sleeve with higher exposure and fast fuse.",
+        "factors": [
+          {"field": "dividend_yield_capped", "direction": "desc", "weight": 0.28},
+          {"field": "roe_sane", "direction": "desc", "weight": 0.26},
+          {"field": "volatility_60d", "direction": "asc", "weight": 0.26},
+          {"field": "valuation_sanity_score", "direction": "desc", "weight": 0.20}
+        ],
+        "portfolio": {"initial_cash": 1000000, "cash_yield_annualized": 0.018, "max_positions": 80, "max_selection_bucket_share": 0.14, "selection_bucket_count": 8, "selection_bucket_field": "amount", "weighting": "equal"},
+        "rebalance": {"frequency": "monthly"},
+        "risk": {"benchmark": "CSI300", "max_single_position_weight": 0.010, "risk_overlay": {"enabled": true, "risk_on_weight": 0.65, "risk_off_weight": 0.22, "crisis_weight": 0.04, "risk_off_trigger_count": 2, "crisis_trigger_count": 3, "use_trend": true, "trend_field": "benchmark_trend_200d_lag1", "use_momentum": true, "momentum_field": "benchmark_momentum_60d_lag1", "momentum_threshold": 0.0, "use_recovery": true, "recovery_field": "benchmark_momentum_20d_lag1", "recovery_threshold": 0.0, "recovery_weight": 0.42, "recovery_requires_trend_bad": false, "recovery_allows_drawdown_lift": true, "portfolio_drawdown_limit": -0.065, "drawdown_weight": 0.10, "use_alpha_health_filter": true, "alpha_health_field": "market_alpha_health_score_lag1", "alpha_health_min": 0.38, "alpha_health_warning": 0.50, "alpha_health_off_weight": 0.04, "alpha_health_weak_weight": 0.16, "use_market_breadth_filter": true, "market_breadth_field": "market_breadth_60d_lag1", "market_breadth_min": 0.32, "market_breadth_warning": 0.44, "market_breadth_off_weight": 0.04, "market_breadth_weak_weight": 0.16, "use_window_fuse": true, "fuse_drawdown_limit": -0.018, "fuse_rolling_return_limit": -0.014, "fuse_rolling_days": 10, "fuse_consecutive_loss_days": 2, "fuse_weight": 0.02, "fuse_cooldown_days": 4, "fuse_reentry_weight": 0.36, "fuse_reentry_initial_weight": 0.08, "fuse_reentry_step_weight": 0.07, "fuse_reentry_step_days": 4, "fuse_reentry_days": 10, "fuse_reentry_confirmation_days": 1, "fuse_reentry_requires_drawdown_repair": false, "fuse_reentry_rolling_return_floor": -0.010, "fuse_reentry_requires_market_recovery": true, "fuse_reentry_field": "benchmark_momentum_20d_lag1", "fuse_reentry_threshold": 0.0, "fuse_rebalance_buffer": 0.008, "fuse_reentry_refuse_drawdown_buffer": 0.016, "fuse_reentry_refuse_rolling_return_limit": -0.018}},
+        "costs": {"commission_rate": 0.0003, "stamp_tax_rate": 0.0005, "slippage_bps": 10},
+        "universe": {"exclude_st": true, "exclude_suspended": true, "min_amount": 10000000}
+      }
+    }
+  ]
+}

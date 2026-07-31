@@ -1,0 +1,260 @@
+{
+  "ideas": [
+    {
+      "category": "stable_paper_candidate_repair",
+      "hypothesis": "Strict-lagged main and large-order fund-flow persistence may add behavior alpha that is orthogonal to the already supportive cashflow, dividend-event, liquidity, and price-stability guards.",
+      "idea_id": "capital_flow_quality_recovery_guard",
+      "name": "Capital Flow Quality Recovery Guard",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 10,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Production candidate template using PIT daily fund-flow quality with existing financial quality, liquidity, industry, and price-stability controls.",
+        "factors": [
+          {
+            "field": "capital_flow_quality_score",
+            "direction": "desc",
+            "weight": 0.2
+          },
+          {
+            "field": "main_flow_strength_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "flow_persistence_20d_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "cashflow_quality_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "dividend_event_quality_score",
+            "direction": "desc",
+            "weight": 0.1
+          },
+          {
+            "field": "liquidity_exposure_guard_score",
+            "direction": "desc",
+            "weight": 0.13
+          },
+          {
+            "field": "single_name_risk_guard_score",
+            "direction": "desc",
+            "weight": 0.1
+          },
+          {
+            "field": "price_trend_stability_score",
+            "direction": "desc",
+            "weight": 0.09
+          }
+        ],
+        "name": "Capital Flow Quality Recovery Guard",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 65,
+          "weighting": "equal",
+          "selection_bucket_field": "amount",
+          "selection_bucket_count": 8,
+          "max_selection_bucket_share": 0.24,
+          "selection_group_field": "industryLV1Name",
+          "max_selection_group_share": 0.16
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.018,
+          "risk_overlay": {
+            "enabled": true,
+            "risk_on_weight": 1.0,
+            "risk_off_weight": 0.64,
+            "crisis_weight": 0.3,
+            "risk_off_trigger_count": 2,
+            "crisis_trigger_count": 3,
+            "use_trend": true,
+            "trend_field": "benchmark_trend_200d_lag1",
+            "use_momentum": true,
+            "momentum_field": "benchmark_momentum_60d_lag1",
+            "momentum_threshold": 0.0,
+            "use_volatility": false,
+            "use_recovery": true,
+            "recovery_field": "benchmark_momentum_20d_lag1",
+            "recovery_threshold": 0.0,
+            "recovery_weight": 0.92,
+            "recovery_requires_trend_bad": false,
+            "recovery_allows_drawdown_lift": true,
+            "drawdown_recovery_weight": 0.62,
+            "portfolio_drawdown_limit": -0.13,
+            "drawdown_weight": 0.4,
+            "use_window_fuse": true,
+            "fuse_reentry_requires_market_recovery": true,
+            "fuse_reentry_field": "benchmark_momentum_20d_lag1",
+            "fuse_reentry_threshold": 0.0,
+            "fuse_rebalance_buffer": 0.02,
+            "fuse_drawdown_limit": -0.08,
+            "fuse_rolling_return_limit": -0.05,
+            "fuse_rolling_days": 15,
+            "fuse_consecutive_loss_days": 5,
+            "fuse_weight": 0.25,
+            "fuse_cooldown_days": 5,
+            "fuse_reentry_weight": 0.72,
+            "fuse_reentry_days": 14,
+            "fuse_reentry_drawdown_repair": 0.004,
+            "fuse_reentry_rolling_return_floor": -0.02,
+            "fuse_max_active_days": 28,
+            "fuse_reentry_initial_weight": 0.36,
+            "fuse_reentry_step_weight": 0.09,
+            "fuse_reentry_step_days": 4,
+            "fuse_reentry_confirmation_days": 2,
+            "fuse_reentry_requires_drawdown_repair": false,
+            "fuse_reentry_requires_volatility_calm": false,
+            "fuse_reentry_volatility_field": "benchmark_volatility_60d_lag1",
+            "fuse_reentry_volatility_threshold_field": "benchmark_volatility_60d_q80_lag1",
+            "fuse_reentry_refuse_drawdown_buffer": 0.03,
+            "fuse_reentry_refuse_rolling_return_limit": -0.045
+          }
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        }
+      }
+    },
+    {
+      "category": "stable_paper_candidate_repair",
+      "hypothesis": "Dragon-tiger attention can be useful when paired with a cooldown guard, but should be treated as event diagnostics until full historical event coverage is available.",
+      "idea_id": "capital_flow_dragon_tiger_event_guard",
+      "name": "Capital Flow Dragon Tiger Event Guard",
+      "spec": {
+        "costs": {
+          "commission_rate": 0.0003,
+          "slippage_bps": 10,
+          "stamp_tax_rate": 0.0005
+        },
+        "description": "Future event-alpha template requiring both strict-lagged daily fund flows and dragon-tiger detail events.",
+        "factors": [
+          {
+            "field": "capital_flow_quality_score",
+            "direction": "desc",
+            "weight": 0.18
+          },
+          {
+            "field": "flow_reversal_guard_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "dragon_tiger_event_score",
+            "direction": "desc",
+            "weight": 0.1
+          },
+          {
+            "field": "dragon_tiger_cooldown_score",
+            "direction": "desc",
+            "weight": 0.12
+          },
+          {
+            "field": "cashflow_quality_score",
+            "direction": "desc",
+            "weight": 0.14
+          },
+          {
+            "field": "liquidity_exposure_guard_score",
+            "direction": "desc",
+            "weight": 0.13
+          },
+          {
+            "field": "single_name_risk_guard_score",
+            "direction": "desc",
+            "weight": 0.11
+          },
+          {
+            "field": "price_trend_stability_score",
+            "direction": "desc",
+            "weight": 0.1
+          }
+        ],
+        "name": "Capital Flow Dragon Tiger Event Guard",
+        "portfolio": {
+          "initial_cash": 1000000,
+          "max_positions": 65,
+          "weighting": "equal",
+          "selection_bucket_field": "amount",
+          "selection_bucket_count": 8,
+          "max_selection_bucket_share": 0.24,
+          "selection_group_field": "industryLV1Name",
+          "max_selection_group_share": 0.16
+        },
+        "rebalance": {
+          "frequency": "monthly"
+        },
+        "risk": {
+          "benchmark": "CSI300",
+          "max_single_position_weight": 0.018,
+          "risk_overlay": {
+            "enabled": true,
+            "risk_on_weight": 1.0,
+            "risk_off_weight": 0.64,
+            "crisis_weight": 0.3,
+            "risk_off_trigger_count": 2,
+            "crisis_trigger_count": 3,
+            "use_trend": true,
+            "trend_field": "benchmark_trend_200d_lag1",
+            "use_momentum": true,
+            "momentum_field": "benchmark_momentum_60d_lag1",
+            "momentum_threshold": 0.0,
+            "use_volatility": false,
+            "use_recovery": true,
+            "recovery_field": "benchmark_momentum_20d_lag1",
+            "recovery_threshold": 0.0,
+            "recovery_weight": 0.92,
+            "recovery_requires_trend_bad": false,
+            "recovery_allows_drawdown_lift": true,
+            "drawdown_recovery_weight": 0.62,
+            "portfolio_drawdown_limit": -0.13,
+            "drawdown_weight": 0.4,
+            "use_window_fuse": true,
+            "fuse_reentry_requires_market_recovery": true,
+            "fuse_reentry_field": "benchmark_momentum_20d_lag1",
+            "fuse_reentry_threshold": 0.0,
+            "fuse_rebalance_buffer": 0.02,
+            "fuse_drawdown_limit": -0.08,
+            "fuse_rolling_return_limit": -0.05,
+            "fuse_rolling_days": 15,
+            "fuse_consecutive_loss_days": 5,
+            "fuse_weight": 0.25,
+            "fuse_cooldown_days": 5,
+            "fuse_reentry_weight": 0.72,
+            "fuse_reentry_days": 14,
+            "fuse_reentry_drawdown_repair": 0.004,
+            "fuse_reentry_rolling_return_floor": -0.02,
+            "fuse_max_active_days": 28,
+            "fuse_reentry_initial_weight": 0.36,
+            "fuse_reentry_step_weight": 0.09,
+            "fuse_reentry_step_days": 4,
+            "fuse_reentry_confirmation_days": 2,
+            "fuse_reentry_requires_drawdown_repair": false,
+            "fuse_reentry_requires_volatility_calm": false,
+            "fuse_reentry_volatility_field": "benchmark_volatility_60d_lag1",
+            "fuse_reentry_volatility_threshold_field": "benchmark_volatility_60d_q80_lag1",
+            "fuse_reentry_refuse_drawdown_buffer": 0.03,
+            "fuse_reentry_refuse_rolling_return_limit": -0.045
+          }
+        },
+        "universe": {
+          "exclude_st": true,
+          "exclude_suspended": true,
+          "min_amount": 10000000
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+date,symbol,stockCode,stockName,abnormalType,abnormalTypeName,deviationPct,volume,amount,buyAmount,sellAmount,totalAmount,dragonTigerSource
+2026-07-23,000001.SZ,000001,Example Finance,price_deviation,Daily price deviation,8.5,20000000,260000000,150000000,110000000,260000000,investoday:stock/dt-details

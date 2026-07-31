@@ -1,0 +1,106 @@
+{
+  "best_strategy": {
+    "annualized_return": 0.0197841579762942,
+    "blockers": "walk_forward",
+    "factor_supportive_count": 10.0,
+    "gate_status": "research_only",
+    "idea_id": "defensive_quality_cash_buffer_055",
+    "lifecycle_status": "testing",
+    "max_drawdown": -0.0236024798450077,
+    "name": "Defensive Quality Cash Buffer 055",
+    "recommendation": "refine",
+    "report_path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/reports/strategy_factory/runs/factory_batch_20260731_111435_944/defensive_quality_cash_buffer_055/report.md",
+    "run_id": "factory_20260731_111521_821",
+    "score": 66.27,
+    "trade_count": 950.0,
+    "walk_forward_positive_rate": 0.8333333333333334
+  },
+  "boundaries": [
+    "This report is a GitHub/graduate-application readiness check, not a trading approval.",
+    "The original live/paper readiness gate remains stricter and currently blocks on stable paper-candidate validation."
+  ],
+  "checks": [
+    {
+      "detail": "Core research, factory, and readiness modules exist.",
+      "name": "research_architecture",
+      "passed": true,
+      "points": 15
+    },
+    {
+      "detail": "Canonical production assets validate with zero hard failures.",
+      "name": "production_data_bundle",
+      "passed": true,
+      "points": 18
+    },
+    {
+      "detail": "Strategy factory registry contains 38 evaluated ideas.",
+      "name": "strategy_factory_history",
+      "passed": true,
+      "points": 14
+    },
+    {
+      "detail": "Best production strategy includes walk-forward and factor IC diagnostics.",
+      "name": "walk_forward_and_ic",
+      "passed": true,
+      "points": 16
+    },
+    {
+      "detail": "Risk overlays, cash buffer, window fuse, and overheated-reversal guard are implemented and testable.",
+      "name": "risk_controls",
+      "passed": true,
+      "points": 10
+    },
+    {
+      "detail": "Readiness report explicitly separates research/showcase status from live or paper-candidate status.",
+      "name": "honest_boundary",
+      "passed": true,
+      "points": 10
+    },
+    {
+      "detail": "Markdown/JSON artifacts are available for review.",
+      "name": "reproducible_artifacts",
+      "passed": true,
+      "points": 10
+    },
+    {
+      "detail": "Project includes README and portfolio-facing documentation.",
+      "name": "github_documentation",
+      "passed": true,
+      "points": 7
+    }
+  ],
+  "completion_level": 3,
+  "completion_status": "production_research_ready_no_stable_candidate",
+  "generated_at": "2026-07-31T15:25:13+08:00",
+  "latest_factory_summary": {
+    "errors": 0,
+    "paper_candidates": 0,
+    "rejected": 0,
+    "skipped": 0,
+    "status_counts": {
+      "testing": 2
+    },
+    "testing": 2,
+    "total": 2,
+    "watch": 0
+  },
+  "max_score": 100,
+  "production_summary": {
+    "eligible_symbol_coverage_rate": 1.0,
+    "hard_failed": 0,
+    "production_data_ready": true,
+    "quote_rows": 3894242
+  },
+  "recommended_github_files": [
+    "README.md",
+    "PROJECT_PORTFOLIO.md",
+    "reports/portfolio_readiness/latest_portfolio_readiness.md",
+    "reports/completion_readiness/latest_readiness.md",
+    "reports/strategy_factory/latest_board.md",
+    "data_assets/README.md"
+  ],
+  "schema_version": 1,
+  "score": 100,
+  "showcase_ready": true,
+  "status": "portfolio_ready_not_live_ready"
+}

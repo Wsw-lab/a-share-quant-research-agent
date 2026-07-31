@@ -1,0 +1,54 @@
+{
+  "ideas": [
+    {
+      "idea_id": "defensive_margin_crowding_avoid_052",
+      "name": "Defensive Margin Crowding Avoid 052",
+      "category": "margin_defensive_cash_buffer",
+      "hypothesis": "Margin-trade fields were adverse when chased, so a defensive sleeve should use them as low-weight crowding avoidance signals while preserving cash-buffer risk controls.",
+      "spec": {
+        "name": "Defensive Margin Crowding Avoid 052",
+        "description": "Defensive quality cash-buffer sleeve with inverse margin crowding filters.",
+        "factors": [
+          {"field": "dividend_yield_capped", "direction": "desc", "weight": 0.22},
+          {"field": "roe_sane", "direction": "desc", "weight": 0.20},
+          {"field": "volatility_60d", "direction": "asc", "weight": 0.18},
+          {"field": "valuation_sanity_score", "direction": "desc", "weight": 0.14},
+          {"field": "single_name_risk_guard_score", "direction": "desc", "weight": 0.10},
+          {"field": "margin_trade_quality_score", "direction": "asc", "weight": 0.07},
+          {"field": "margin_balance_crowding_guard_score", "direction": "asc", "weight": 0.05},
+          {"field": "margin_net_buy_strength_score", "direction": "asc", "weight": 0.04}
+        ],
+        "portfolio": {"initial_cash": 1000000, "cash_yield_annualized": 0.018, "max_positions": 80, "max_selection_bucket_share": 0.14, "selection_bucket_count": 8, "selection_bucket_field": "amount", "weighting": "equal"},
+        "rebalance": {"frequency": "monthly"},
+        "risk": {"benchmark": "CSI300", "max_single_position_weight": 0.0085, "risk_overlay": {"enabled": true, "risk_on_weight": 0.52, "risk_off_weight": 0.16, "crisis_weight": 0.02, "risk_off_trigger_count": 2, "crisis_trigger_count": 3, "use_trend": true, "trend_field": "benchmark_trend_200d_lag1", "use_momentum": true, "momentum_field": "benchmark_momentum_60d_lag1", "momentum_threshold": 0.0, "use_recovery": true, "recovery_field": "benchmark_momentum_20d_lag1", "recovery_threshold": 0.0, "recovery_weight": 0.32, "recovery_requires_trend_bad": false, "recovery_allows_drawdown_lift": true, "portfolio_drawdown_limit": -0.050, "drawdown_weight": 0.07, "use_alpha_health_filter": true, "alpha_health_field": "market_alpha_health_score_lag1", "alpha_health_min": 0.41, "alpha_health_warning": 0.53, "alpha_health_off_weight": 0.02, "alpha_health_weak_weight": 0.10, "use_market_breadth_filter": true, "market_breadth_field": "market_breadth_60d_lag1", "market_breadth_min": 0.35, "market_breadth_warning": 0.47, "market_breadth_off_weight": 0.02, "market_breadth_weak_weight": 0.10, "use_window_fuse": true, "fuse_drawdown_limit": -0.010, "fuse_rolling_return_limit": -0.007, "fuse_rolling_days": 8, "fuse_consecutive_loss_days": 2, "fuse_weight": 0.00, "fuse_cooldown_days": 5, "fuse_reentry_weight": 0.24, "fuse_reentry_initial_weight": 0.04, "fuse_reentry_step_weight": 0.05, "fuse_reentry_step_days": 4, "fuse_reentry_days": 12, "fuse_reentry_confirmation_days": 1, "fuse_reentry_requires_drawdown_repair": false, "fuse_reentry_rolling_return_floor": -0.004, "fuse_reentry_requires_market_recovery": true, "fuse_reentry_field": "benchmark_momentum_20d_lag1", "fuse_reentry_threshold": 0.0, "fuse_rebalance_buffer": 0.004, "fuse_reentry_refuse_drawdown_buffer": 0.012, "fuse_reentry_refuse_rolling_return_limit": -0.010}},
+        "costs": {"commission_rate": 0.0003, "stamp_tax_rate": 0.0005, "slippage_bps": 10},
+        "universe": {"exclude_st": true, "exclude_suspended": true, "min_amount": 10000000}
+      }
+    },
+    {
+      "idea_id": "defensive_margin_crowding_avoid_055",
+      "name": "Defensive Margin Crowding Avoid 055",
+      "category": "margin_defensive_cash_buffer",
+      "hypothesis": "A slightly higher 55% sleeve may keep enough return while inverse margin-crowding signals reduce the loss windows that blocked the prior cash-buffer candidate.",
+      "spec": {
+        "name": "Defensive Margin Crowding Avoid 055",
+        "description": "Defensive quality cash-buffer sleeve with inverse margin crowding filters.",
+        "factors": [
+          {"field": "dividend_yield_capped", "direction": "desc", "weight": 0.22},
+          {"field": "roe_sane", "direction": "desc", "weight": 0.20},
+          {"field": "volatility_60d", "direction": "asc", "weight": 0.18},
+          {"field": "valuation_sanity_score", "direction": "desc", "weight": 0.14},
+          {"field": "single_name_risk_guard_score", "direction": "desc", "weight": 0.10},
+          {"field": "margin_trade_quality_score", "direction": "asc", "weight": 0.07},
+          {"field": "margin_balance_crowding_guard_score", "direction": "asc", "weight": 0.05},
+          {"field": "margin_net_buy_strength_score", "direction": "asc", "weight": 0.04}
+        ],
+        "portfolio": {"initial_cash": 1000000, "cash_yield_annualized": 0.018, "max_positions": 80, "max_selection_bucket_share": 0.14, "selection_bucket_count": 8, "selection_bucket_field": "amount", "weighting": "equal"},
+        "rebalance": {"frequency": "monthly"},
+        "risk": {"benchmark": "CSI300", "max_single_position_weight": 0.009, "risk_overlay": {"enabled": true, "risk_on_weight": 0.55, "risk_off_weight": 0.17, "crisis_weight": 0.02, "risk_off_trigger_count": 2, "crisis_trigger_count": 3, "use_trend": true, "trend_field": "benchmark_trend_200d_lag1", "use_momentum": true, "momentum_field": "benchmark_momentum_60d_lag1", "momentum_threshold": 0.0, "use_recovery": true, "recovery_field": "benchmark_momentum_20d_lag1", "recovery_threshold": 0.0, "recovery_weight": 0.34, "recovery_requires_trend_bad": false, "recovery_allows_drawdown_lift": true, "portfolio_drawdown_limit": -0.052, "drawdown_weight": 0.07, "use_alpha_health_filter": true, "alpha_health_field": "market_alpha_health_score_lag1", "alpha_health_min": 0.41, "alpha_health_warning": 0.53, "alpha_health_off_weight": 0.02, "alpha_health_weak_weight": 0.10, "use_market_breadth_filter": true, "market_breadth_field": "market_breadth_60d_lag1", "market_breadth_min": 0.35, "market_breadth_warning": 0.47, "market_breadth_off_weight": 0.02, "market_breadth_weak_weight": 0.10, "use_window_fuse": true, "fuse_drawdown_limit": -0.010, "fuse_rolling_return_limit": -0.007, "fuse_rolling_days": 8, "fuse_consecutive_loss_days": 2, "fuse_weight": 0.00, "fuse_cooldown_days": 5, "fuse_reentry_weight": 0.26, "fuse_reentry_initial_weight": 0.04, "fuse_reentry_step_weight": 0.05, "fuse_reentry_step_days": 4, "fuse_reentry_days": 12, "fuse_reentry_confirmation_days": 1, "fuse_reentry_requires_drawdown_repair": false, "fuse_reentry_rolling_return_floor": -0.004, "fuse_reentry_requires_market_recovery": true, "fuse_reentry_field": "benchmark_momentum_20d_lag1", "fuse_reentry_threshold": 0.0, "fuse_rebalance_buffer": 0.004, "fuse_reentry_refuse_drawdown_buffer": 0.012, "fuse_reentry_refuse_rolling_return_limit": -0.010}},
+        "costs": {"commission_rate": 0.0003, "stamp_tax_rate": 0.0005, "slippage_bps": 10},
+        "universe": {"exclude_st": true, "exclude_suspended": true, "min_amount": 10000000}
+      }
+    }
+  ]
+}

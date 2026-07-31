@@ -1,0 +1,4 @@
+symbol,stockCode,exchangeCode,stockName,stockFullName,stockType,listStatus,listDate,delistDate,boardName,industryLV1Name,industryName,companyId,sharesTotal,sharesFloat,sharesFloatA,reportDate
+600000.SH,600000,SH,Example Bank,Example Bank Co Ltd,A,listed,1999-11-10,,Main Board,Financials,Banks,example_600000,29352080397,29352080397,29352080397,2026-06-30
+000001.SZ,000001,SZ,Example Finance,Example Finance Co Ltd,A,listed,1991-04-03,,Main Board,Financials,Banks,example_000001,19405918198,19405918198,19405918198,2026-06-30
+600999.SH,600999,SH,Example Delisted,Example Delisted Co Ltd,A,delisted,2008-01-01,2021-12-31,Main Board,Industrials,Capital Goods,example_delisted,1000000000,800000000,800000000,2021-12-31

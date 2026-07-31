@@ -1,0 +1,4 @@
+# AKShare 1.18.x requires Python 3.10+.
+akshare
+tushare
+

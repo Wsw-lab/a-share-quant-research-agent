@@ -1,0 +1,447 @@
+{
+  "assets": [
+    {
+      "columns": [
+        "symbol",
+        "stockCode",
+        "exchangeCode",
+        "stockName",
+        "stockType",
+        "listDate",
+        "delistDate",
+        "listStatus"
+      ],
+      "data_hash": "2f9aebbd39d76201fcf6ac9175e75bad3d20694e513116e5a584d77ad67b4a2e",
+      "exists": true,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [],
+      "name": "historical_stock_master",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/stock_master/historical_stock_master.csv",
+      "required": true,
+      "rows": 4924,
+      "scope": "production"
+    },
+    {
+      "columns": [
+        "date",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "is_st",
+        "is_suspended",
+        "is_limit_up",
+        "is_limit_down",
+        "limit_up",
+        "limit_down",
+        "pe",
+        "pb",
+        "roe",
+        "dividend_yield",
+        "publishDate",
+        "industryLV1Name",
+        "industryName"
+      ],
+      "data_hash": "d5305d311ea398316a0700eee26eebc3a04d4047028d73605fa17ce235ab799d",
+      "exists": true,
+      "max_date": "2026-07-24",
+      "min_date": "2023-01-03",
+      "missing_columns": [],
+      "name": "daily_quotes",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/market/daily_quotes.csv",
+      "required": true,
+      "rows": 3894242,
+      "scope": "production"
+    },
+    {
+      "columns": [
+        "date",
+        "symbol",
+        "roe",
+        "dividend_yield",
+        "pe",
+        "pb",
+        "gross_margin",
+        "operating_profit_margin",
+        "net_margin",
+        "roa",
+        "roic",
+        "roe_deducted",
+        "rev_growth_1y",
+        "revenue_growth_3y",
+        "np_growth_1y",
+        "np_recurring_growth_1y",
+        "op_profit_growth_1y",
+        "cfo_growth_1y",
+        "equity_growth_1y",
+        "cfo_ps",
+        "fcf_to_equity_ps",
+        "net_operating_cash_flow",
+        "ocf_to_net_profit_ratio",
+        "cfo_to_revenue",
+        "cfo_to_current_liab",
+        "cash_received_sales_to_revenue",
+        "cash_debt_ratio",
+        "debt_asset_ratio",
+        "current_ratio",
+        "quick_ratio",
+        "f_score",
+        "z_score",
+        "m_score",
+        "asset_turnover",
+        "inventory_turnover",
+        "receivable_turnover",
+        "capex_to_revenue",
+        "fcf",
+        "publishDate",
+        "reportPeriodEnd",
+        "factorSource"
+      ],
+      "data_hash": "a0512bd949fd9a23972dd14391dd0ae599a082ba8c8db4c4c840ab745bd041e7",
+      "exists": true,
+      "max_date": "2026-07-24",
+      "min_date": "2020-04-08",
+      "missing_columns": [],
+      "name": "fundamental_factors",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/fundamentals/fundamental_factors.csv",
+      "required": false,
+      "rows": 99628,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [
+        "symbol",
+        "stockCode",
+        "stockName",
+        "fiscalYearEnd",
+        "latestAnnounceDate",
+        "planAnnounceDate",
+        "exDate",
+        "recordDate",
+        "cashPayDate",
+        "cashDividendPerShare",
+        "cashDividendPerShareAfterTax",
+        "currencyCode",
+        "eventTypeCode",
+        "baseShares",
+        "dividendSource"
+      ],
+      "data_hash": "485185adb6096ae2017f4833d1221f13f6879b75ba27343fafc02e061cebb927",
+      "exists": true,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [],
+      "name": "dividend_events",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/fundamentals/dividend_events.csv",
+      "required": false,
+      "rows": 20288,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "mainNetInflow",
+        "netInflowLarge",
+        "netInflowXlarge"
+      ],
+      "name": "daily_fund_flows",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/market/daily_fund_flows.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [
+        "date",
+        "symbol",
+        "stockCode",
+        "stockName",
+        "marginBalance",
+        "marginBuyAmount",
+        "marginRepayAmount",
+        "shortBalanceVolume",
+        "shortSellVolume",
+        "shortBalanceAmount",
+        "marginShortBalance",
+        "marginTradeSource"
+      ],
+      "data_hash": "49b5e9e12f51e420452fe4024c75a90078434c4557267e22da29187a62b035b8",
+      "exists": true,
+      "max_date": "2026-07-24",
+      "min_date": "2023-01-03",
+      "missing_columns": [],
+      "name": "margin_trades",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/market/margin_trades.csv",
+      "required": false,
+      "rows": 2399572,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "abnormalType"
+      ],
+      "name": "dragon_tiger_details",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/events/dragon_tiger_details.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "title"
+      ],
+      "name": "announcements",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/events/announcements.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "indexCode",
+        "symbol",
+        "weight"
+      ],
+      "name": "index_constituents",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/index/index_constituents.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "industryLV1Name",
+        "industryName"
+      ],
+      "name": "industry_classification",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/industry/industry_classification.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "production_optional"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "symbol",
+        "stockCode",
+        "exchangeCode",
+        "stockName",
+        "stockType",
+        "listDate",
+        "delistDate",
+        "listStatus"
+      ],
+      "name": "investoday_candidate_stock_master",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/investoday_candidate/stock_master.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "candidate"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount"
+      ],
+      "name": "investoday_candidate_daily_quotes",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/investoday_candidate/daily_quotes.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "candidate"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "symbol",
+        "stockCode",
+        "stockName"
+      ],
+      "name": "investoday_candidate_universe",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/investoday_candidate/realtime_universe.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "candidate"
+    },
+    {
+      "columns": [],
+      "data_hash": "",
+      "exists": false,
+      "max_date": "",
+      "min_date": "",
+      "missing_columns": [
+        "date",
+        "symbol",
+        "industryLV1Name",
+        "industryName"
+      ],
+      "name": "investoday_candidate_industry",
+      "path": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets/investoday_candidate/industry_classification.csv",
+      "required": false,
+      "rows": 0,
+      "scope": "candidate"
+    }
+  ],
+  "root": "/Users/wushuaiwei/Documents/skill hub/a_share_quant_agent_mvp/data_assets",
+  "stock_master_validation": {
+    "caveats": [],
+    "checks": [
+      {
+        "detail": "Required normalized columns present; missing=none.",
+        "name": "required_columns",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Rows 4924; required >= 3000.",
+        "name": "row_coverage",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Unique valid symbols 4924; required >= 3000.",
+        "name": "unique_symbol_coverage",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Valid A-share symbol rate 100.00%; required >= 98.00%.",
+        "name": "symbol_format",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Duplicate normalized symbols: 0.",
+        "name": "duplicate_symbols",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "listDate coverage 100.00%; required >= 95.00%.",
+        "name": "list_date_coverage",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Rows with delistDate 333; required >= 50 for survivorship-bias closure.",
+        "name": "delisted_security_coverage",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Exchange counts {'SH': 1844, 'SZ': 3080}; SH and SZ must both be present.",
+        "name": "exchange_coverage",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "Non-A-share or B-share-like rows: 0.",
+        "name": "a_share_rows_only",
+        "passed": true,
+        "severity": "hard"
+      },
+      {
+        "detail": "A-share stockType coverage 100.00%; non-A rows should be removed or tagged.",
+        "name": "a_share_type_coverage",
+        "passed": true,
+        "severity": "warn"
+      },
+      {
+        "detail": "Eligible symbols for requested period: 4735.",
+        "name": "eligible_period_symbols",
+        "passed": true,
+        "severity": "warn"
+      }
+    ],
+    "coverage_level": "full_historical_stock_master",
+    "hard_failed": 0,
+    "metrics": {
+      "a_share_type_rate": 1.0,
+      "delisted_rows": 333,
+      "duplicate_symbols": 0,
+      "earliest_list_date": "1990-12-01",
+      "eligible_symbols": 4735,
+      "end": "20260724",
+      "exchange_counts": {
+        "SH": 1844,
+        "SZ": 3080
+      },
+      "latest_delist_date": "2026-07-17",
+      "latest_list_date": "2026-07-30",
+      "list_date_coverage": 1.0,
+      "missing_columns": [],
+      "rows": 4924,
+      "start": "20230101",
+      "unique_symbols": 4924,
+      "valid_symbol_rate": 1.0
+    },
+    "notes": [
+      "Production-ready historical stock master requires current and delisted A-share securities.",
+      "listDate/delistDate are point-in-time eligibility fields; current listStatus alone is not enough.",
+      "Beijing Stock Exchange symbols are excluded from period eligibility counts."
+    ],
+    "status": "production_ready",
+    "warnings": 0
+  },
+  "summary": {
+    "existing_assets": 5,
+    "required_assets": 2,
+    "required_ready": true,
+    "stock_master_ready": true,
+    "total_assets": 14
+  }
+}
