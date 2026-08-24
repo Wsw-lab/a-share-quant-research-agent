@@ -1,0 +1,46 @@
+{
+  "name": "Synthetic Quality Value Momentum",
+  "description": "Deterministic synthetic-data example; not an investment result.",
+  "universe": {
+    "exclude_st": true,
+    "exclude_suspended": true,
+    "min_amount": 5000000
+  },
+  "rebalance": {
+    "frequency": "monthly"
+  },
+  "portfolio": {
+    "initial_cash": 1000000,
+    "max_positions": 12,
+    "weighting": "equal"
+  },
+  "costs": {
+    "commission_rate": 0.0003,
+    "stamp_tax_rate": 0.0005,
+    "slippage_bps": 8
+  },
+  "execution": {
+    "model": "close_signal_next_open"
+  },
+  "factors": [
+    {
+      "field": "roe",
+      "direction": "desc",
+      "weight": 0.35
+    },
+    {
+      "field": "pe",
+      "direction": "asc",
+      "weight": 0.25
+    },
+    {
+      "field": "momentum_60d",
+      "direction": "desc",
+      "weight": 0.4
+    }
+  ],
+  "risk": {
+    "benchmark": "CSI300",
+    "max_single_position_weight": 0.08
+  }
+}

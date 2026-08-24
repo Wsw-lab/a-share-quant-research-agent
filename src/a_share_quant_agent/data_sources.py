@@ -97,7 +97,7 @@ def dataframe_hash(data: pd.DataFrame) -> str:
 def load_sample_panel(start: str, end: str, symbols: int = 80) -> DataLoadResult:
     from .sample_data import make_sample_panel
 
-    data = prepare_backtest_panel(make_sample_panel(start=_date_with_dash(start), end=_date_with_dash(end), symbols=symbols))
+    data = make_sample_panel(start=_date_with_dash(start), end=_date_with_dash(end), symbols=symbols)
     return DataLoadResult(
         data=data,
         metadata=DataSourceMetadata(
@@ -2187,34 +2187,54 @@ def _normalize_investoday_stock_basic_info(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_external_stock_master(raw: pd.DataFrame) -> pd.DataFrame:
-    frame = raw.rename(
-        columns={
-            "股票代码": "stockCode",
-            "证券代码": "stockCode",
-            "代码": "stockCode",
-            "股票名称": "stockName",
-            "证券简称": "stockName",
-            "证券名称": "stockName",
-            "股票全称": "stockFullName",
-            "证券全称": "stockFullName",
-            "交易所": "exchangeCode",
-            "市场": "exchangeCode",
-            "市场类型": "exchangeCode",
-            "上市板块": "boardName",
-            "板块": "boardName",
-            "上市状态": "listStatus",
-            "上市日期": "listDate",
-            "退市日期": "delistDate",
-            "摘牌日期": "delistDate",
-            "股票类别": "stockType",
-            "证券类别": "stockType",
-            "总股本": "sharesTotal",
-            "流通股本": "sharesFloat",
-            "A股流通股本": "sharesFloatA",
-            "财务报告日期": "reportDate",
-            "最新报告期": "reportDate",
-        }
-    ).copy()
+    frame = raw.copy()
+    aliases = {
+        # QData public API / CSV export fields.
+        "name": "stockName",
+        "asset_type": "stockType",
+        "exchange": "exchangeCode",
+        "list_date": "listDate",
+        "delist_date": "delistDate",
+        "status": "listStatus",
+        # QData SQL security-master field names.
+        "current_symbol": "stockCode",
+        "current_name": "stockName",
+        "current_status": "listStatus",
+        "exchange_code": "exchangeCode",
+        # Existing external aliases.
+        "股票代码": "stockCode",
+        "证券代码": "stockCode",
+        "代码": "stockCode",
+        "股票名称": "stockName",
+        "证券简称": "stockName",
+        "证券名称": "stockName",
+        "股票全称": "stockFullName",
+        "证券全称": "stockFullName",
+        "交易所": "exchangeCode",
+        "市场": "exchangeCode",
+        "市场类型": "exchangeCode",
+        "上市板块": "boardName",
+        "板块": "boardName",
+        "上市状态": "listStatus",
+        "上市日期": "listDate",
+        "退市日期": "delistDate",
+        "摘牌日期": "delistDate",
+        "股票类别": "stockType",
+        "证券类别": "stockType",
+        "总股本": "sharesTotal",
+        "流通股本": "sharesFloat",
+        "A股流通股本": "sharesFloatA",
+        "财务报告日期": "reportDate",
+        "最新报告期": "reportDate",
+    }
+    for source, target in aliases.items():
+        if source not in frame:
+            continue
+        if target in frame and source != target:
+            frame[target] = frame[target].where(frame[target].notna(), frame[source])
+            frame.drop(columns=[source], inplace=True)
+        else:
+            frame.rename(columns={source: target}, inplace=True)
     if "symbol" in frame:
         frame["symbol"] = frame["symbol"].map(_normalize_symbol)
         if "stockCode" in frame:
@@ -2238,6 +2258,9 @@ def _normalize_external_stock_master(raw: pd.DataFrame) -> pd.DataFrame:
     frame["exchangeCode"] = frame["symbol"].str.split(".", n=1).str[1]
     if "stockType" not in frame:
         frame["stockType"] = "A股"
+    else:
+        normalized_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip().str.upper()
+        frame.loc[normalized_type.isin({"STOCK", "EQUITY", "A_SHARE", "A-SHARE", "ASHARE"}), "stockType"] = "A股"
     if "listStatus" not in frame:
         frame["listStatus"] = ""
     for column in ("stockName", "stockFullName", "boardName", "stockType", "companyId", "listStatus"):

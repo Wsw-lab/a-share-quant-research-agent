@@ -16,6 +16,7 @@ class BacktestResult:
     trades: pd.DataFrame
     holdings: pd.DataFrame
     metrics: dict[str, float]
+    orders: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -42,8 +43,236 @@ class _WindowFuseState:
     force_rebalance: bool = False
 
 
+@dataclass(frozen=True)
+class _PendingRebalance:
+    signal_date: pd.Timestamp
+    targets: tuple[str, ...]
+    risk_target_weight: float
+
+
+@dataclass(frozen=True)
+class _PendingStop:
+    signal_date: pd.Timestamp
+    symbol: str
+    position_return: float
+
+
 def run_backtest(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
-    data = _prepare_data(data)
+    if spec.execution.model == "close_signal_next_open":
+        return _run_close_signal_next_open(_prepare_data(data, required_price_field="open"), spec)
+    if spec.execution.model == "same_close_legacy":
+        return _run_same_close_legacy(_prepare_data(data), spec)
+    raise ValueError(f"Unsupported execution model: {spec.execution.model}")
+
+
+def _run_close_signal_next_open(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
+    """Create orders after a completed close and fill them at the next open."""
+
+    dates = list(data.index.get_level_values("date").unique())
+    rebalance_dates = set(_get_rebalance_dates(dates, spec.rebalance.frequency))
+
+    cash = spec.portfolio.initial_cash
+    positions: dict[str, int] = {}
+    buy_dates: dict[str, pd.Timestamp] = {}
+    entry_prices: dict[str, float] = {}
+    stopped_until: dict[str, pd.Timestamp] = {}
+    trade_rows: list[dict[str, Any]] = []
+    order_rows: list[dict[str, Any]] = []
+    holding_rows: list[dict[str, Any]] = []
+    equity_rows: list[dict[str, Any]] = []
+    peak_nav = spec.portfolio.initial_cash
+    previous_nav: float | None = None
+    cumulative_cash_yield = 0.0
+    fuse_state = _WindowFuseState()
+    pending_rebalance: _PendingRebalance | None = None
+    pending_stops: dict[str, _PendingStop] = {}
+
+    for date in dates:
+        today = data.xs(date, level="date")
+        cash_yield_accrued = 0.0
+        if previous_nav is not None:
+            cash_yield_accrued = _cash_yield_for_day(cash, spec)
+            cash += cash_yield_accrued
+            cumulative_cash_yield += cash_yield_accrued
+
+        pending_stops, cash, positions = _execute_pending_stops(
+            date=date,
+            today=today,
+            pending_stops=pending_stops,
+            cash=cash,
+            positions=positions,
+            buy_dates=buy_dates,
+            entry_prices=entry_prices,
+            stopped_until=stopped_until,
+            spec=spec,
+            trade_rows=trade_rows,
+            order_rows=order_rows,
+        )
+        if pending_rebalance is not None:
+            open_nav = _portfolio_value(cash, positions, today, price_field="open")
+            cash, positions = _rebalance(
+                date=date,
+                today=today,
+                cash=cash,
+                positions=positions,
+                buy_dates=buy_dates,
+                entry_prices=entry_prices,
+                targets=list(pending_rebalance.targets),
+                nav=open_nav,
+                risk_target_weight=pending_rebalance.risk_target_weight,
+                spec=spec,
+                trade_rows=trade_rows,
+                order_rows=order_rows,
+                price_field="open",
+                signal_date=pending_rebalance.signal_date,
+                execution_model="close_signal_next_open",
+            )
+            pending_rebalance = None
+
+        nav = _portfolio_value(cash, positions, today)
+        peak_nav = max(peak_nav, nav)
+        daily_return = 0.0 if previous_nav is None or previous_nav <= 0 else nav / previous_nav - 1.0
+        _update_window_fuse_state(
+            today,
+            spec.risk.risk_overlay,
+            fuse_state,
+            nav=nav,
+            peak_nav=peak_nav,
+            daily_return=daily_return,
+        )
+        risk_target_weight = _risk_target_weight(today, spec, nav=nav, peak_nav=peak_nav, fuse_state=fuse_state)
+        alpha_health_filter_weight = _alpha_health_filter_target_weight(today, spec.risk.risk_overlay)
+
+        for stop in _position_stop_signals(
+            date=date,
+            today=today,
+            positions=positions,
+            entry_prices=entry_prices,
+            spec=spec,
+        ):
+            pending_stops.setdefault(stop.symbol, stop)
+
+        is_scheduled_rebalance = date in rebalance_dates
+        pre_rebalance_gross = max(nav - cash, 0.0) / nav if nav else 0.0
+        if (
+            is_scheduled_rebalance
+            or _should_window_fuse_rebalance(
+                spec.risk.risk_overlay,
+                fuse_state,
+                pre_rebalance_gross,
+                risk_target_weight,
+                positions,
+            )
+            or _should_overheated_guard_rebalance(
+                today,
+                spec.risk.risk_overlay,
+                pre_rebalance_gross,
+                risk_target_weight,
+                positions,
+            )
+        ):
+            selected = (
+                _select_symbols(today, spec, stopped_until=stopped_until, date=date)
+                if is_scheduled_rebalance
+                else list(positions)
+            )
+            pending_rebalance = _PendingRebalance(
+                signal_date=date,
+                targets=tuple(symbol for symbol in selected if symbol not in pending_stops),
+                risk_target_weight=risk_target_weight,
+            )
+
+        invested_value = max(nav - cash, 0.0)
+        equity_rows.append(
+            {
+                "date": date,
+                "equity": nav,
+                "cash": cash,
+                "cash_yield_accrued": cash_yield_accrued,
+                "cumulative_cash_yield": cumulative_cash_yield,
+                "gross_exposure": invested_value / nav if nav else 0.0,
+                "risk_target_weight": risk_target_weight,
+                "alpha_health_filter_weight": alpha_health_filter_weight,
+                "alpha_health_score": _alpha_health_signal(today, spec.risk.risk_overlay),
+                "market_breadth_score": _market_breadth_signal(today, spec.risk.risk_overlay),
+                "overheated_reversal_guard_active": float(
+                    _overheated_reversal_guard_active(today, spec.risk.risk_overlay)
+                ),
+                "window_fuse_active": float(fuse_state.active),
+                "window_reentry_active": float(fuse_state.reentry_remaining > 0),
+                "window_reentry_target_weight": fuse_state.latest_reentry_target_weight,
+                "window_fuse_cooldown_remaining": float(fuse_state.cooldown_remaining),
+                "window_fuse_drawdown": fuse_state.latest_drawdown,
+                "window_fuse_rolling_return": fuse_state.latest_rolling_return,
+                "window_fuse_consecutive_loss_days": float(fuse_state.consecutive_loss_days),
+            }
+        )
+        for symbol, shares in positions.items():
+            if shares <= 0 or symbol not in today.index:
+                continue
+            price = float(today.loc[symbol, "close"])
+            holding_rows.append(
+                {
+                    "date": date,
+                    "symbol": symbol,
+                    "shares": shares,
+                    "price": price,
+                    "market_value": shares * price,
+                    "weight": shares * price / nav if nav else 0.0,
+                    "risk_target_weight": risk_target_weight,
+                    "window_fuse_active": float(fuse_state.active),
+                    "window_reentry_active": float(fuse_state.reentry_remaining > 0),
+                    "window_reentry_target_weight": fuse_state.latest_reentry_target_weight,
+                }
+            )
+        previous_nav = nav
+
+    unfilled_final_signal_count = float(pending_rebalance is not None) + float(len(pending_stops))
+    if pending_rebalance is not None:
+        targets = pending_rebalance.targets or ("",)
+        for symbol in targets:
+            _append_order(
+                order_rows,
+                date=pd.NaT,
+                signal_date=pending_rebalance.signal_date,
+                symbol=symbol,
+                side="rebalance",
+                requested_shares=0,
+                status="unfilled_no_next_session",
+                price_field="open",
+                execution_model="close_signal_next_open",
+            )
+    for stop in pending_stops.values():
+        _append_order(
+            order_rows,
+            date=pd.NaT,
+            signal_date=stop.signal_date,
+            symbol=stop.symbol,
+            side="sell",
+            requested_shares=positions.get(stop.symbol, 0),
+            status="unfilled_no_next_session",
+            price_field="open",
+            execution_model="close_signal_next_open",
+            note=f"position_stop_loss:{stop.position_return:.4f}",
+        )
+
+    equity_curve = pd.DataFrame(equity_rows)
+    trades = pd.DataFrame(trade_rows)
+    holdings = pd.DataFrame(holding_rows)
+    orders = _orders_frame(order_rows)
+    metrics = _calculate_metrics(equity_curve, trades, spec.portfolio.initial_cash)
+    metrics["unfilled_final_signal_count"] = unfilled_final_signal_count
+    return BacktestResult(
+        spec=spec,
+        equity_curve=equity_curve,
+        trades=trades,
+        holdings=holdings,
+        metrics=metrics,
+        orders=orders,
+    )
+
+
+def _run_same_close_legacy(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
     dates = list(data.index.get_level_values("date").unique())
     rebalance_dates = set(_get_rebalance_dates(dates, spec.rebalance.frequency))
 
@@ -156,10 +385,11 @@ def run_backtest(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
     trades = pd.DataFrame(trade_rows)
     holdings = pd.DataFrame(holding_rows)
     metrics = _calculate_metrics(equity_curve, trades, spec.portfolio.initial_cash)
+    metrics["unfilled_final_signal_count"] = 0.0
     return BacktestResult(spec=spec, equity_curve=equity_curve, trades=trades, holdings=holdings, metrics=metrics)
 
 
-def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:
+def _prepare_data(data: pd.DataFrame, *, required_price_field: str = "close") -> pd.DataFrame:
     required = {
         "date",
         "symbol",
@@ -170,6 +400,7 @@ def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:
         "limit_up",
         "limit_down",
     }
+    required.add(required_price_field)
     missing = required - set(data.columns)
     if missing:
         raise ValueError(f"Missing required data columns: {sorted(missing)}")
@@ -341,6 +572,11 @@ def _rebalance(
     risk_target_weight: float,
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
+    order_rows: list[dict[str, Any]] | None = None,
+    *,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
 ) -> tuple[float, dict[str, int]]:
     target_set = set(targets)
     target_gross_weight = _clamp(risk_target_weight, 0.0, 1.0)
@@ -354,12 +590,12 @@ def _rebalance(
         shares = positions[symbol]
         if shares <= 0 or symbol not in today.index:
             continue
-        current_value = shares * float(today.loc[symbol, "close"])
+        current_value = shares * float(today.loc[symbol, price_field])
         target_value = max_position_value if symbol in target_set else 0.0
         if current_value <= target_value:
             continue
         sell_value = current_value - target_value
-        sell_shares = min(shares, _round_lot(int(sell_value / float(today.loc[symbol, "close"]))))
+        sell_shares = min(shares, _round_lot(int(sell_value / float(today.loc[symbol, price_field]))))
         cash, positions[symbol] = _sell(
             date=date,
             symbol=symbol,
@@ -370,6 +606,10 @@ def _rebalance(
             today=today,
             spec=spec,
             trade_rows=trade_rows,
+            order_rows=order_rows,
+            price_field=price_field,
+            signal_date=signal_date,
+            execution_model=execution_model,
         )
         if positions.get(symbol, 0) <= 0:
             positions.pop(symbol, None)
@@ -379,7 +619,7 @@ def _rebalance(
     for symbol in targets:
         if symbol not in today.index:
             continue
-        price = float(today.loc[symbol, "close"])
+        price = float(today.loc[symbol, price_field])
         current_shares = positions.get(symbol, 0)
         current_value = current_shares * price
         buy_value = max_position_value - current_value
@@ -394,7 +634,20 @@ def _rebalance(
         if shares <= 0:
             continue
         buy_price = _buy_price(price, spec)
-        cash, new_shares = _buy(date, symbol, shares, cash, current_shares, today, spec, trade_rows)
+        cash, new_shares = _buy(
+            date,
+            symbol,
+            shares,
+            cash,
+            current_shares,
+            today,
+            spec,
+            trade_rows,
+            order_rows=order_rows,
+            price_field=price_field,
+            signal_date=signal_date,
+            execution_model=execution_model,
+        )
         if new_shares > current_shares:
             prior_value = current_shares * float(entry_prices.get(symbol, buy_price))
             added_shares = new_shares - current_shares
@@ -403,6 +656,81 @@ def _rebalance(
         buy_dates[symbol] = date
 
     return cash, positions
+
+
+def _position_stop_signals(
+    *,
+    date: pd.Timestamp,
+    today: pd.DataFrame,
+    positions: dict[str, int],
+    entry_prices: dict[str, float],
+    spec: StrategySpec,
+) -> list[_PendingStop]:
+    stop_limit = float(getattr(spec.risk, "position_stop_loss_limit", 0.0) or 0.0)
+    if stop_limit >= 0.0 or not positions:
+        return []
+    signals: list[_PendingStop] = []
+    for symbol, shares in positions.items():
+        if shares <= 0 or symbol not in today.index:
+            continue
+        entry_price = float(entry_prices.get(symbol, 0.0) or 0.0)
+        close = float(today.loc[symbol, "close"])
+        if entry_price <= 0.0 or not math.isfinite(close) or close <= 0.0:
+            continue
+        position_return = close / entry_price - 1.0
+        if position_return <= stop_limit:
+            signals.append(_PendingStop(signal_date=date, symbol=symbol, position_return=position_return))
+    return signals
+
+
+def _execute_pending_stops(
+    *,
+    date: pd.Timestamp,
+    today: pd.DataFrame,
+    pending_stops: dict[str, _PendingStop],
+    cash: float,
+    positions: dict[str, int],
+    buy_dates: dict[str, pd.Timestamp],
+    entry_prices: dict[str, float],
+    stopped_until: dict[str, pd.Timestamp],
+    spec: StrategySpec,
+    trade_rows: list[dict[str, Any]],
+    order_rows: list[dict[str, Any]],
+) -> tuple[dict[str, _PendingStop], float, dict[str, int]]:
+    remaining_stops: dict[str, _PendingStop] = {}
+    cooldown_days = max(0, int(getattr(spec.risk, "position_stop_cooldown_days", 0) or 0))
+    for symbol, stop in pending_stops.items():
+        shares = positions.get(symbol, 0)
+        if shares <= 0:
+            continue
+        if symbol not in today.index:
+            remaining_stops[symbol] = stop
+            continue
+        cash, remaining = _sell(
+            date=date,
+            symbol=symbol,
+            shares=shares,
+            cash=cash,
+            held_shares=shares,
+            buy_dates=buy_dates,
+            today=today,
+            spec=spec,
+            trade_rows=trade_rows,
+            note=f"position_stop_loss:{stop.position_return:.4f}",
+            order_rows=order_rows,
+            price_field="open",
+            signal_date=stop.signal_date,
+            execution_model="close_signal_next_open",
+        )
+        if remaining <= 0:
+            positions.pop(symbol, None)
+            entry_prices.pop(symbol, None)
+            if cooldown_days > 0:
+                stopped_until[symbol] = date + pd.Timedelta(days=cooldown_days)
+        else:
+            positions[symbol] = remaining
+            remaining_stops[symbol] = stop
+    return remaining_stops, cash, positions
 
 
 def _apply_position_stops(
@@ -465,19 +793,61 @@ def _buy(
     today: pd.DataFrame,
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
+    *,
+    order_rows: list[dict[str, Any]] | None = None,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
 ) -> tuple[float, int]:
     row = today.loc[symbol]
-    if bool(row["is_suspended"]) or _is_limit_up(row):
+    effective_signal_date = signal_date if signal_date is not None else date
+    if bool(row["is_suspended"]):
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=shares,
+            status="blocked_suspended",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
         return cash, held_shares
-    price = _buy_price(float(row["close"]), spec)
+    if _is_limit_up(row, price_field=price_field):
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=shares,
+            status="blocked_limit_up",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
+        return cash, held_shares
+    price = _buy_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
     total = gross + commission
     if total > cash:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=shares,
+            status="blocked_insufficient_cash",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
         return cash, held_shares
     trade_rows.append(
         {
             "date": date,
+            "signal_date": effective_signal_date,
             "symbol": symbol,
             "side": "buy",
             "shares": shares,
@@ -486,8 +856,21 @@ def _buy(
             "commission": commission,
             "stamp_tax": 0.0,
             "cash_delta": -total,
+            "execution_model": execution_model,
+            "fill_price_field": price_field,
             "note": "",
         }
+    )
+    _append_order(
+        order_rows,
+        date=date,
+        signal_date=effective_signal_date,
+        symbol=symbol,
+        side="buy",
+        requested_shares=shares,
+        status="filled",
+        price_field=price_field,
+        execution_model=execution_model,
     )
     return cash - total, held_shares + shares
 
@@ -503,16 +886,60 @@ def _sell(
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
     note: str = "",
+    *,
+    order_rows: list[dict[str, Any]] | None = None,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
 ) -> tuple[float, int]:
     if shares <= 0:
         return cash, held_shares
     row = today.loc[symbol]
+    effective_signal_date = signal_date if signal_date is not None else date
     if buy_dates.get(symbol) == date:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status="blocked_t_plus_one",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
         return cash, held_shares
-    if bool(row["is_suspended"]) or _is_limit_down(row):
+    if bool(row["is_suspended"]):
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status="blocked_suspended",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
+        return cash, held_shares
+    if _is_limit_down(row, price_field=price_field):
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status="blocked_limit_down",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
         return cash, held_shares
     shares = min(shares, held_shares)
-    price = _sell_price(float(row["close"]), spec)
+    price = _sell_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
     stamp_tax = gross * spec.costs.stamp_tax_rate
@@ -520,6 +947,7 @@ def _sell(
     trade_rows.append(
         {
             "date": date,
+            "signal_date": effective_signal_date,
             "symbol": symbol,
             "side": "sell",
             "shares": shares,
@@ -528,17 +956,37 @@ def _sell(
             "commission": commission,
             "stamp_tax": stamp_tax,
             "cash_delta": proceeds,
+            "execution_model": execution_model,
+            "fill_price_field": price_field,
             "note": note,
         }
+    )
+    _append_order(
+        order_rows,
+        date=date,
+        signal_date=effective_signal_date,
+        symbol=symbol,
+        side="sell",
+        requested_shares=shares,
+        status="filled",
+        price_field=price_field,
+        execution_model=execution_model,
+        note=note,
     )
     return cash + proceeds, held_shares - shares
 
 
-def _portfolio_value(cash: float, positions: dict[str, int], today: pd.DataFrame) -> float:
+def _portfolio_value(
+    cash: float,
+    positions: dict[str, int],
+    today: pd.DataFrame,
+    *,
+    price_field: str = "close",
+) -> float:
     value = cash
     for symbol, shares in positions.items():
         if symbol in today.index:
-            value += shares * float(today.loc[symbol, "close"])
+            value += shares * float(today.loc[symbol, price_field])
     return value
 
 
@@ -1025,16 +1473,69 @@ def _cash_yield_for_day(cash: float, spec: StrategySpec) -> float:
     return cash * daily_rate
 
 
-def _is_limit_up(row: pd.Series) -> bool:
-    if "is_limit_up" in row and pd.notna(row["is_limit_up"]):
-        return bool(row["is_limit_up"])
-    return float(row["close"]) >= float(row["limit_up"])
+def _is_limit_up(row: pd.Series, *, price_field: str = "close") -> bool:
+    explicit = bool(row["is_limit_up"]) if "is_limit_up" in row and pd.notna(row["is_limit_up"]) else False
+    return explicit or _price_reaches_limit(row, price_field=price_field, limit_field="limit_up", upper=True)
 
 
-def _is_limit_down(row: pd.Series) -> bool:
-    if "is_limit_down" in row and pd.notna(row["is_limit_down"]):
-        return bool(row["is_limit_down"])
-    return float(row["close"]) <= float(row["limit_down"])
+def _is_limit_down(row: pd.Series, *, price_field: str = "close") -> bool:
+    explicit = bool(row["is_limit_down"]) if "is_limit_down" in row and pd.notna(row["is_limit_down"]) else False
+    return explicit or _price_reaches_limit(row, price_field=price_field, limit_field="limit_down", upper=False)
+
+
+def _price_reaches_limit(row: pd.Series, *, price_field: str, limit_field: str, upper: bool) -> bool:
+    if price_field not in row or limit_field not in row:
+        return False
+    price = pd.to_numeric(pd.Series([row[price_field]]), errors="coerce").iloc[0]
+    limit = pd.to_numeric(pd.Series([row[limit_field]]), errors="coerce").iloc[0]
+    if pd.isna(price) or pd.isna(limit):
+        return False
+    return bool(float(price) >= float(limit)) if upper else bool(float(price) <= float(limit))
+
+
+def _append_order(
+    order_rows: list[dict[str, Any]] | None,
+    *,
+    date: pd.Timestamp,
+    signal_date: pd.Timestamp,
+    symbol: str,
+    side: str,
+    requested_shares: int,
+    status: str,
+    price_field: str,
+    execution_model: str,
+    note: str = "",
+) -> None:
+    if order_rows is None:
+        return
+    order_rows.append(
+        {
+            "date": date,
+            "signal_date": signal_date,
+            "symbol": symbol,
+            "side": side,
+            "requested_shares": int(requested_shares),
+            "status": status,
+            "fill_price_field": price_field,
+            "execution_model": execution_model,
+            "note": note,
+        }
+    )
+
+
+def _orders_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    columns = [
+        "date",
+        "signal_date",
+        "symbol",
+        "side",
+        "requested_shares",
+        "status",
+        "fill_price_field",
+        "execution_model",
+        "note",
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _round_lot(shares: int) -> int:
