@@ -48,6 +48,15 @@ OUTPUT_FILENAMES = (
     "receipt.json",
     "trades.jsonl",
 )
+SNAPSHOT_FILENAMES = (
+    "daily_bar.csv",
+    "fundamental_pit.csv",
+    "manifest.json",
+    "security_membership.csv",
+    "tradability.csv",
+)
+QDATA_PROVENANCE_BUILDER = "byte_verified_builder_checkout"
+QDATA_PROVENANCE_REFERENCE = "unverified_fixture_repository_reference"
 REASON_CODES = (
     "SYNTHETIC_DATA",
     "TWO_SYMBOLS",
@@ -145,6 +154,12 @@ _EXPECTED_ARTIFACT_ROW_COUNTS = {
     "orders.jsonl": 1,
     "trades.jsonl": 1,
 }
+_EXPECTED_ARTIFACT_SHA256 = {
+    "equity.jsonl": "d38044564ca874e56efab0a81fb85b80d3f7ce09cfed8d178ec130b7c9829f96",
+    "metrics.json": "ee3a5dfdfc80b27a2b48de467dc82279294195f8b8b09bc7f6fe209ad1b4dec0",
+    "orders.jsonl": "8069eaa426d9510073eae25c73ec8cc16af36c8e709d9aca9c81563e8e25a872",
+    "trades.jsonl": "8159805990c1e646ae99cdc30fe4b27ba520afd4270d4346cf9fbdcd49524077",
+}
 _EXPECTED_SOURCE_LINEAGE = [
     {"key": "snapshot", "value": "deterministic_synthetic_fixture"},
     {"key": "daily_bar.source_id", "value": "synthetic"},
@@ -194,6 +209,7 @@ def run_experiment(
     agent_identity = _agent_identity(_agent_sha_for_testing)
     qdata_identity = _qdata_identity(
         manifest=manifest,
+        snapshot_dir=snapshot_dir,
         qdata_checkout=qdata_checkout,
         qdata_sha=qdata_sha,
         sha_for_testing=_qdata_sha_for_testing,
@@ -205,6 +221,9 @@ def run_experiment(
     artifacts = _build_artifact_payloads(result)
     _validate_fixed_artifact_counts(
         {filename: artifact["row_count"] for filename, artifact in artifacts.items()}
+    )
+    _validate_fixed_artifact_hashes(
+        {filename: _sha256(artifact["bytes"]) for filename, artifact in artifacts.items()}
     )
     _validate_result_timing(
         artifacts["trades.jsonl"]["value"],
@@ -289,6 +308,9 @@ def verify_experiment(
     )
     _verify_first_fill(receipt["first_fill"], parsed_artifacts)
     _verify_metrics_payload(metrics)
+    _validate_fixed_artifact_hashes(
+        {filename: _sha256(payloads[filename]) for filename in _EXPECTED_ARTIFACT_SHA256}
+    )
     return receipt
 
 
@@ -545,7 +567,23 @@ def _verify_receipt_contract(
     if not isinstance(repositories, dict) or set(repositories) != {"agent", "qdata"}:
         raise ExperimentError("receipt repository identities are incomplete")
     _verify_repository_identity(repositories["agent"], AGENT_REPOSITORY, expected_agent_sha)
-    _verify_repository_identity(repositories["qdata"], QDATA_REPOSITORY, expected_qdata_sha)
+    qdata_identity = repositories["qdata"]
+    if not isinstance(qdata_identity, dict):
+        raise ExperimentError("QData repository identity is malformed")
+    provenance_verification = qdata_identity.get("provenance_verification")
+    if provenance_verification not in {QDATA_PROVENANCE_BUILDER, QDATA_PROVENANCE_REFERENCE}:
+        raise ExperimentError("QData provenance verification status is unsupported")
+    _verify_repository_identity(
+        qdata_identity,
+        QDATA_REPOSITORY,
+        expected_qdata_sha,
+        provenance_verification=provenance_verification,
+    )
+    dirty_observed = qdata_identity["dirty_state"]["observed"]
+    if provenance_verification == QDATA_PROVENANCE_BUILDER and not dirty_observed:
+        raise ExperimentError("builder-verified QData provenance requires an observed checkout")
+    if provenance_verification == QDATA_PROVENANCE_REFERENCE and dirty_observed:
+        raise ExperimentError("an unverified QData fixture reference must not claim an observed checkout")
     _verify_snapshot_metadata(receipt.get("snapshot"))
 
     artifacts = receipt.get("artifacts")
@@ -568,11 +606,20 @@ def _verify_receipt_contract(
         raise ExperimentError("receipt environment facts must be non-empty strings")
 
 
-def _verify_repository_identity(identity: Any, expected: Mapping[str, str], expected_sha: str | None) -> None:
-    if not isinstance(identity, dict) or set(identity) != {
-        "canonical_name", "canonical_remote_url", "dirty_state", "sha",
-    }:
+def _verify_repository_identity(
+    identity: Any,
+    expected: Mapping[str, str],
+    expected_sha: str | None,
+    *,
+    provenance_verification: str | None = None,
+) -> None:
+    expected_fields = {"canonical_name", "canonical_remote_url", "dirty_state", "sha"}
+    if provenance_verification is not None:
+        expected_fields.add("provenance_verification")
+    if not isinstance(identity, dict) or set(identity) != expected_fields:
         raise ExperimentError("repository identity fields do not match the v1 contract")
+    if provenance_verification is not None and identity["provenance_verification"] != provenance_verification:
+        raise ExperimentError("repository provenance verification status mismatch")
     if identity["canonical_name"] != expected["canonical_name"]:
         raise ExperimentError("repository canonical name mismatch")
     if identity["canonical_remote_url"] != expected["canonical_remote_url"]:
@@ -672,6 +719,11 @@ def _verify_snapshot_metadata(snapshot: Any) -> None:
 def _validate_fixed_artifact_counts(row_counts: Mapping[str, Any]) -> None:
     if row_counts != _EXPECTED_ARTIFACT_ROW_COUNTS:
         raise ExperimentError("artifact row counts differ from the fixed timing-probe row count contract")
+
+
+def _validate_fixed_artifact_hashes(hashes: Mapping[str, Any]) -> None:
+    if hashes != _EXPECTED_ARTIFACT_SHA256:
+        raise ExperimentError("artifact differs from the fixed research artifact SHA256 contract")
 
 
 def _verify_receipt_integrity(receipt: Mapping[str, Any]) -> None:
@@ -845,13 +897,17 @@ def _agent_identity(sha_for_testing: str | None) -> dict[str, Any]:
             },
             "sha": sha_for_testing,
         }
-    root = _find_git_root(Path.cwd())
+    # Provenance belongs to the code being executed, not to the caller's cwd.
+    # Resolving from __file__ also keeps `python -m ...` honest when PYTHONPATH
+    # points at this checkout from inside some unrelated Git repository.
+    root = _find_git_root(Path(__file__).resolve().parent)
     return _git_identity(root, AGENT_REPOSITORY)
 
 
 def _qdata_identity(
     *,
     manifest: Mapping[str, Any],
+    snapshot_dir: str | Path,
     qdata_checkout: str | Path | None,
     qdata_sha: str | None,
     sha_for_testing: str | None,
@@ -870,13 +926,78 @@ def _qdata_identity(
         sha = qdata_sha
         method = "explicit fixture SHA; checkout not observed"
     else:
-        return _git_identity(Path(qdata_checkout).expanduser().resolve(), QDATA_REPOSITORY)
+        identity = _git_identity(Path(qdata_checkout).expanduser().resolve(), QDATA_REPOSITORY)
+        _verify_qdata_builder_checkout(identity["checkout_root"], Path(snapshot_dir))
+        identity["provenance_verification"] = QDATA_PROVENANCE_BUILDER
+        return identity
     return {
         **QDATA_REPOSITORY,
         "checkout_root": None,
         "dirty_state": {"is_dirty": None, "method": method, "observed": False},
+        "provenance_verification": QDATA_PROVENANCE_REFERENCE,
         "sha": sha,
     }
+
+
+def _verify_qdata_builder_checkout(checkout_root: Path, snapshot_dir: Path) -> None:
+    builder = checkout_root / "examples" / "build_research_snapshot.py"
+    builder_module = checkout_root / "qdata" / "research_snapshot.py"
+    for path in (builder, builder_module):
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise ExperimentError("QData checkout lacks the database-free snapshot builder") from exc
+        if not stat.S_ISREG(info.st_mode) or path.is_symlink():
+            raise ExperimentError("QData checkout lacks the database-free snapshot builder")
+
+    with tempfile.TemporaryDirectory(prefix="agent-qdata-builder-proof-") as temp_dir:
+        rebuilt_snapshot = Path(temp_dir) / "snapshot"
+        environment = os.environ.copy()
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        try:
+            result = subprocess.run(
+                [sys.executable, str(builder), "build", str(rebuilt_snapshot)],
+                cwd=checkout_root,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ExperimentError("QData database-free snapshot builder could not be executed") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "builder failed"
+            raise ExperimentError(f"QData database-free snapshot builder failed: {detail}")
+        expected_payloads = _read_exact_snapshot_files(snapshot_dir)
+        rebuilt_payloads = _read_exact_snapshot_files(rebuilt_snapshot)
+        if rebuilt_payloads != expected_payloads:
+            raise ExperimentError(
+                "QData database-free snapshot builder output does not byte-match the supplied snapshot"
+            )
+
+
+def _read_exact_snapshot_files(root: Path) -> dict[str, bytes]:
+    try:
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or root.is_symlink():
+            raise ExperimentError("QData database-free snapshot builder output is not a regular directory")
+        names = {path.name for path in root.iterdir()}
+    except OSError as exc:
+        raise ExperimentError("cannot read QData database-free snapshot builder output") from exc
+    if names != set(SNAPSHOT_FILENAMES):
+        raise ExperimentError("QData database-free snapshot builder produced an unexpected file set")
+    payloads: dict[str, bytes] = {}
+    for filename in SNAPSHOT_FILENAMES:
+        path = root / filename
+        try:
+            file_info = path.lstat()
+            if not stat.S_ISREG(file_info.st_mode) or path.is_symlink():
+                raise ExperimentError(f"QData snapshot file is not regular: {filename}")
+            payloads[filename] = path.read_bytes()
+        except OSError as exc:
+            raise ExperimentError(f"cannot read QData snapshot file: {filename}") from exc
+    return payloads
 
 
 def _git_identity(root: Path, expected: Mapping[str, str]) -> dict[str, Any]:
@@ -901,12 +1022,15 @@ def _git_identity(root: Path, expected: Mapping[str, str]) -> dict[str, Any]:
 
 
 def _public_repository_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    public_identity = {
         "canonical_name": identity["canonical_name"],
         "canonical_remote_url": identity["canonical_remote_url"],
         "dirty_state": identity["dirty_state"],
         "sha": identity["sha"],
     }
+    if "provenance_verification" in identity:
+        public_identity["provenance_verification"] = identity["provenance_verification"]
+    return public_identity
 
 
 def _find_git_root(start: Path) -> Path:
@@ -979,50 +1103,93 @@ def _require_output_untracked_if_inside_checkout(output: Path, checkout_root: An
 
 
 def _read_exact_output_files(root: Path) -> dict[str, bytes]:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory_only = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or directory_only is None:
+        raise ExperimentError("strict no-follow output verification is unavailable")
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    nonblocking = getattr(os, "O_NONBLOCK", 0)
+    directory_fd: int | None = None
+    file_descriptors: dict[str, int] = {}
     try:
-        directory_info = root.lstat()
-        if not stat.S_ISDIR(directory_info.st_mode) or root.is_symlink():
+        directory_fd = os.open(root, os.O_RDONLY | directory_only | nofollow | close_on_exec)
+        directory_info = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory_info.st_mode):
             raise ExperimentError("experiment output must be a regular directory")
-        names = {path.name for path in root.iterdir()}
-    except OSError as exc:
-        raise ExperimentError("cannot enumerate experiment output") from exc
-    if names != set(OUTPUT_FILENAMES):
-        raise ExperimentError(
-            f"experiment output files mismatch: expected {list(OUTPUT_FILENAMES)}, got {sorted(names)}"
-        )
-    directory_identity = _file_identity(directory_info)
-    payloads: dict[str, bytes] = {}
-    file_identities: dict[str, tuple[int, ...]] = {}
-    for filename in OUTPUT_FILENAMES:
-        path = root / filename
-        try:
-            info = path.lstat()
+        names = set(os.listdir(directory_fd))
+        if names != set(OUTPUT_FILENAMES):
+            raise ExperimentError(
+                f"experiment output files mismatch: expected {list(OUTPUT_FILENAMES)}, got {sorted(names)}"
+            )
+        directory_identity = _file_identity(directory_info)
+        file_identities: dict[str, tuple[int, ...]] = {}
+        for filename in OUTPUT_FILENAMES:
+            descriptor = os.open(
+                filename,
+                os.O_RDONLY | nofollow | close_on_exec | nonblocking,
+                dir_fd=directory_fd,
+            )
+            file_descriptors[filename] = descriptor
+            info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode):
                 raise ExperimentError(f"{filename} must be a regular file")
             if info.st_nlink != 1:
                 raise ExperimentError(f"{filename} must not be hard-linked")
-            identity = _file_identity(info)
-            payloads[filename] = path.read_bytes()
-            if _file_identity(path.lstat()) != identity:
-                raise ExperimentError(f"{filename} changed during verification")
-            file_identities[filename] = identity
-        except FileNotFoundError as exc:
-            raise ExperimentError(f"{filename} changed during verification") from exc
-        except OSError as exc:
-            raise ExperimentError(f"cannot read {filename}") from exc
-    try:
-        if _file_identity(root.lstat()) != directory_identity:
+            file_identities[filename] = _file_identity(info)
+
+        payloads = {
+            filename: _read_file_descriptor(descriptor)
+            for filename, descriptor in file_descriptors.items()
+        }
+
+        if _file_identity(os.fstat(directory_fd)) != directory_identity:
             raise ExperimentError("experiment output directory changed during verification")
-        if {path.name for path in root.iterdir()} != set(OUTPUT_FILENAMES):
+        if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
             raise ExperimentError("experiment output file set changed during verification")
-        for filename, identity in file_identities.items():
-            if _file_identity((root / filename).lstat()) != identity:
+
+        for filename, descriptor in file_descriptors.items():
+            identity = file_identities[filename]
+            if _file_identity(os.fstat(descriptor)) != identity:
                 raise ExperimentError(f"{filename} changed during verification")
-    except FileNotFoundError as exc:
-        raise ExperimentError("experiment output changed during verification") from exc
+            entry_info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+            if _file_identity(entry_info) != identity:
+                raise ExperimentError(f"{filename} changed during verification")
+            second_payload = _read_file_descriptor(descriptor)
+            if _sha256(second_payload) != _sha256(payloads[filename]):
+                raise ExperimentError(f"{filename} changed during verification")
+            if _file_identity(os.fstat(descriptor)) != identity:
+                raise ExperimentError(f"{filename} changed during verification")
+
+        if _file_identity(os.fstat(directory_fd)) != directory_identity:
+            raise ExperimentError("experiment output directory changed during verification")
+        if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
+            raise ExperimentError("experiment output file set changed during verification")
+        return payloads
+    except ExperimentError:
+        raise
     except OSError as exc:
-        raise ExperimentError("cannot recheck experiment output") from exc
-    return payloads
+        raise ExperimentError("experiment output changed during verification") from exc
+    finally:
+        for descriptor in file_descriptors.values():
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                pass
+
+
+def _read_file_descriptor(descriptor: int) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(descriptor, 1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _file_identity(info: os.stat_result) -> tuple[int, ...]:
@@ -1033,6 +1200,7 @@ def _file_identity(info: os.stat_result) -> tuple[int, ...]:
         int(info.st_nlink),
         int(info.st_size),
         int(info.st_mtime_ns),
+        int(info.st_ctime_ns),
     )
 
 

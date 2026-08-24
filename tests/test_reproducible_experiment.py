@@ -68,6 +68,10 @@ class ReproducibleExperimentCliTest(unittest.TestCase):
                 {"daily_bar": 6, "fundamental_pit": 3, "security_membership": 2, "tradability": 6},
             )
             self.assertEqual(receipt["repositories"]["qdata"]["sha"], QDATA_SHA)
+            self.assertEqual(
+                receipt["repositories"]["qdata"]["provenance_verification"],
+                "unverified_fixture_repository_reference",
+            )
             self.assertEqual(receipt["strategy"]["config"]["factors"][0]["field"], "roe_ttm")
             self.assertEqual(receipt["strategy"]["config"]["rebalance"]["frequency"], "weekly")
             self.assertEqual(receipt["strategy"]["config"]["portfolio"]["max_positions"], 1)
@@ -162,9 +166,179 @@ class ReproducibleExperimentCliTest(unittest.TestCase):
             self.assertEqual(receipt["repositories"]["qdata"]["sha"], expected_sha)
             self.assertTrue(receipt["repositories"]["qdata"]["dirty_state"]["observed"])
             self.assertIsInstance(receipt["repositories"]["qdata"]["dirty_state"]["is_dirty"], bool)
+            self.assertEqual(
+                receipt["repositories"]["qdata"]["provenance_verification"],
+                "byte_verified_builder_checkout",
+            )
+
+    def test_agent_identity_is_resolved_from_executing_module_not_foreign_git_cwd(self) -> None:
+        expected_sha = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            foreign_checkout = Path(temp_dir) / "foreign"
+            foreign_checkout.mkdir()
+            subprocess.run(["git", "init", "--quiet", str(foreign_checkout)], check=True)
+            output = Path(temp_dir) / "output"
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = str(ROOT / "src")
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "a_share_quant_agent.reproducible_experiment",
+                    "run",
+                    "--snapshot-dir",
+                    str(FIXTURE),
+                    "--output-dir",
+                    str(output),
+                    "--qdata-sha",
+                    QDATA_SHA,
+                ],
+                cwd=foreign_checkout,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            receipt = json.loads((output / "receipt.json").read_bytes())
+            self.assertEqual(receipt["repositories"]["agent"]["sha"], expected_sha)
+
+    def test_old_qdata_checkout_without_database_free_builder_is_rejected(self) -> None:
+        qdata_checkout = ROOT.parent / "qdata"
+        if not (qdata_checkout / ".git").exists():
+            self.skipTest("neighboring QData Git checkout is not available")
+        old_sha = "0479c8e30b775a0a862649c8e3ed41b785136077"
+        probe = subprocess.run(
+            ["git", "-C", str(qdata_checkout), "cat-file", "-e", f"{old_sha}^{{commit}}"],
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            self.skipTest("QData baseline commit is not available locally")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            old_checkout = Path(temp_dir) / "qdata-old"
+            subprocess.run(
+                ["git", "clone", "--quiet", "--no-checkout", str(qdata_checkout), str(old_checkout)],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(old_checkout), "checkout", "--quiet", old_sha],
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(old_checkout),
+                    "remote",
+                    "set-url",
+                    "origin",
+                    "https://github.com/Wsw-lab/qdata-free-source-quant-research-db.git",
+                ],
+                check=True,
+            )
+
+            with self.assertRaisesRegex(experiment.ExperimentError, "database-free snapshot builder"):
+                experiment.run_experiment(
+                    FIXTURE,
+                    Path(temp_dir) / "output",
+                    qdata_checkout=old_checkout,
+                    _agent_sha_for_testing="2" * 40,
+                )
 
 
 class ReproducibleExperimentBoundaryTest(unittest.TestCase):
+    def test_resealed_research_values_cannot_change_fixed_artifact_payloads(self) -> None:
+        mutations = {
+            "trade_gross": ("trades.jsonl", lambda value: value[0].__setitem__("gross", "855001.0")),
+            "trade_commission": ("trades.jsonl", lambda value: value[0].__setitem__("commission", "999.0")),
+            "trade_stamp_tax": ("trades.jsonl", lambda value: value[0].__setitem__("stamp_tax", "999.0")),
+            "trade_cash": ("trades.jsonl", lambda value: value[0].__setitem__("cash_delta", "-1.0")),
+            "order": ("orders.jsonl", lambda value: value[0].__setitem__("note", "fabricated")),
+            "equity": ("equity.jsonl", lambda value: value[0].__setitem__("cash", "999999.0")),
+            "metrics": (
+                "metrics.json",
+                lambda value: value["values"].__setitem__("annualized_return", "999.0"),
+            ),
+        }
+        for name, (filename, mutate) in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp_dir:
+                output = Path(temp_dir) / "output"
+                _run_test_experiment(output)
+                artifact_path = output / filename
+                if filename.endswith(".jsonl"):
+                    value = [
+                        json.loads(line)
+                        for line in artifact_path.read_text(encoding="utf-8").splitlines()
+                    ]
+                    mutate(value)
+                    payload = b"".join(_canonical_bytes(row) for row in value)
+                    row_count = len(value)
+                else:
+                    value = json.loads(artifact_path.read_bytes())
+                    mutate(value)
+                    payload = _canonical_bytes(value)
+                    row_count = 1
+                artifact_path.write_bytes(payload)
+                _update_artifact_and_reseal(output, filename, payload, row_count)
+
+                with self.assertRaisesRegex(experiment.ExperimentError, "fixed research artifact SHA256"):
+                    experiment.verify_experiment(output)
+
+    def test_same_length_rewrite_with_restored_mtime_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            _run_test_experiment(output)
+            equity_path = output / "equity.jsonl"
+            trades_path = output / "trades.jsonl"
+            original_equity_info = equity_path.stat()
+            trades_inode = trades_path.stat().st_ino
+            original_path_read = Path.read_bytes
+            original_os_read = os.read
+            mutated = False
+
+            def mutate_equity_once() -> None:
+                nonlocal mutated
+                if mutated:
+                    return
+                payload = original_path_read(equity_path)
+                changed = payload.replace(b'"cash":"1000000.0"', b'"cash":"1000001.0"', 1)
+                self.assertEqual(len(changed), len(payload))
+                with equity_path.open("r+b") as handle:
+                    handle.write(changed)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.utime(
+                    equity_path,
+                    ns=(original_equity_info.st_atime_ns, original_equity_info.st_mtime_ns),
+                    follow_symlinks=False,
+                )
+                mutated = True
+
+            def path_read_with_mutation(path):
+                payload = original_path_read(path)
+                if path.name == "trades.jsonl":
+                    mutate_equity_once()
+                return payload
+
+            def os_read_with_mutation(descriptor, size):
+                if os.fstat(descriptor).st_ino == trades_inode:
+                    mutate_equity_once()
+                return original_os_read(descriptor, size)
+
+            with patch.object(Path, "read_bytes", path_read_with_mutation), patch.object(
+                os, "read", os_read_with_mutation
+            ):
+                with self.assertRaisesRegex(experiment.ExperimentError, "changed during verification"):
+                    experiment.verify_experiment(output)
+
     def test_snapshot_byte_mutation_is_rejected_before_output_publication(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             snapshot = Path(temp_dir) / "snapshot"
@@ -388,20 +562,22 @@ class ReproducibleExperimentBoundaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "output"
             _run_test_experiment(output)
-            original_read_bytes = Path.read_bytes
+            equity_path = output / "equity.jsonl"
+            trades_inode = (output / "trades.jsonl").stat().st_ino
+            original_equity = equity_path.read_bytes()
+            original_os_read = os.read
             mutated = False
 
-            def read_then_mutate_earlier_artifact(path):
+            def read_then_mutate_earlier_artifact(descriptor, size):
                 nonlocal mutated
-                payload = original_read_bytes(path)
-                if path.name == "trades.jsonl" and not mutated:
-                    equity_path = path.parent / "equity.jsonl"
-                    equity = original_read_bytes(equity_path)
-                    equity_path.write_bytes(equity.replace(b"1000000.0", b"1000001.0", 1))
+                if os.fstat(descriptor).st_ino == trades_inode and not mutated:
+                    equity_path.write_bytes(
+                        original_equity.replace(b"1000000.0", b"1000001.0", 1)
+                    )
                     mutated = True
-                return payload
+                return original_os_read(descriptor, size)
 
-            with patch.object(Path, "read_bytes", read_then_mutate_earlier_artifact):
+            with patch.object(os, "read", read_then_mutate_earlier_artifact):
                 with self.assertRaisesRegex(experiment.ExperimentError, "changed during verification"):
                     experiment.verify_experiment(output)
 
