@@ -134,15 +134,8 @@ class QDataSnapshotLoadTest(unittest.TestCase):
         self.assertEqual(master["valid_to"], pd.Timestamp("2024-01-05"))
         self.assertEqual(master["delistDate"], pd.Timestamp("2024-01-05"))
 
-    def test_snapshot_adapter_never_synthesizes_a_missing_symbol_session(self) -> None:
+    def test_snapshot_adapter_rejects_missing_active_symbol_session_coverage(self) -> None:
         missing_key = ("000001.SZ", "2024-01-03")
-        expected_keys = {
-            ("000001.SZ", "2024-01-02"),
-            ("000001.SZ", "2024-01-04"),
-            ("600519.SH", "2024-01-02"),
-            ("600519.SH", "2024-01-03"),
-            ("600519.SH", "2024-01-04"),
-        }
         with _snapshot_copy() as root:
             def remove_key(rows):
                 return [
@@ -153,15 +146,81 @@ class QDataSnapshotLoadTest(unittest.TestCase):
             _edit_csv(root, "daily_bar", remove_key)
             _edit_csv(root, "tradability", remove_key)
 
+            with self.assertRaisesRegex(
+                QDataSnapshotError,
+                "missing explicit market/tradability coverage",
+            ):
+                load_qdata_snapshot(root)
+
+    def test_snapshot_adapter_allows_missing_sessions_after_exclusive_valid_to(self) -> None:
+        with _snapshot_copy() as root:
+            def end_membership_before_later_market_dates(rows):
+                for row in rows:
+                    if row["symbol"] == "000001.SZ":
+                        row["delist_date"] = "2024-01-03"
+                        row["valid_to"] = "2024-01-03"
+                return rows
+
+            def remove_post_membership_rows(rows):
+                return [
+                    row for row in rows
+                    if row["symbol"] != "000001.SZ" or row["trade_date"] < "2024-01-03"
+                ]
+
+            _edit_csv(root, "security_membership", end_membership_before_later_market_dates)
+            _edit_csv(root, "daily_bar", remove_post_membership_rows)
+            _edit_csv(root, "tradability", remove_post_membership_rows)
+
             loaded = load_qdata_snapshot(root)
 
-        actual_keys = {
-            (row.symbol, row.date.strftime("%Y-%m-%d"))
-            for row in loaded.data[["symbol", "date"]].itertuples(index=False)
-        }
-        self.assertEqual(actual_keys, expected_keys)
-        self.assertEqual(len(loaded.data), 5)
-        self.assertNotIn(missing_key, actual_keys)
+            self.assertEqual(
+                set(zip(loaded.data["symbol"], loaded.data["date"])),
+                {
+                    ("000001.SZ", pd.Timestamp("2024-01-02")),
+                    ("600519.SH", pd.Timestamp("2024-01-02")),
+                    ("600519.SH", pd.Timestamp("2024-01-03")),
+                    ("600519.SH", pd.Timestamp("2024-01-04")),
+                },
+            )
+
+    def test_active_gap_is_rejected_before_public_backtest_can_erase_held_value(self) -> None:
+        missing_key = ("600519.SH", "2024-01-04")
+        spec = StrategySpec.from_dict(
+            {
+                "name": "active-gap-regression",
+                "description": "Reject missing held-symbol coverage before valuation.",
+                "universe": {"exclude_st": True, "exclude_suspended": True, "min_amount": 0.0},
+                "rebalance": {"frequency": "weekly"},
+                "portfolio": {"initial_cash": 1_000_000.0, "max_positions": 1, "weighting": "equal"},
+                "costs": {"commission_rate": 0.0, "stamp_tax_rate": 0.0, "slippage_bps": 0.0},
+                "execution": {"model": "close_signal_next_open"},
+                "factors": [{"field": "roe_ttm", "direction": "desc", "weight": 1.0}],
+                "risk": {"max_single_position_weight": 1.0},
+            }
+        )
+        with _snapshot_copy() as root:
+            def remove_key(rows):
+                return [
+                    row for row in rows
+                    if (row["symbol"], row["trade_date"]) != missing_key
+                ]
+
+            _edit_csv(root, "daily_bar", remove_key)
+            _edit_csv(root, "tradability", remove_key)
+
+            try:
+                loaded = load_qdata_snapshot(root)
+            except QDataSnapshotError as exc:
+                self.assertIn("missing explicit market/tradability coverage", str(exc))
+            else:
+                result = run_backtest(loaded.data, spec)
+                jan_four = result.equity_curve[
+                    result.equity_curve["date"] == pd.Timestamp("2024-01-04")
+                ].iloc[0]
+                self.fail(
+                    "active coverage gap reached public run_backtest; "
+                    f"Jan 4 equity={float(jan_four['equity'])} cash={float(jan_four['cash'])}"
+                )
 
     def test_installed_package_exposes_snapshot_adapter_outside_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

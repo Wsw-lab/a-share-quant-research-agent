@@ -680,6 +680,26 @@ def _validate_cross_dataset(
             if position and (previous_end is None or start < previous_end):
                 raise QDataSnapshotError(f"symbol {symbol} has overlapping membership intervals")
             previous_end = end
+
+    market_trade_dates = sorted(
+        {date.fromisoformat(trade_date_text) for _, trade_date_text in daily_keys}
+    )
+    missing_coverage: list[tuple[str, str]] = []
+    for symbol, intervals in memberships.items():
+        for membership in intervals:
+            start = date.fromisoformat(membership["valid_from"])
+            end = date.fromisoformat(membership["valid_to"]) if membership["valid_to"] else None
+            for trade_day in market_trade_dates:
+                if start <= trade_day and (end is None or trade_day < end):
+                    key = (symbol, trade_day.isoformat())
+                    if key not in daily_keys or key not in tradability_keys:
+                        missing_coverage.append(key)
+    if missing_coverage:
+        raise QDataSnapshotError(
+            "missing explicit market/tradability coverage for active membership keys: "
+            f"{missing_coverage[:5]}"
+        )
+
     for symbol, trade_date_text in sorted(daily_keys):
         trade_day = date.fromisoformat(trade_date_text)
         daily = daily_by_key[(symbol, trade_date_text)]
