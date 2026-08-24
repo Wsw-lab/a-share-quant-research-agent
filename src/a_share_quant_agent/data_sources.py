@@ -30,6 +30,11 @@ class DataSourceMetadata:
     end_date: str
     notes: tuple[str, ...]
     data_hash: str = ""
+    snapshot_id: str = ""
+    schema_version: str = ""
+    cutoff_ts: str = ""
+    dataset_versions: tuple[tuple[str, str], ...] = ()
+    source_lineage: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

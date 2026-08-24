@@ -1,0 +1,4 @@
+symbol,report_period_end,field_name,field_value,published_at,first_seen_at,available_at,revision_id,is_restated,source_id
+000001.SZ,2023-09-30,roe_ttm,0.112,2023-10-23T10:30:00Z,2023-10-23T10:35:00Z,2023-10-24T01:00:00Z,original,false,synthetic
+600519.SH,2023-09-30,roe_ttm,0.315,2023-10-20T10:30:00Z,2023-10-20T10:35:00Z,2023-10-23T01:00:00Z,original,false,synthetic
+600519.SH,2023-09-30,roe_ttm,0.318,2024-01-03T10:30:00Z,2024-01-03T10:35:00Z,2024-01-04T01:00:00Z,restatement-1,true,synthetic

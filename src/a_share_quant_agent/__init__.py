@@ -18,10 +18,10 @@ __all__ = [
     "paper",
     "paper_control",
     "pit_structure_sources",
+    "qdata_snapshot",
     "report",
     "run_registry",
     "sample_data",
     "spec",
     "walk_forward",
 ]
-
