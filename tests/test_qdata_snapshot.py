@@ -15,6 +15,8 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from tests.install_probe import copy_installable_checkout
+
 from a_share_quant_agent.backtest import run_backtest
 from a_share_quant_agent.qdata_snapshot import (
     QDataSnapshotError,
@@ -225,6 +227,7 @@ class QDataSnapshotLoadTest(unittest.TestCase):
     def test_installed_package_exposes_snapshot_adapter_outside_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
+            source_copy = copy_installable_checkout(ROOT, temporary / "package-source")
             target = temporary / "site-packages"
             outside = temporary / "outside"
             outside.mkdir()
@@ -234,7 +237,7 @@ class QDataSnapshotLoadTest(unittest.TestCase):
             install = subprocess.run(
                 [
                     sys.executable, "-m", "pip", "install", "--no-deps",
-                    "--no-build-isolation", "--target", str(target), str(ROOT),
+                    "--no-build-isolation", "--target", str(target), str(source_copy),
                 ],
                 cwd=outside,
                 env=environment,

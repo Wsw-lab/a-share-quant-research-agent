@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.install_probe import copy_installable_checkout
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,6 +54,7 @@ class PublicDemoTest(unittest.TestCase):
     def test_installed_package_imports_and_runs_probe_outside_repository(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
+            source_copy = copy_installable_checkout(ROOT, temporary / "package-source")
             target = temporary / "site-packages"
             outside = temporary / "outside-repository"
             outside.mkdir()
@@ -68,7 +71,7 @@ class PublicDemoTest(unittest.TestCase):
                     "--no-build-isolation",
                     "--target",
                     str(target),
-                    str(ROOT),
+                    str(source_copy),
                 ],
                 cwd=outside,
                 env=environment,

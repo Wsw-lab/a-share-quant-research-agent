@@ -276,6 +276,8 @@ class ReadmeContractTest(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(status.stdout, "")
+            self.assertEqual(list(checkout.rglob("__pycache__")), [])
+            self.assertEqual(list(checkout.rglob("*.egg-info")), [])
 
     def test_readme_origin_guard_accepts_canonical_https_and_ssh_forms_only(self) -> None:
         commands = _readme_green_path_commands(README.read_text(encoding="utf-8"))
