@@ -45,6 +45,64 @@ class QDataStockMasterContractTest(unittest.TestCase):
         self.assertEqual(row["listDate"], pd.Timestamp("2019-03-01"))
         self.assertEqual(row["listStatus"], "active")
 
+    def test_numeric_yyyymmdd_dates_parse_as_calendar_dates_not_nanoseconds(self) -> None:
+        raw = (
+            "symbol,name,asset_type,list_date,delist_date,status,reportDate\n"
+            "000001.SZ,Numeric Dates,stock,20200102,20200105,delisted,20200103\n"
+        )
+
+        master = self._load(raw)
+        row = master.iloc[0]
+        self.assertEqual(row["listDate"], pd.Timestamp("2020-01-02"))
+        self.assertEqual(row["delistDate"], pd.Timestamp("2020-01-05"))
+        self.assertEqual(row["reportDate"], pd.Timestamp("2020-01-03"))
+
+        panel = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-04", "2020-01-05"]),
+                "symbol": ["000001.SZ"] * 4,
+            }
+        )
+        filtered = apply_point_in_time_stock_master_filter(
+            enrich_panel_with_stock_master(panel, master)
+        ).data
+        self.assertEqual(list(filtered["is_stock_master_member"]), [False, True, True, False])
+
+    def test_list_date_parser_rejects_float_short_fuzzy_time_and_invalid_calendar(self) -> None:
+        invalid_values = (
+            "20200102.0",
+            "202001",
+            "2020-01-02T00:00:00",
+            "Jan 2 2020",
+            "20200230",
+        )
+
+        for invalid in invalid_values:
+            raw = (
+                "symbol,name,asset_type,list_date,delist_date,status\n"
+                f"000001.SZ,Invalid Date,stock,{invalid},,active\n"
+            )
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(DataSourceError):
+                    self._load_unchecked(raw)
+
+    def test_delist_and_report_dates_use_the_same_date_only_contract(self) -> None:
+        fixtures = (
+            (
+                "symbol,name,asset_type,list_date,delist_date,status\n"
+                "000001.SZ,Timed Delist,stock,2020-01-02,2020-01-05T12:00:00,delisted\n"
+            ),
+            (
+                "symbol,name,asset_type,list_date,delist_date,status,reportDate\n"
+                "000001.SZ,Timed Report,stock,2020-01-02,,active,2020-01-03 12:00:00\n"
+            ),
+        )
+
+        for raw in fixtures:
+            with self.subTest(raw=raw):
+                with self.assertRaises(DataSourceError):
+                    self._load_unchecked(raw)
+
     def test_mapped_qdata_dates_drive_point_in_time_eligibility(self) -> None:
         raw = (
             "symbol,name,asset_type,currency,list_date,delist_date,status\n"

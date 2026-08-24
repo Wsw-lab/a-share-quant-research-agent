@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date as date_value
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -170,12 +172,16 @@ def symbols_from_stock_master(
         return ()
     stock_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip().str.upper()
     eligible &= stock_type.isin({"A股".upper(), "A", "ASHARE", "A-SHARE"})
-    list_dates = pd.to_datetime(frame["listDate"], errors="coerce")
+    list_dates = _parse_stock_master_date_column(
+        frame["listDate"], field="listDate", source="Stock master candidate extraction"
+    )
     eligible &= list_dates.notna()
     if end:
         eligible &= list_dates <= pd.Timestamp(_date_with_dash(end))
     delist_dates = (
-        pd.to_datetime(frame["delistDate"], errors="coerce")
+        _parse_stock_master_date_column(
+            frame["delistDate"], field="delistDate", source="Stock master candidate extraction"
+        )
         if "delistDate" in frame
         else pd.Series(pd.NaT, index=frame.index)
     )
@@ -223,9 +229,19 @@ def validate_stock_master_asset(
         suffixes = symbols.astype(str).str.split(".", n=1).str[1]
         exchange_counts = {str(key): int(value) for key, value in suffixes.value_counts(dropna=True).sort_index().items()}
 
-    list_dates = pd.to_datetime(frame["listDate"], errors="coerce") if "listDate" in frame else pd.Series(pd.NaT, index=frame.index)
+    list_dates = (
+        _parse_stock_master_date_column(
+            frame["listDate"], field="listDate", source="Stock master asset validation"
+        )
+        if "listDate" in frame
+        else pd.Series(pd.NaT, index=frame.index)
+    )
     delist_dates = (
-        pd.to_datetime(frame["delistDate"], errors="coerce") if "delistDate" in frame else pd.Series(pd.NaT, index=frame.index)
+        _parse_stock_master_date_column(
+            frame["delistDate"], field="delistDate", source="Stock master asset validation"
+        )
+        if "delistDate" in frame
+        else pd.Series(pd.NaT, index=frame.index)
     )
     list_date_coverage = float(list_dates.notna().mean()) if rows else 0.0
     delisted_rows = int(delist_dates.notna().sum()) if rows else 0
@@ -996,12 +1012,16 @@ def apply_point_in_time_stock_master_filter(data: pd.DataFrame) -> PointInTimeSt
 
     panel["date"] = pd.to_datetime(panel["date"], errors="coerce")
     list_dates = (
-        pd.to_datetime(panel["listDate"], errors="coerce")
+        _parse_stock_master_date_column(
+            panel["listDate"], field="listDate", source="Point-in-time stock master filter"
+        )
         if "listDate" in panel
         else pd.Series(pd.NaT, index=panel.index)
     )
     delist_dates = (
-        pd.to_datetime(panel["delistDate"], errors="coerce")
+        _parse_stock_master_date_column(
+            panel["delistDate"], field="delistDate", source="Point-in-time stock master filter"
+        )
         if "delistDate" in panel
         else pd.Series(pd.NaT, index=panel.index)
     )
@@ -2220,7 +2240,9 @@ def _normalize_investoday_stock_basic_info(raw: pd.DataFrame) -> pd.DataFrame:
                 frame[column], field=column, source="Investoday stock/basic-info"
             )
     if "reportDate" in frame:
-        frame["reportDate"] = pd.to_datetime(frame["reportDate"], errors="coerce")
+        frame["reportDate"] = _parse_stock_master_date_column(
+            frame["reportDate"], field="reportDate", source="Investoday stock/basic-info"
+        )
     for column in ("boardCode", "sharesTotal", "sharesFloat", "sharesFloatA", "companyGrowthStage"):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -2338,7 +2360,9 @@ def _normalize_external_stock_master(raw: pd.DataFrame) -> pd.DataFrame:
         else:
             frame[column] = pd.NaT
     if "reportDate" in frame:
-        frame["reportDate"] = pd.to_datetime(frame["reportDate"], errors="coerce")
+        frame["reportDate"] = _parse_stock_master_date_column(
+            frame["reportDate"], field="reportDate", source="Historical stock master CSV"
+        )
     else:
         frame["reportDate"] = pd.NaT
     for column in ("boardCode", "sharesTotal", "sharesFloat", "sharesFloatA", "companyGrowthStage"):
@@ -2380,7 +2404,9 @@ def _validate_historical_stock_master_lifecycle(frame: pd.DataFrame, *, source: 
         )
     stock_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip()
     status = frame["listStatus"].where(frame["listStatus"].notna(), "").astype(str).str.strip().str.upper()
-    list_dates = pd.to_datetime(frame["listDate"], errors="coerce")
+    list_dates = _parse_stock_master_date_column(
+        frame["listDate"], field="listDate", source=source
+    )
     missing_tokens = {"", "NAN", "NONE", "<NA>"}
     if stock_type.str.upper().isin(missing_tokens).any():
         raise DataSourceError(f"{source} has rows with missing stockType/asset_type.")
@@ -2390,7 +2416,9 @@ def _validate_historical_stock_master_lifecycle(frame: pd.DataFrame, *, source: 
         raise DataSourceError(f"{source} has rows with missing or invalid listDate/list_date.")
 
     delist_dates = (
-        pd.to_datetime(frame["delistDate"], errors="coerce")
+        _parse_stock_master_date_column(
+            frame["delistDate"], field="delistDate", source=source
+        )
         if "delistDate" in frame
         else pd.Series(pd.NaT, index=frame.index)
     )
@@ -2402,12 +2430,66 @@ def _validate_historical_stock_master_lifecycle(frame: pd.DataFrame, *, source: 
 
 
 def _parse_stock_master_date_column(series: pd.Series, *, field: str, source: str) -> pd.Series:
-    raw_text = series.where(series.notna(), "").astype(str).str.strip().str.upper()
-    supplied = ~raw_text.isin({"", "NAN", "NAT", "NONE", "<NA>"})
-    parsed = pd.to_datetime(series, errors="coerce")
-    if (supplied & parsed.isna()).any():
-        raise DataSourceError(f"{source} has non-empty invalid {field} values.")
-    return parsed
+    parsed: list[object] = []
+    invalid_rows: list[str] = []
+    for index, value in series.items():
+        try:
+            parsed.append(_parse_stock_master_date_value(value))
+        except (TypeError, ValueError):
+            invalid_rows.append(str(index))
+            parsed.append(pd.NaT)
+    if invalid_rows:
+        preview = ", ".join(invalid_rows[:5])
+        raise DataSourceError(
+            f"{source} has invalid {field} values at rows [{preview}]; "
+            "expected YYYY-MM-DD or 8-digit YYYYMMDD date values."
+        )
+    return pd.Series(parsed, index=series.index, dtype="datetime64[ns]")
+
+
+def _parse_stock_master_date_value(value: object) -> object:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return pd.NaT
+    try:
+        if bool(pd.isna(value)):
+            return pd.NaT
+    except (TypeError, ValueError):
+        raise TypeError("Stock-master dates must be scalar values.")
+
+    if isinstance(value, bool):
+        raise TypeError("Boolean values are not stock-master dates.")
+    if isinstance(value, (int, np.integer)):
+        text = str(int(value))
+    elif isinstance(value, str):
+        text = value.strip()
+        if text.upper() in {"", "NAN", "NAT", "NONE", "<NA>"}:
+            return pd.NaT
+    elif isinstance(value, datetime):
+        if value.tzinfo is not None or value.time() != datetime.min.time():
+            raise ValueError("Stock-master timestamps must be timezone-free date-only values.")
+        return pd.Timestamp(value.date())
+    elif isinstance(value, date_value):
+        return pd.Timestamp(value)
+    else:
+        raise TypeError("Unsupported stock-master date type.")
+
+    if len(text) == 8 and text.isdigit():
+        year_text, month_text, day_text = text[:4], text[4:6], text[6:8]
+    elif (
+        len(text) == 10
+        and text[4] == "-"
+        and text[7] == "-"
+        and (text[:4] + text[5:7] + text[8:10]).isdigit()
+    ):
+        year_text, month_text, day_text = text[:4], text[5:7], text[8:10]
+    else:
+        raise ValueError("Stock-master date does not match an allowed date-only format.")
+
+    try:
+        parsed_date = date_value(int(year_text), int(month_text), int(day_text))
+    except ValueError as exc:
+        raise ValueError("Stock-master date is not a valid calendar date.") from exc
+    return pd.Timestamp(parsed_date)
 
 
 def _normalize_investoday_index_quotes(raw: pd.DataFrame) -> pd.DataFrame:

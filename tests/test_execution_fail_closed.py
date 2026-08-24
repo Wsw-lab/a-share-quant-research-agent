@@ -282,6 +282,37 @@ class ExecutionAccountingTest(unittest.TestCase):
         self.assertEqual(int(buy["shares"]), 2_500)
         self.assertEqual(float(buy["gross"]), 50_000.0)
 
+    def test_existing_position_gap_uses_raw_open_nav_for_next_open_rebalance(self) -> None:
+        data = _raw_panel(
+            [
+                ("2024-01-05", "000001.SZ", 10.0, 10.0),
+                ("2024-01-05", "600000.SH", 10.0, 10.0),
+                ("2024-01-08", "000001.SZ", 10.0, 10.0),
+                ("2024-01-08", "600000.SH", 10.0, 10.0),
+                ("2024-01-09", "000001.SZ", 20.0, 10.0),
+                ("2024-01-09", "600000.SH", 10.0, 10.0),
+            ]
+        )
+        data["score"] = [2.0, 1.0, 1.0, 2.0, 1.0, 2.0]
+
+        result = run_backtest(data, _spec())
+
+        self.assertEqual(list(result.trades["side"]), ["buy", "sell", "buy"])
+        switched_buy = result.trades[
+            (result.trades["date"] == pd.Timestamp("2024-01-09"))
+            & (result.trades["symbol"] == "600000.SH")
+            & (result.trades["side"] == "buy")
+        ].iloc[0]
+        self.assertEqual(int(switched_buy["shares"]), 20_000)
+        self.assertEqual(float(switched_buy["gross"]), 200_000.0)
+        final = result.equity_curve.iloc[-1]
+        self.assertEqual(float(final["cash"]), 0.0)
+        final_holding = result.holdings[
+            (result.holdings["date"] == pd.Timestamp("2024-01-09"))
+            & (result.holdings["symbol"] == "600000.SH")
+        ].iloc[0]
+        self.assertEqual(int(final_holding["shares"]), 20_000)
+
     def test_default_and_legacy_models_have_hand_checked_gap_accounting(self) -> None:
         data = _single_symbol_panel(
             [
