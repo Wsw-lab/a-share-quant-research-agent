@@ -134,6 +134,35 @@ class QDataSnapshotLoadTest(unittest.TestCase):
         self.assertEqual(master["valid_to"], pd.Timestamp("2024-01-05"))
         self.assertEqual(master["delistDate"], pd.Timestamp("2024-01-05"))
 
+    def test_snapshot_adapter_never_synthesizes_a_missing_symbol_session(self) -> None:
+        missing_key = ("000001.SZ", "2024-01-03")
+        expected_keys = {
+            ("000001.SZ", "2024-01-02"),
+            ("000001.SZ", "2024-01-04"),
+            ("600519.SH", "2024-01-02"),
+            ("600519.SH", "2024-01-03"),
+            ("600519.SH", "2024-01-04"),
+        }
+        with _snapshot_copy() as root:
+            def remove_key(rows):
+                return [
+                    row for row in rows
+                    if (row["symbol"], row["trade_date"]) != missing_key
+                ]
+
+            _edit_csv(root, "daily_bar", remove_key)
+            _edit_csv(root, "tradability", remove_key)
+
+            loaded = load_qdata_snapshot(root)
+
+        actual_keys = {
+            (row.symbol, row.date.strftime("%Y-%m-%d"))
+            for row in loaded.data[["symbol", "date"]].itertuples(index=False)
+        }
+        self.assertEqual(actual_keys, expected_keys)
+        self.assertEqual(len(loaded.data), 5)
+        self.assertNotIn(missing_key, actual_keys)
+
     def test_installed_package_exposes_snapshot_adapter_outside_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
@@ -198,6 +227,25 @@ class QDataSnapshotRejectTest(unittest.TestCase):
 
             with self.assertRaisesRegex(QDataSnapshotError, "hard link"):
                 verify_qdata_snapshot(root)
+
+    def test_directory_entry_added_during_verification_fails_closed(self) -> None:
+        with _snapshot_copy() as root:
+            original_listdir = os.listdir
+            mutation_happened = False
+
+            def add_entry_after_first_listing(path):
+                nonlocal mutation_happened
+                names = original_listdir(path)
+                if not mutation_happened:
+                    (root / "injected-during-read").write_text("changed\n", encoding="utf-8")
+                    mutation_happened = True
+                return names
+
+            with patch("os.listdir", side_effect=add_entry_after_first_listing):
+                with self.assertRaisesRegex(QDataSnapshotError, "changed during verification"):
+                    verify_qdata_snapshot(root)
+
+            self.assertTrue(mutation_happened)
 
     def test_unknown_schema_extra_and_missing_files_fail_closed(self) -> None:
         cases = ("schema", "extra", "missing")
@@ -276,6 +324,28 @@ class QDataSnapshotRejectTest(unittest.TestCase):
 
                 with self.assertRaises(QDataSnapshotError):
                     load_qdata_snapshot(root)
+
+    def test_next_session_availability_before_snapshot_cutoff_fails_closed(self) -> None:
+        with _snapshot_copy() as root:
+            def arrive_after_next_open(rows):
+                rows[0]["available_at"] = "2024-01-03T01:31:00Z"
+                return rows
+
+            _edit_csv(root, "tradability", arrive_after_next_open)
+
+            with self.assertRaisesRegex(QDataSnapshotError, "local trade_date"):
+                load_qdata_snapshot(root)
+
+    def test_future_report_period_relative_to_disclosure_times_fails_closed(self) -> None:
+        with _snapshot_copy() as root:
+            def move_period_into_future(rows):
+                rows[0]["report_period_end"] = "2024-12-31"
+                return rows
+
+            _edit_csv(root, "fundamental_pit", move_period_into_future)
+
+            with self.assertRaisesRegex(QDataSnapshotError, "report_period_end"):
+                load_qdata_snapshot(root)
 
     def test_cross_table_key_membership_and_critical_constraints_fail_closed(self) -> None:
         cases = ("key", "coverage", "membership_late", "limit", "can_buy")

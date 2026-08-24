@@ -337,6 +337,138 @@ class ExecutionAccountingTest(unittest.TestCase):
         self.assertEqual(float(result.trades.iloc[0]["price"]), 10.0)
         self.assertEqual(result.trades.iloc[0]["fill_price_field"], "close")
 
+    def test_explicit_can_buy_false_blocks_otherwise_tradable_next_open(self) -> None:
+        data = _single_symbol_panel(
+            [("2024-01-02", 10.0, 10.0), ("2024-01-03", 10.0, 10.0)]
+        )
+        data["can_buy"] = [True, False]
+
+        result = run_backtest(data, _spec())
+
+        self.assertTrue(result.trades.empty)
+        self.assertEqual(list(result.orders["status"]), ["blocked_cannot_buy"])
+
+    def test_explicit_can_sell_false_blocks_otherwise_tradable_rebalance_sell(self) -> None:
+        data = _raw_panel(
+            [
+                ("2024-01-05", "000001.SZ", 10.0, 10.0),
+                ("2024-01-05", "600000.SH", 10.0, 10.0),
+                ("2024-01-08", "000001.SZ", 10.0, 10.0),
+                ("2024-01-08", "600000.SH", 10.0, 10.0),
+                ("2024-01-09", "000001.SZ", 10.0, 10.0),
+                ("2024-01-09", "600000.SH", 10.0, 10.0),
+            ]
+        )
+        data["score"] = [2.0, 1.0, 1.0, 2.0, 1.0, 2.0]
+        data["can_sell"] = True
+        data.loc[
+            (data["date"] == pd.Timestamp("2024-01-09"))
+            & (data["symbol"] == "000001.SZ"),
+            "can_sell",
+        ] = False
+
+        result = run_backtest(data, _spec())
+
+        blocked = result.orders[
+            (result.orders["date"] == pd.Timestamp("2024-01-09"))
+            & (result.orders["side"] == "sell")
+        ]
+        self.assertEqual(list(blocked["status"]), ["blocked_cannot_sell"])
+        self.assertFalse((result.trades["side"] == "sell").any())
+
+    def test_nonstandard_lot_size_controls_public_order_and_fill_shares(self) -> None:
+        data = _single_symbol_panel(
+            [("2024-01-02", 10.0, 10.0), ("2024-01-03", 10.0, 10.0)]
+        )
+        data["lot_size"] = 300
+
+        result = run_backtest(data, _spec())
+
+        buy = result.trades.iloc[0]
+        filled_order = result.orders[result.orders["status"] == "filled"].iloc[0]
+        self.assertEqual(int(buy["shares"]), 9_900)
+        self.assertEqual(int(filled_order["requested_shares"]), 9_900)
+        self.assertEqual(int(buy["shares"]) % 300, 0)
+
+    def test_t_plus_one_false_allows_private_same_day_sell_path(self) -> None:
+        today = _execution_today(open_price=10.0, close_price=10.0)
+        today["t_plus_one"] = False
+        trade_rows: list[dict[str, object]] = []
+        order_rows: list[dict[str, object]] = []
+
+        cash, shares = _sell(
+            date=pd.Timestamp("2024-01-02"),
+            symbol="000001.SZ",
+            shares=100,
+            cash=0.0,
+            held_shares=100,
+            buy_dates={"000001.SZ": pd.Timestamp("2024-01-02")},
+            today=today,
+            spec=_spec(),
+            trade_rows=trade_rows,
+            order_rows=order_rows,
+            price_field="open",
+            signal_date=pd.Timestamp("2024-01-02"),
+            execution_model="close_signal_next_open",
+        )
+
+        self.assertEqual(shares, 0)
+        self.assertEqual(cash, 1_000.0)
+        self.assertEqual(list(row["status"] for row in order_rows), ["filled"])
+
+    def test_nan_in_any_present_optional_execution_column_fails_closed(self) -> None:
+        for field in ("can_buy", "can_sell", "lot_size", "t_plus_one"):
+            with self.subTest(field=field):
+                today = _execution_today(open_price=10.0, close_price=10.0)
+                today[field] = pd.NA
+                trade_rows: list[dict[str, object]] = []
+                order_rows: list[dict[str, object]] = []
+
+                cash, shares = _buy(
+                    pd.Timestamp("2024-01-02"),
+                    "000001.SZ",
+                    100,
+                    2_000.0,
+                    0,
+                    today,
+                    _spec(),
+                    trade_rows,
+                    order_rows=order_rows,
+                    price_field="open",
+                    signal_date=pd.Timestamp("2024-01-01"),
+                    execution_model="close_signal_next_open",
+                )
+
+                self.assertEqual((cash, shares), (2_000.0, 0))
+                self.assertEqual(list(row["status"] for row in order_rows), ["blocked_missing_constraint"])
+                self.assertEqual(trade_rows, [])
+
+    def test_below_lot_order_ledger_preserves_original_requested_shares(self) -> None:
+        today = _execution_today(open_price=10.0, close_price=10.0)
+        today["lot_size"] = 300
+        trade_rows: list[dict[str, object]] = []
+        order_rows: list[dict[str, object]] = []
+
+        cash, shares = _buy(
+            pd.Timestamp("2024-01-02"),
+            "000001.SZ",
+            100,
+            2_000.0,
+            0,
+            today,
+            _spec(),
+            trade_rows,
+            order_rows=order_rows,
+            price_field="open",
+            signal_date=pd.Timestamp("2024-01-01"),
+            execution_model="close_signal_next_open",
+        )
+
+        self.assertEqual((cash, shares), (2_000.0, 0))
+        self.assertEqual(order_rows[0]["status"], "blocked_below_lot_size")
+        self.assertEqual(order_rows[0]["requested_shares"], 100)
+        self.assertEqual(trade_rows, [])
+
 
 def _spec(
     *,

@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import stat
 from typing import Any, Mapping, Sequence
@@ -163,74 +164,295 @@ def load_qdata_snapshot(snapshot_dir: str | Path) -> DataLoadResult:
 
 
 def _verify_snapshot(root: Path) -> tuple[dict[str, Any], dict[str, list[dict[str, str]]]]:
-    payloads = _read_exact_files(root)
-    manifest_payload = payloads[MANIFEST_FILENAME]
-    manifest = _read_manifest(manifest_payload)
-    cutoff = _parse_timestamp(manifest["cutoff_ts"], "cutoff_ts")
-    timezone_name = _required_string(manifest["timezone"], "timezone")
+    directory_fd, directory_identity = _open_regular_directory(root)
+    file_fds: dict[str, int] = {}
     try:
-        snapshot_timezone = ZoneInfo(timezone_name)
-    except ZoneInfoNotFoundError as exc:
-        raise QDataSnapshotError(f"unknown IANA timezone: {timezone_name}") from exc
-    data_version = _required_string(manifest["data_version"], "data_version")
-    _validate_manifest_values(manifest, cutoff)
+        payloads, file_fds, file_identities = _read_snapshot_payloads(directory_fd)
+        manifest_payload = payloads[MANIFEST_FILENAME]
+        manifest = _read_manifest(manifest_payload)
+        cutoff = _parse_timestamp(manifest["cutoff_ts"], "cutoff_ts")
+        timezone_name = _required_string(manifest["timezone"], "timezone")
+        try:
+            snapshot_timezone = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise QDataSnapshotError(f"unknown IANA timezone: {timezone_name}") from exc
+        data_version = _required_string(manifest["data_version"], "data_version")
+        _validate_manifest_values(manifest, cutoff)
 
-    rows_by_dataset: dict[str, list[dict[str, str]]] = {}
-    for name, contract in _CONTRACTS.items():
-        payload = payloads[f"{name}.csv"]
-        metadata = manifest["datasets"][name]
-        if metadata["sha256"] != _sha256(payload):
-            raise QDataSnapshotError(f"SHA256 mismatch for {name}.csv")
-        rows = _read_and_canonicalize_csv(
-            name,
-            contract,
-            payload,
-            cutoff=cutoff,
-            data_version=data_version,
-            snapshot_timezone=snapshot_timezone,
+        rows_by_dataset: dict[str, list[dict[str, str]]] = {}
+        for name, contract in _CONTRACTS.items():
+            payload = payloads[f"{name}.csv"]
+            metadata = manifest["datasets"][name]
+            if metadata["sha256"] != _sha256(payload):
+                raise QDataSnapshotError(f"SHA256 mismatch for {name}.csv")
+            rows = _read_and_canonicalize_csv(
+                name,
+                contract,
+                payload,
+                cutoff=cutoff,
+                data_version=data_version,
+                snapshot_timezone=snapshot_timezone,
+            )
+            expected_metadata = _dataset_metadata(name, contract, rows, payload)
+            if metadata != expected_metadata:
+                raise QDataSnapshotError(f"manifest metadata mismatch for {name}")
+            rows_by_dataset[name] = rows
+
+        _validate_cross_dataset(rows_by_dataset, snapshot_timezone=snapshot_timezone)
+        without_id = dict(manifest)
+        claimed_id = without_id.pop("snapshot_id")
+        expected_id = "sha256:" + _sha256(_canonical_json_bytes(without_id))
+        if claimed_id != expected_id:
+            raise QDataSnapshotError("snapshot_id does not match manifest content")
+        _recheck_snapshot_contents(
+            root,
+            directory_fd,
+            directory_identity=directory_identity,
+            file_fds=file_fds,
+            file_identities=file_identities,
+            initial_payloads=payloads,
         )
-        expected_metadata = _dataset_metadata(name, contract, rows, payload)
-        if metadata != expected_metadata:
-            raise QDataSnapshotError(f"manifest metadata mismatch for {name}")
-        rows_by_dataset[name] = rows
-
-    _validate_cross_dataset(rows_by_dataset)
-    without_id = dict(manifest)
-    claimed_id = without_id.pop("snapshot_id")
-    expected_id = "sha256:" + _sha256(_canonical_json_bytes(without_id))
-    if claimed_id != expected_id:
-        raise QDataSnapshotError("snapshot_id does not match manifest content")
-    return manifest, rows_by_dataset
+        return manifest, rows_by_dataset
+    finally:
+        for file_fd in file_fds.values():
+            os.close(file_fd)
+        os.close(directory_fd)
 
 
-def _read_exact_files(root: Path) -> dict[str, bytes]:
-    if root.is_symlink() or not root.is_dir():
-        raise QDataSnapshotError(f"snapshot path must be a regular directory: {root}")
-    expected = {MANIFEST_FILENAME} | {f"{name}.csv" for name in _CONTRACTS}
-    actual = {entry.name for entry in root.iterdir()}
+_DirectoryIdentity = tuple[int, int, int, int]
+_FileIdentity = tuple[int, int, int, int, int]
+
+
+def _open_regular_directory(path: Path) -> tuple[int, _DirectoryIdentity]:
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise QDataSnapshotError(
+            "platform lacks O_NOFOLLOW/O_DIRECTORY; secure verification is unavailable"
+        )
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        directory_fd = os.open(os.fspath(path), flags)
+    except (OSError, NotImplementedError) as exc:
+        raise QDataSnapshotError(
+            f"snapshot path is not a regular directory without symlinks: {path}"
+        ) from exc
+    metadata = os.fstat(directory_fd)
+    if not stat.S_ISDIR(metadata.st_mode):
+        os.close(directory_fd)
+        raise QDataSnapshotError(f"snapshot path is not a regular directory: {path}")
+    return directory_fd, _directory_identity(metadata)
+
+
+def _read_snapshot_payloads(
+    directory_fd: int,
+) -> tuple[dict[str, bytes], dict[str, int], dict[str, _FileIdentity]]:
+    expected = _expected_snapshot_filenames()
+    try:
+        actual = set(os.listdir(directory_fd))
+    except (OSError, TypeError, NotImplementedError) as exc:
+        raise QDataSnapshotError("cannot enumerate snapshot directory") from exc
     if actual != expected:
         raise QDataSnapshotError(
             f"snapshot file set mismatch; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
         )
     payloads: dict[str, bytes] = {}
-    for filename in sorted(expected):
-        path = root / filename
-        metadata = path.lstat()
-        if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
-            raise QDataSnapshotError(f"{filename} must be a regular file without symlinks")
-        if metadata.st_nlink != 1:
-            raise QDataSnapshotError(f"{filename} must not have a hard link alias")
-        before = (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
-        payload = path.read_bytes()
-        after_metadata = path.lstat()
-        after = (
-            after_metadata.st_dev, after_metadata.st_ino, after_metadata.st_size,
-            after_metadata.st_mtime_ns, after_metadata.st_ctime_ns,
+    file_fds: dict[str, int] = {}
+    identities: dict[str, _FileIdentity] = {}
+    try:
+        for filename in sorted(expected):
+            file_fd, payload, identity = _open_and_read_regular_file_at(
+                directory_fd, filename
+            )
+            file_fds[filename] = file_fd
+            payloads[filename] = payload
+            identities[filename] = identity
+        return payloads, file_fds, identities
+    except BaseException:
+        for file_fd in file_fds.values():
+            os.close(file_fd)
+        raise
+
+
+def _open_and_read_regular_file_at(
+    directory_fd: int,
+    filename: str,
+) -> tuple[int, bytes, _FileIdentity]:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        file_fd = os.open(filename, flags, dir_fd=directory_fd)
+    except (OSError, NotImplementedError) as exc:
+        raise QDataSnapshotError(
+            f"{filename} must be a regular file without symlinks"
+        ) from exc
+    try:
+        before = os.fstat(file_fd)
+        _validate_open_file_metadata(filename, before)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(file_fd)
+        _validate_open_file_metadata(filename, after)
+        before_identity = _file_identity(before)
+        after_identity = _file_identity(after)
+        if before_identity != after_identity or after.st_size != len(payload):
+            raise QDataSnapshotError(f"{filename} changed while it was being read")
+        return file_fd, payload, after_identity
+    except BaseException:
+        os.close(file_fd)
+        raise
+
+
+def _validate_open_file_metadata(filename: str, metadata: os.stat_result) -> None:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise QDataSnapshotError(f"{filename} must be a regular file")
+    if metadata.st_nlink != 1:
+        raise QDataSnapshotError(f"{filename} is exposed through a hard link")
+
+
+def _file_identity(metadata: os.stat_result) -> _FileIdentity:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _directory_identity(metadata: os.stat_result) -> _DirectoryIdentity:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _recheck_snapshot_contents(
+    root: Path,
+    directory_fd: int,
+    *,
+    directory_identity: _DirectoryIdentity,
+    file_fds: Mapping[str, int],
+    file_identities: Mapping[str, _FileIdentity],
+    initial_payloads: Mapping[str, bytes],
+) -> None:
+    _recheck_directory_state(
+        root,
+        directory_fd,
+        directory_identity=directory_identity,
+        expected_names=set(file_identities),
+    )
+    if set(file_fds) != set(file_identities) or set(initial_payloads) != set(file_identities):
+        raise QDataSnapshotError("snapshot file handles changed during verification")
+
+    for filename in sorted(file_identities):
+        expected_identity = file_identities[filename]
+        file_fd = file_fds[filename]
+        try:
+            before = os.fstat(file_fd)
+            _validate_open_file_metadata(filename, before)
+            final_digest, final_size = _hash_open_file(file_fd)
+            after = os.fstat(file_fd)
+            _validate_open_file_metadata(filename, after)
+        except OSError as exc:
+            raise QDataSnapshotError(f"{filename} changed during verification") from exc
+        if (
+            _file_identity(before) != expected_identity
+            or _file_identity(after) != expected_identity
+            or final_size != expected_identity[2]
+            or final_digest != _sha256(initial_payloads[filename])
+        ):
+            raise QDataSnapshotError(f"{filename} changed during verification")
+        _recheck_directory_entry(
+            directory_fd,
+            filename=filename,
+            expected_identity=expected_identity,
         )
-        if before != after or len(payload) != metadata.st_size:
-            raise QDataSnapshotError(f"{filename} changed while being read")
-        payloads[filename] = payload
-    return payloads
+
+    _recheck_directory_state(
+        root,
+        directory_fd,
+        directory_identity=directory_identity,
+        expected_names=set(file_identities),
+    )
+    for filename in sorted(file_identities):
+        expected_identity = file_identities[filename]
+        try:
+            metadata = os.fstat(file_fds[filename])
+            _validate_open_file_metadata(filename, metadata)
+        except OSError as exc:
+            raise QDataSnapshotError(f"{filename} changed during verification") from exc
+        if _file_identity(metadata) != expected_identity:
+            raise QDataSnapshotError(f"{filename} changed during verification")
+        _recheck_directory_entry(
+            directory_fd,
+            filename=filename,
+            expected_identity=expected_identity,
+        )
+
+
+def _hash_open_file(file_fd: int) -> tuple[str, int]:
+    os.lseek(file_fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    total_size = 0
+    while True:
+        chunk = os.read(file_fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+        total_size += len(chunk)
+    return digest.hexdigest(), total_size
+
+
+def _recheck_directory_state(
+    root: Path,
+    directory_fd: int,
+    *,
+    directory_identity: _DirectoryIdentity,
+    expected_names: set[str],
+) -> None:
+    try:
+        root_metadata = os.stat(root, follow_symlinks=False)
+        open_metadata = os.fstat(directory_fd)
+    except (OSError, NotImplementedError) as exc:
+        raise QDataSnapshotError("snapshot directory changed during verification") from exc
+    if (
+        not stat.S_ISDIR(root_metadata.st_mode)
+        or not stat.S_ISDIR(open_metadata.st_mode)
+        or _directory_identity(root_metadata) != directory_identity
+        or _directory_identity(open_metadata) != directory_identity
+    ):
+        raise QDataSnapshotError("snapshot directory changed during verification")
+    try:
+        current_names = set(os.listdir(directory_fd))
+    except (OSError, TypeError, NotImplementedError) as exc:
+        raise QDataSnapshotError("snapshot directory changed during verification") from exc
+    if current_names != expected_names:
+        raise QDataSnapshotError("snapshot file set changed during verification")
+
+
+def _recheck_directory_entry(
+    directory_fd: int,
+    *,
+    filename: str,
+    expected_identity: _FileIdentity,
+) -> None:
+    try:
+        metadata = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+    except (OSError, NotImplementedError) as exc:
+        raise QDataSnapshotError(f"{filename} changed during verification") from exc
+    _validate_open_file_metadata(filename, metadata)
+    if _file_identity(metadata) != expected_identity:
+        raise QDataSnapshotError(f"{filename} changed during verification")
+
+
+def _expected_snapshot_filenames() -> set[str]:
+    return {MANIFEST_FILENAME} | {f"{name}.csv" for name in _CONTRACTS}
 
 
 def _read_manifest(payload: bytes) -> dict[str, Any]:
@@ -400,14 +622,29 @@ def _validate_row(name: str, row: Mapping[str, str], index: int, snapshot_timezo
         if delist is not None and valid_to is not None and valid_to > delist:
             raise QDataSnapshotError(f"security_membership row {index} valid_to exceeds delist_date")
     else:
+        report_period_end = date.fromisoformat(row["report_period_end"])
         published = _parse_timestamp(row["published_at"], "fundamental_pit.published_at")
         first_seen = _parse_timestamp(row["first_seen_at"], "fundamental_pit.first_seen_at")
         available = _parse_timestamp(row["available_at"], "fundamental_pit.available_at")
+        disclosure_dates = {
+            "published_at": published.astimezone(snapshot_timezone).date(),
+            "first_seen_at": first_seen.astimezone(snapshot_timezone).date(),
+            "available_at": available.astimezone(snapshot_timezone).date(),
+        }
+        for field, disclosure_date in disclosure_dates.items():
+            if report_period_end > disclosure_date:
+                raise QDataSnapshotError(
+                    f"fundamental_pit row {index} report_period_end is after local {field} date"
+                )
         if available < max(published, first_seen):
             raise QDataSnapshotError("fundamental available_at precedes publication or ingestion")
 
 
-def _validate_cross_dataset(rows: Mapping[str, Sequence[Mapping[str, str]]]) -> None:
+def _validate_cross_dataset(
+    rows: Mapping[str, Sequence[Mapping[str, str]]],
+    *,
+    snapshot_timezone: ZoneInfo,
+) -> None:
     daily_keys = {(row["symbol"], row["trade_date"]) for row in rows["daily_bar"]}
     tradability_keys = {(row["symbol"], row["trade_date"]) for row in rows["tradability"]}
     if daily_keys != tradability_keys:
@@ -451,6 +688,10 @@ def _validate_cross_dataset(rows: Mapping[str, Sequence[Mapping[str, str]]]) -> 
             _parse_timestamp(daily["available_at"], "daily_bar.available_at"),
             _parse_timestamp(tradability["available_at"], "tradability.available_at"),
         )
+        if signal_at.astimezone(snapshot_timezone).date() != trade_day:
+            raise QDataSnapshotError(
+                f"signal availability for {(symbol, trade_date_text)} is outside local trade_date"
+            )
         matching = [
             membership for membership in memberships.get(symbol, [])
             if date.fromisoformat(membership["valid_from"]) <= trade_day
@@ -527,7 +768,13 @@ def _adapt_rows(
     panel = panel.merge(universe, on=["symbol", "date"], how="inner", validate="one_to_one")
     panel["is_universe_member"] = True
     panel = _merge_pit_fundamentals(panel, rows["fundamental_pit"])
-    panel = prepare_backtest_panel(panel)
+    expected_keys = {
+        (row["symbol"], pd.Timestamp(row["trade_date"])) for row in rows["daily_bar"]
+    }
+    panel = prepare_backtest_panel(panel, align_missing_sessions=False)
+    actual_keys = set(zip(panel["symbol"], panel["date"]))
+    if len(panel) != len(expected_keys) or actual_keys != expected_keys:
+        raise QDataSnapshotError("normalized panel keys differ from verified daily_bar keys")
 
     stock_master = pd.DataFrame(rows["security_membership"]).rename(
         columns={

@@ -655,7 +655,14 @@ def _rebalance(
         if current_value <= target_value:
             continue
         sell_value = current_value - target_value
-        sell_shares = min(shares, _round_lot(int(sell_value / float(today.loc[symbol, price_field]))))
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        sell_shares = min(
+            shares,
+            _round_lot(
+                int(sell_value / float(today.loc[symbol, price_field])),
+                lot_size=lot_size,
+            ),
+        )
         cash, positions[symbol] = _sell(
             date=date,
             symbol=symbol,
@@ -683,14 +690,17 @@ def _rebalance(
         current_shares = positions.get(symbol, 0)
         current_value = current_shares * price
         buy_value = max_position_value - current_value
-        if buy_value <= price * 100:
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        if buy_value <= price * lot_size:
             continue
         buy_price = _buy_price(price, spec)
-        shares = _round_lot(int(buy_value / buy_price))
+        shares = _round_lot(int(buy_value / buy_price), lot_size=lot_size)
         if shares <= 0:
             continue
         total_rate = 1.0 + max(0.0, float(spec.costs.commission_rate))
-        max_affordable = _round_lot(int(cash / (buy_price * total_rate)))
+        max_affordable = _round_lot(
+            int(cash / (buy_price * total_rate)), lot_size=lot_size
+        )
         shares = min(shares, max_affordable)
         if shares <= 0:
             continue
@@ -751,7 +761,13 @@ def _rebalance_requires_action(
         current_value = shares * price
         target_value = max_position_value if symbol in target_set else 0.0
         if current_value > target_value:
-            sell_shares = min(shares, _round_lot(int((current_value - target_value) / price)))
+            lot_size = _execution_lot_size(today.loc[symbol]) or 100
+            sell_shares = min(
+                shares,
+                _round_lot(
+                    int((current_value - target_value) / price), lot_size=lot_size
+                ),
+            )
             if sell_shares > 0:
                 return True
 
@@ -763,12 +779,17 @@ def _rebalance_requires_action(
             continue
         current_value = positions.get(symbol, 0) * price
         buy_value = max_position_value - current_value
-        if buy_value <= price * 100:
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        if buy_value <= price * lot_size:
             continue
         buy_price = _buy_price(price, spec)
-        desired_shares = _round_lot(int(buy_value / buy_price))
+        desired_shares = _round_lot(
+            int(buy_value / buy_price), lot_size=lot_size
+        )
         total_rate = 1.0 + max(0.0, float(spec.costs.commission_rate))
-        affordable_shares = _round_lot(int(cash / (buy_price * total_rate)))
+        affordable_shares = _round_lot(
+            int(cash / (buy_price * total_rate)), lot_size=lot_size
+        )
         if min(desired_shares, affordable_shares) > 0:
             return True
     return False
@@ -931,6 +952,24 @@ def _buy(
             execution_model=execution_model,
         )
         return cash, held_shares
+    lot_size = _execution_lot_size(row)
+    if lot_size is None:
+        raise AssertionError("validated execution row has no lot size")
+    requested_shares = shares
+    shares = _round_lot(shares, lot_size=lot_size)
+    if shares <= 0:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=requested_shares,
+            status="blocked_below_lot_size",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
+        return cash, held_shares
     price = _buy_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
@@ -1000,20 +1039,6 @@ def _sell(
         return cash, held_shares
     row = today.loc[symbol]
     effective_signal_date = signal_date if signal_date is not None else date
-    if buy_dates.get(symbol) == date:
-        _append_order(
-            order_rows,
-            date=date,
-            signal_date=effective_signal_date,
-            symbol=symbol,
-            side="sell",
-            requested_shares=shares,
-            status="blocked_t_plus_one",
-            price_field=price_field,
-            execution_model=execution_model,
-            note=note,
-        )
-        return cash, held_shares
     blocked_status = _execution_block_status(row, side="sell", price_field=price_field, spec=spec)
     if blocked_status is not None:
         _append_order(
@@ -1029,7 +1054,41 @@ def _sell(
             note=note,
         )
         return cash, held_shares
+    t_plus_one = _execution_boolean(row, "t_plus_one", default=True)
+    if t_plus_one and buy_dates.get(symbol) == date:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status="blocked_t_plus_one",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
+        return cash, held_shares
+    requested_shares = shares
     shares = min(shares, held_shares)
+    lot_size = _execution_lot_size(row)
+    if lot_size is None:
+        raise AssertionError("validated execution row has no lot size")
+    shares = _round_lot(shares, lot_size=lot_size)
+    if shares <= 0:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=requested_shares,
+            status="blocked_below_lot_size",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
+        return cash, held_shares
     price = _sell_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
@@ -1101,6 +1160,10 @@ def _execution_block_status(
     if any(_finite_positive_price(row, field) is None for field in numeric_constraints):
         return "blocked_missing_constraint"
 
+    optional_status = _optional_execution_constraint_status(row, side=side)
+    if optional_status is not None:
+        return optional_status
+
     if bool(row["is_suspended"]):
         return "blocked_suspended"
     if side == "buy" and spec.universe.exclude_st and bool(row["is_st"]):
@@ -1110,6 +1173,48 @@ def _execution_block_status(
     if side == "sell" and _is_limit_down(row, price_field=price_field):
         return "blocked_limit_down"
     return None
+
+
+def _optional_execution_constraint_status(row: pd.Series, *, side: str) -> str | None:
+    for field in ("can_buy", "can_sell", "t_plus_one"):
+        if field in row and _execution_boolean(row, field, default=None) is None:
+            return "blocked_missing_constraint"
+    if _execution_lot_size(row) is None:
+        return "blocked_missing_constraint"
+    if side == "buy" and not _execution_boolean(row, "can_buy", default=True):
+        return "blocked_cannot_buy"
+    if side == "sell" and not _execution_boolean(row, "can_sell", default=True):
+        return "blocked_cannot_sell"
+    return None
+
+
+def _execution_boolean(
+    row: pd.Series,
+    field: str,
+    *,
+    default: bool | None,
+) -> bool | None:
+    if field not in row:
+        return default
+    value = row[field]
+    if not pd.api.types.is_bool(value):
+        return None
+    return bool(value)
+
+
+def _execution_lot_size(row: pd.Series) -> int | None:
+    if "lot_size" not in row:
+        return 100
+    value = row["lot_size"]
+    if pd.api.types.is_bool(value) or pd.isna(value):
+        return None
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    number = float(numeric)
+    if not math.isfinite(number) or number <= 0.0 or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _finite_positive_price(row: pd.Series, field: str) -> float | None:
@@ -1678,8 +1783,8 @@ def _orders_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
-def _round_lot(shares: int) -> int:
-    return max(0, shares // 100 * 100)
+def _round_lot(shares: int, *, lot_size: int = 100) -> int:
+    return max(0, shares // lot_size * lot_size)
 
 
 def _calculate_metrics(equity_curve: pd.DataFrame, trades: pd.DataFrame, initial_cash: float) -> dict[str, float]:

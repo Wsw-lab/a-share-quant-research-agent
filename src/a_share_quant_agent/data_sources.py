@@ -1259,9 +1259,13 @@ def load_tushare_panel(
     )
 
 
-def prepare_backtest_panel(data: pd.DataFrame) -> pd.DataFrame:
+def prepare_backtest_panel(
+    data: pd.DataFrame,
+    *,
+    align_missing_sessions: bool = True,
+) -> pd.DataFrame:
     normalized = _normalize_common_columns(data)
-    aligned = _align_symbol_dates(normalized)
+    aligned = _align_symbol_dates(normalized) if align_missing_sessions else normalized
     featured = add_technical_features(aligned)
     robust = add_robust_factor_features(featured)
     return robust.sort_values(["date", "symbol"]).reset_index(drop=True)
