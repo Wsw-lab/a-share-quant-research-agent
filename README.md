@@ -12,9 +12,18 @@
 
 ## 全新 checkout 的唯一离线绿色路径
 
-前置条件是 Python 3.10–3.12，以及环境中已有 `numpy==2.0.2`、`pandas==2.3.3`。以下命令不访问行情服务、不需要私有数据或凭据；输出只写入临时目录和被忽略的 `.research-artifacts/`。
+前置条件是从本项目规范 GitHub origin（`https://github.com/Wsw-lab/a-share-quant-research-agent.git`，等价 SSH URL 也可）取得的全新 checkout、Python 3.10–3.12，以及环境中已有 `numpy==2.0.2`、`pandas==2.3.3`。以下命令会先核对 origin；它们不访问行情服务、不需要私有数据或凭据，输出只写入临时目录和被忽略的 `.research-artifacts/`。
 
 ```bash
+set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
+AGENT_CANONICAL_ORIGIN="https://github.com/Wsw-lab/a-share-quant-research-agent"
+AGENT_CANONICAL_SSH_ORIGIN="ssh://git@github.com/Wsw-lab/a-share-quant-research-agent"
+AGENT_ORIGIN="$(git remote get-url origin)"
+case "$AGENT_ORIGIN" in
+  "$AGENT_CANONICAL_ORIGIN"|"$AGENT_CANONICAL_ORIGIN.git"|"$AGENT_CANONICAL_SSH_ORIGIN"|"$AGENT_CANONICAL_SSH_ORIGIN.git"|git@github.com:Wsw-lab/a-share-quant-research-agent.git) ;;
+  *) echo "Expected the canonical A-share Agent GitHub origin; got: $AGENT_ORIGIN" >&2; exit 2 ;;
+esac
 AGENT_RUN_ROOT="$(mktemp -d)"
 trap 'rm -rf "$AGENT_RUN_ROOT"' EXIT
 export PYTHONPATH=src
@@ -35,6 +44,7 @@ python3 -m a_share_quant_agent.reproducible_experiment verify \
   --expected-agent-sha "$AGENT_SHA" \
   --expected-qdata-sha 1111111111111111111111111111111111111111
 python3 -m unittest discover -s tests -p 'test_*.py'
+test -z "$(git status --short --untracked-files=all)"
 ```
 
 `--qdata-sha` 在这里是显式的 fixture 仓库引用，receipt 会把它标成 `unverified_fixture_repository_reference`，不会伪装成已验证 checkout。若提供 `--qdata-checkout`，实验会要求规范仓库身份，并在无数据库子进程中重建快照，与传入 fixture 逐字节比较。
@@ -77,7 +87,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 - `tests/fixtures/qdata_research_snapshot_v1/` 合成快照；
 - `tests/` 离线 unittest。
 
-其他仍保留的研究模块和配置是可审阅源码，不自动构成受支持命令或有效研究证据。旧脚本、生成报告和未随仓库提供的输入见[历史证据说明](docs/legacy-evidence.md)。
+包级 `__all__` 只列出支撑上述证据链的可导入模块。`ops` 与 `completion_readiness` 等旧模块仍可供源码审计，但不在维护 API 中；缺少显式 legacy 命令时会 fail closed，不会指向已删除的 runner。其他仍保留的研究模块和配置也不自动构成受支持命令或有效研究证据。旧脚本、生成报告和未随仓库提供的输入见[历史证据说明](docs/legacy-evidence.md)。
 
 ## 设计记录
 

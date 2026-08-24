@@ -1,3 +1,5 @@
+"""Legacy readiness rendering retained for audit, not as a maintained workflow."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -39,50 +41,10 @@ def build_completion_readiness(
     min_paper_calendar_days: int | None = None,
     min_paper_trade_days: int | None = None,
 ) -> dict[str, object]:
-    reports_path = Path(reports_root)
-    thresholds = {
-        **DEFAULT_THRESHOLDS,
-        "min_quote_rows": _coalesce_int(min_quote_rows, DEFAULT_THRESHOLDS["min_quote_rows"]),
-        "min_candidate_runs": _coalesce_int(min_candidate_runs, DEFAULT_THRESHOLDS["min_candidate_runs"]),
-        "min_candidate_days": _coalesce_int(min_candidate_days, DEFAULT_THRESHOLDS["min_candidate_days"]),
-        "max_candidate_age_days": _coalesce_int(max_candidate_age_days, DEFAULT_THRESHOLDS["max_candidate_age_days"]),
-        "min_paper_control_runs": _coalesce_int(min_paper_control_runs, DEFAULT_THRESHOLDS["min_paper_control_runs"]),
-        "min_paper_calendar_days": _coalesce_int(min_paper_calendar_days, DEFAULT_THRESHOLDS["min_paper_calendar_days"]),
-        "min_paper_trade_days": _coalesce_int(min_paper_trade_days, DEFAULT_THRESHOLDS["min_paper_trade_days"]),
-    }
-    registry = _registry_frame(reports_path)
-    production = _read_json(reports_path / "production_data_readiness.json")
-    board = _read_json(reports_path / "strategy_factory" / "latest_board.json")
-    health = _read_json(reports_path / "health_status.json")
-    ops = _read_json(reports_path / "ops" / "ops_snapshot.json")
-    dashboard = load_paper_dashboard(reports_path)
-
-    stages = [
-        _research_mvp_stage(reports_path, registry),
-        _production_data_stage(production, thresholds),
-        _strategy_factory_stage(board, registry),
-    ]
-    candidate_stage = _paper_candidate_stage(registry, thresholds)
-    stages.append(candidate_stage)
-    stages.append(_paper_validation_stage(reports_path, dashboard, candidate_stage, thresholds))
-    stages.append(_ops_stage(reports_path, health, ops))
-    stages.append(_live_readiness_stage(reports_path, stages))
-
-    result = {
-        "readiness_id": _make_id("completion"),
-        "generated_at": _now(),
-        "status": _completion_status(stages),
-        "completion_level": _completion_level(stages),
-        "thresholds": thresholds,
-        "summary": _summary(stages),
-        "stages": stages,
-        "next_actions": _next_actions(stages),
-        "compliance_boundary": (
-            "This readiness report never enables live trading by itself. Live execution requires a separate "
-            "approved broker adapter, operator identity, compliance sign-off, and manual kill-switch process."
-        ),
-    }
-    return _json_ready(result)
+    raise RuntimeError(
+        "Legacy completion-readiness is not a maintained public workflow; "
+        "use the README offline green path and its INSUFFICIENT_EVIDENCE receipt."
+    )
 
 
 def write_completion_readiness(
@@ -187,7 +149,7 @@ def target_passed(readiness: dict[str, object], target: str) -> bool:
 
 def _research_mvp_stage(reports_root: Path, registry: pd.DataFrame) -> dict[str, object]:
     src = Path(__file__).resolve().parent
-    required_modules = ["backtest.py", "spec.py", "nl_parser.py", "audit.py", "report.py"]
+    required_modules = ["backtest.py", "spec.py", "qdata_snapshot.py", "audit.py", "report.py"]
     checks = [
         _check("source_modules", all((src / name).exists() for name in required_modules), "Core research modules must exist."),
         _check("registry", not registry.empty, "At least one research run must be registered."),
@@ -202,7 +164,9 @@ def _research_mvp_stage(reports_root: Path, registry: pd.DataFrame) -> dict[str,
         "Research MVP",
         checks,
         metrics=metrics,
-        next_actions=["Run examples/run_end_to_end_demo.py and confirm registry output."] if _hard_failed(checks) else [],
+        next_actions=["This legacy readiness flow is not maintained; use the README offline green path."]
+        if _hard_failed(checks)
+        else [],
     )
 
 
@@ -232,7 +196,7 @@ def _production_data_stage(production: object, thresholds: dict[str, int]) -> di
         "Production Data",
         checks,
         metrics=metrics,
-        next_actions=["Run examples/validate_production_data_assets.py and fix any hard validation failures."]
+        next_actions=["Provide authorized immutable data and a separately maintained validator before reassessing."]
         if _hard_failed(checks)
         else [],
     )
@@ -292,7 +256,7 @@ def _strategy_factory_stage(board: object, registry: pd.DataFrame) -> dict[str, 
         "Strategy Factory",
         checks,
         metrics=metrics,
-        next_actions=["Run examples/run_strategy_factory.py with source=production and resolve errors/skips."]
+        next_actions=["The legacy Strategy Factory command is not maintained in this checkout."]
         if _hard_failed(checks)
         else [],
     )
@@ -485,7 +449,7 @@ def _ops_stage(reports_root: Path, health: object, ops: object) -> dict[str, obj
         "Operations Control",
         checks,
         metrics=metrics,
-        next_actions=["Run examples/ops_smoke_test.py, refresh health, and ack or resolve open action-required notifications."]
+        next_actions=["The legacy operations smoke command is not maintained in this checkout."]
         if _hard_failed(checks)
         else [],
     )
