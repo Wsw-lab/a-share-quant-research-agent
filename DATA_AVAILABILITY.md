@@ -1,38 +1,25 @@
 # Data Availability
 
-This project was developed with local A-share research data assets that are not committed to GitHub.
+## 当前公开输入
 
-The repository keeps schemas, validation reports, manifests, and reproducible scripts, while excluding large or licensed datasets from version control.
+仓库只把 `tests/fixtures/qdata_research_snapshot_v1/` 作为维护中的研究输入。它是 QData `research_snapshot_v1` 的确定性合成 fixture，包含 2 个标的、3 个交易会话，用于验证 schema、PIT cutoff、文件哈希、覆盖和 Agent 时序合同。
 
-## Local Data Used During Development
+fixture 的实验 verdict 固定为 `INSUFFICIENT_EVIDENCE`。它不证明真实行情正确、可获得、可交易、完整或有权再分发，也不提供策略表现证据。
 
-- Historical stock master: full A-share listing and delisting metadata.
-- Daily quotes: 3,894,242 validated rows through 2026-07-24.
-- Fundamental factors: ROE, cash-flow quality, balance-sheet quality, growth, and related accounting factors.
-- Dividend events.
-- Margin-trade records: 2,399,572 rows restored from Investoday.
+## 一并提供的材料
 
-## Why Raw Data Is Excluded
+- `data_assets/templates/*.csv`：字段模板，不是数据样本或覆盖证明；
+- `examples/strategy_specs/quality_value_momentum.json`：合成演示 spec；
+- `tests/fixtures/QDATA_RESEARCH_SNAPSHOT_PROVENANCE.md`：fixture 来源与生成命令记录；
+- 严格适配器和 verifier：消费前重新校验 snapshot，而不是信任文件名。
 
-- Some files exceed GitHub's 100 MB single-file limit.
-- Some data came from vendor/API sources and should not be redistributed.
-- Reproducibility is preserved through scripts, manifests, validation reports, and schema templates.
+## 未提供或未确立
 
-## Included Instead
+- 真实 A 股行情、财务、成分、行业、事件或交易约束历史库；
+- 任何供应商/API 的凭据、授权、数据权利、许可或服务等级；
+- 全市场、退市样本、修订历史和所有交易日的覆盖率证明；
+- PostgreSQL/ClickHouse 数据库快照或可复建的跨库生产状态。
 
-- `data_assets/templates/*.csv`: minimal schema templates.
-- `data_assets/manifests/production_import/*.md`: production validation reports.
-- `reports/portfolio_readiness/latest_portfolio_readiness.md`: GitHub/application readiness summary.
-- `reports/completion_readiness/latest_readiness.md`: strict research/paper/live readiness boundary.
-- `reports/strategy_factory/latest_board.md`: latest strategy factory summary.
+QData 仓库记录的有界本地 selector/迁移测试只是其自身的限定证据；Agent 的离线路径不启动数据库，`cross-store transactions` 仍未验证。
 
-## Rebuild Locally
-
-Provide your own vendor export or API access, then run:
-
-```bash
-PYTHONPATH=src python3 examples/validate_production_data_assets.py --asset-root data_assets --start 20230101 --end 20260724
-PYTHONPATH=src python3 examples/check_portfolio_readiness.py --reports-root reports --asset-root data_assets
-```
-
-The project is designed so reviewers can inspect methodology without requiring redistribution of raw market data.
+历史本地输入及其生成报告被排除出当前公共表面，因为省略的数据无法让审阅者重建结论。参见 [README](README.md) 与[历史证据说明](docs/legacy-evidence.md)。

@@ -44,7 +44,10 @@ class PublicDemoTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("Strategy:", completed.stdout)
-        self.assertIn("Report:", completed.stdout)
+        self.assertIn("Evidence: synthetic engine demonstration only; no performance claim", completed.stdout)
+        self.assertIn("Report: .research-artifacts/demo/demo_report.md", completed.stdout)
+        self.assertNotIn("Annualized return:", completed.stdout)
+        self.assertNotIn(str(ROOT), completed.stdout)
 
     def test_installed_package_imports_and_runs_probe_outside_repository(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

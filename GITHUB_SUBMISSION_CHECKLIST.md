@@ -1,47 +1,34 @@
 # GitHub Submission Checklist
 
-Use this before publishing the project.
+本清单检查公开树是否忠实于 `research_snapshot_v1` 与 `INSUFFICIENT_EVIDENCE` 边界；它不生成“展示就绪”或交易批准分数。
 
-## Keep In The Repository
+## 应保留
 
-- `README.md`
-- `PROJECT_PORTFOLIO.md`
-- `DATA_AVAILABILITY.md`
-- `requirements-data.txt`
-- `src/a_share_quant_agent/`
-- `examples/`
-- `configs/`
-- `data_assets/README.md`
-- `data_assets/templates/`
-- `data_assets/manifests/production_import/*.md`
-- `reports/portfolio_readiness/latest_portfolio_readiness.md`
-- `reports/completion_readiness/latest_readiness.md`
-- `reports/strategy_factory/latest_board.md`
+- `README.md`、三份边界文档与 `docs/` 设计记录；
+- `src/a_share_quant_agent/` 当前可导入模块；
+- `examples/run_demo.py` 与 checked-in strategy spec；
+- `tests/` 和合成 QData snapshot fixture；
+- `data_assets/templates/` 字段模板；
+- 只读 `.github/workflows/ci.yml` 及固定 CI 依赖文件。
 
-## Do Not Commit
+## 不应提交
 
-- `.venv-akshare/`
-- `.venv312_restore/`
-- `data_assets/cache/`
-- `data_assets/backups/`
-- `data_assets/market/*.csv`
-- `data_assets/fundamentals/*.csv`
-- `data_assets/stock_master/*.csv`
-- `reports/**/artifacts/`
-- `reports/**/runs/`
-- Large CSV/PKL/Parquet/Feather files.
+- 运行时报告、receipt、snapshot、缓存、构建目录或 editable-install 元数据；
+- 带本机绝对路径的清单；
+- 凭据、token、私有数据或未授权市场数据；
+- 无法由当前 checkout 重建的策略指标；
+- 声称券商、实盘交易、生产部署或远端 CI 成功的文字，除非另有可核验证据。
 
-## Final Commands
+## 本地最终检查
 
 ```bash
-PYTHONPATH=src python3 examples/risk_overlay_smoke_test.py
-PYTHONPATH=src python3 examples/check_completion_readiness.py --reports-root reports
-PYTHONPATH=src python3 examples/check_portfolio_readiness.py --reports-root reports --asset-root data_assets
+export PYTHONPATH=src
+python3 -m unittest -v tests.test_public_surface_contract
+python3 -m unittest discover -s tests -p 'test_*.py'
+python3 examples/run_demo.py
+git diff --check
 ```
 
-Expected portfolio result:
+严格实验双跑、receipt verify 和 tamper rejection 的完整命令由 [README 唯一绿色路径](README.md#全新-checkout-的唯一离线绿色路径)及 CI 定义。其公开 fixture 只有 2 个标的、3 个交易会话，结论必须保持 `INSUFFICIENT_EVIDENCE`。
 
-```text
-Status: portfolio_ready_not_live_ready
-Showcase ready: True
-```
+在 GitHub 页面上确认真实 Actions run 之前，只能说工作流已配置并经本地静态检查，不能说托管 CI 已通过。许可证仍由仓库所有者决定；不要代为添加。

@@ -1,76 +1,32 @@
-# A-Share Quant Research Agent
+# Project Portfolio Boundary
 
-This repository is a graduate-application portfolio project for quantitative finance and financial engineering.
+## 项目定位
 
-It is intentionally framed as a research and validation system, not as a live-trading product. The project demonstrates how I think about data engineering, point-in-time backtesting, factor research, walk-forward validation, risk controls, and honest model failure analysis.
+这是一个 A 股研究/审计原型，而不是已部署的交易产品。公开价值集中在一条可检查的研究链：QData `research_snapshot_v1` 冻结输入与独立验证、Agent 的收盘信号/下一会话原始开盘执行、显式摩擦、确定性产物和失败判定。
 
-## What It Shows
+## 当前能证明什么
 
-- Production-style A-share data pipeline with stock master, daily quotes, fundamentals, dividends, and margin-trade assets.
-- Point-in-time universe controls for listing status, delisting, liquidity membership, ST status, suspension, limit moves, and benchmark regime features.
-- Rule-based strategy specs that can be generated from natural language and evaluated by a strategy factory.
-- Realistic Chinese A-share backtesting assumptions: T+1 constraints, lot-size trading, commission, stamp tax, slippage, cash yield, and monthly rebalancing.
-- Validation stack: sensitivity tests, walk-forward analysis, factor IC diagnostics, benchmark comparison, bias diagnostics, audit reports, and run registry.
-- Risk overlays: trend/momentum filters, cash-buffer exposure, window fuse, market breadth/alpha-health filters, and overheated-reversal guard.
-- A separate readiness boundary that distinguishes research showcase readiness from paper/live trading readiness.
+- `implemented`：研究 spec、回测、审计、QData 严格适配器和 receipt 生成器存在并可导入。
+- `unit-tested`：时间可得性、下一会话成交、交易约束、快照拒绝条件和 receipt 语义由离线测试覆盖。
+- `local-integration-tested`：严格合成 fixture 可运行两次并产生相同字节，receipt 可独立验证；同级 QData checkout 模式还会重建并逐字节比较 fixture。
+- `open`：真实市场有效性、样本外泛化、统计推断、完整数据权利/覆盖、数据库生产拓扑、券商与实盘交易。
 
-## Current Result
+严格实验固定为合成的 2 个标的和 3 个交易会话，结论必须是 `INSUFFICIENT_EVIDENCE`。它证明的是时序与审计合同，不是策略收益，也不能用于交易决策。
 
-The project is portfolio-ready but not live-trading-ready.
+## 可审阅的工程判断
 
-The best research line is a defensive quality cash-buffer family. It uses dividend yield, ROE sanity, low volatility, valuation sanity, PIT universe filters, and cash yield. Its strongest historical candidate reached:
+- 信号使用 t 日收盘后可得信息，成交最早发生在 t+1；
+- 成交参考使用未复权开盘价，复权序列不能冒充真实成交价；
+- 不可交易、涨跌停、上市状态和手数约束以显式失败或未成交记录处理；
+- 输入 snapshot、两个仓库身份、策略配置、输出哈希和 verdict 绑定到同一 receipt；
+- 验证器不只复核哈希，也复核固定语义与文件对象一致性。
 
-- Walk-forward positive rate: about 83%.
-- Max drawdown: about -2% to -3%.
-- Factor IC: supportive, with no adverse IC count in the best run.
-- Status: research/testing, not paper candidate.
+## 不作为申请证据的内容
 
-The strict production gate correctly blocks promotion because some out-of-sample windows still fail. This is kept deliberately: for a serious quant project, the failed windows are part of the evidence, not something to hide.
+历史生成报告、生产导入清单和旧示例依赖的输入未随仓库提供，也不是修正后引擎的证据。当前公开树不发布无法从本 checkout 重建的历史策略指标。详见[历史证据说明](docs/legacy-evidence.md)。
 
-## Why This Is Useful For Quant/MFE Applications
+## 复现入口
 
-This project emphasizes research discipline over a single attractive return chart:
+唯一绿色路径在 [README](README.md)；公共合同可用 `python3 -m unittest -v tests.test_public_surface_contract` 检查。上游数据合同来自 [QData](https://github.com/Wsw-lab/qdata-free-source-quant-research-db)，但 QData 的局部 PostgreSQL/ClickHouse 集成证据不等于 Agent 已运行数据库生产链，`cross-store transactions` 仍是开放工作。
 
-- It avoids manually overriding decision gates.
-- It records rejected strategies instead of deleting them.
-- It separates in-sample attractiveness from out-of-sample robustness.
-- It keeps data lineage and validation artifacts.
-- It documents remaining blockers: no stable paper candidate, stale current data after 2026-07-24, and incomplete capital-flow entitlement.
-
-That makes it closer to a research notebook plus engineering system than a toy strategy demo.
-
-## Key Artifacts
-
-- `reports/portfolio_readiness/latest_portfolio_readiness.md`
-- `reports/completion_readiness/latest_readiness.md`
-- `reports/strategy_factory/latest_board.md`
-- `reports/strategy_factory/idea_registry.csv`
-- `data_assets/manifests/production_import/production_asset_validation.md`
-- `configs/strategy_factory_defensive_quality_cash_buffer_variants.json`
-- `configs/strategy_factory_overheated_reversal_guard_variants.json`
-
-## Reproduce Core Checks
-
-```bash
-PYTHONPATH=src python3 examples/validate_production_data_assets.py --asset-root data_assets --start 20230101 --end 20260724
-PYTHONPATH=src python3 examples/risk_overlay_smoke_test.py
-PYTHONPATH=src python3 examples/check_completion_readiness.py --reports-root reports
-PYTHONPATH=src python3 examples/check_portfolio_readiness.py --reports-root reports --asset-root data_assets
-```
-
-Run the latest strategy-factory candidate set:
-
-```bash
-PYTHONPATH=src python3 examples/run_strategy_factory.py \
-  --templates configs/strategy_factory_overheated_reversal_guard_variants.json \
-  --source production \
-  --asset-root data_assets \
-  --start 20230101 \
-  --end 20260724 \
-  --universe-size 100 \
-  --benchmark-code 000300
-```
-
-## Boundary
-
-This repository is for research demonstration and application evidence only. It does not provide investment advice, does not connect to a broker, and does not claim live deployment readiness.
+本项目没有券商接入、实盘交易、投资建议或托管服务证据。真实来源的数据权利、许可、覆盖率和稳定性需要逐源重新验证。
