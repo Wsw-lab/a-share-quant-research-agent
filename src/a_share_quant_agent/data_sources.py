@@ -140,7 +140,7 @@ def load_stock_master_csv(path: str | Path, *, source: str = "historical_stock_m
         raise DataSourceError(f"Historical stock master CSV had no usable rows: {csv_path}")
     notes = (
         f"Loaded historical stock master CSV: {csv_path}.",
-        "CSV stock master is treated as the candidate source; listDate/delistDate/stockType are used for PIT eligibility when present.",
+        "CSV stock master is accepted only with explicit listDate, stockType and lifecycle status evidence.",
         "For full survivorship-bias closure, this file must include current and delisted A-share securities for the tested market.",
     )
     return StockMasterResult(
@@ -166,15 +166,25 @@ def symbols_from_stock_master(
     if not include_bj:
         eligible &= ~frame["symbol"].str.endswith(".BJ")
     eligible &= ~_b_share_symbol_mask(frame["symbol"])
-    if "stockType" in frame:
-        stock_type = frame["stockType"].astype(str).str.upper()
-        eligible &= frame["stockType"].isna() | stock_type.isin({"A股".upper(), "A", "ASHARE", "A-SHARE", "", "NAN", "NONE"})
-    if "listDate" in frame and end:
-        list_dates = pd.to_datetime(frame["listDate"], errors="coerce")
-        eligible &= list_dates.isna() | (list_dates <= pd.Timestamp(_date_with_dash(end)))
-    if "delistDate" in frame and start:
-        delist_dates = pd.to_datetime(frame["delistDate"], errors="coerce")
-        eligible &= delist_dates.isna() | (delist_dates >= pd.Timestamp(_date_with_dash(start)))
+    if not {"stockType", "listDate", "listStatus"}.issubset(frame.columns):
+        return ()
+    stock_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip().str.upper()
+    eligible &= stock_type.isin({"A股".upper(), "A", "ASHARE", "A-SHARE"})
+    list_dates = pd.to_datetime(frame["listDate"], errors="coerce")
+    eligible &= list_dates.notna()
+    if end:
+        eligible &= list_dates <= pd.Timestamp(_date_with_dash(end))
+    delist_dates = (
+        pd.to_datetime(frame["delistDate"], errors="coerce")
+        if "delistDate" in frame
+        else pd.Series(pd.NaT, index=frame.index)
+    )
+    status = frame["listStatus"].where(frame["listStatus"].notna(), "").astype(str).str.strip().str.upper()
+    active_status = status.isin({"ACTIVE", "LISTED", "L", "上市", "正常上市"})
+    delisted_status = status.isin({"DELISTED", "TERMINATED", "D", "退市", "终止上市"})
+    eligible &= active_status | (delisted_status & delist_dates.notna())
+    if start:
+        eligible &= delist_dates.isna() | (delist_dates > pd.Timestamp(_date_with_dash(start)))
     symbols = sorted(frame.loc[eligible, "symbol"].dropna().astype(str).unique())
     return tuple(symbols)
 
@@ -834,6 +844,7 @@ def load_investoday_stock_master(
     master = _normalize_investoday_stock_basic_info(pd.DataFrame(records))
     if master.empty:
         raise DataSourceError("Investoday stock/basic-info rows were empty after normalization.")
+    _validate_historical_stock_master_lifecycle(master, source="Investoday stock/basic-info")
 
     notes = [
         "Investoday stock/basic-info stock master metadata.",
@@ -983,26 +994,47 @@ def apply_point_in_time_stock_master_filter(data: pd.DataFrame) -> PointInTimeSt
             data_hash=_dataframe_hash(panel),
         )
 
-    panel["date"] = pd.to_datetime(panel["date"])
-    listed = pd.Series(True, index=panel.index, dtype=bool)
-    if "listDate" in panel:
-        list_dates = pd.to_datetime(panel["listDate"], errors="coerce")
-        listed &= list_dates.isna() | (panel["date"] >= list_dates.dt.normalize())
-    if "delistDate" in panel:
-        delist_dates = pd.to_datetime(panel["delistDate"], errors="coerce")
-        listed &= delist_dates.isna() | (panel["date"] < delist_dates.dt.normalize())
-    if "stockType" in panel:
-        raw_stock_type = panel["stockType"]
-        stock_type = raw_stock_type.astype(str).str.upper()
-        listed &= raw_stock_type.isna() | stock_type.isin({"A股".upper(), "A"})
+    panel["date"] = pd.to_datetime(panel["date"], errors="coerce")
+    list_dates = (
+        pd.to_datetime(panel["listDate"], errors="coerce")
+        if "listDate" in panel
+        else pd.Series(pd.NaT, index=panel.index)
+    )
+    delist_dates = (
+        pd.to_datetime(panel["delistDate"], errors="coerce")
+        if "delistDate" in panel
+        else pd.Series(pd.NaT, index=panel.index)
+    )
+    stock_type = (
+        panel["stockType"].where(panel["stockType"].notna(), "").astype(str).str.strip().str.upper()
+        if "stockType" in panel
+        else pd.Series("", index=panel.index, dtype=object)
+    )
+    status = (
+        panel["listStatus"].where(panel["listStatus"].notna(), "").astype(str).str.strip().str.upper()
+        if "listStatus" in panel
+        else pd.Series("", index=panel.index, dtype=object)
+    )
+    active_status = status.isin({"ACTIVE", "LISTED", "L", "上市", "正常上市"})
+    delisted_status = status.isin({"DELISTED", "TERMINATED", "D", "退市", "终止上市"})
+    known_lifecycle = active_status | (delisted_status & delist_dates.notna())
+    before_delisting = delist_dates.isna() | (panel["date"] < delist_dates.dt.normalize())
+    listed = (
+        panel["date"].notna()
+        & list_dates.notna()
+        & (panel["date"] >= list_dates.dt.normalize())
+        & before_delisting
+        & stock_type.isin({"A股".upper(), "A", "ASHARE", "A-SHARE"})
+        & known_lifecycle
+    )
 
     panel["is_stock_master_member"] = listed.fillna(False).astype(bool)
     panel.sort_values(["date", "symbol"], inplace=True)
     panel.reset_index(drop=True, inplace=True)
     notes = (
-        "Point-in-time stock master filter: date must be on or after listDate and before delistDate when available.",
-        "stockType must be A-share when stock/basic-info provides the field.",
-        "listStatus is retained for audit; historical eligibility is based on listDate/delistDate rather than current status alone.",
+        "Point-in-time stock master filter fails closed unless listDate, stockType and a known lifecycle status are present.",
+        "Delisted or terminated rows require delistDate and are eligible only before that date.",
+        "Current-only metadata without provable lifecycle dates is not treated as historical eligibility evidence.",
     )
     return PointInTimeStockMasterResult(
         data=panel,
@@ -1944,15 +1976,30 @@ def _normalize_common_columns(data: pd.DataFrame) -> pd.DataFrame:
             "peTtm": "pe",
         }
     ).copy()
-    required = {"date", "symbol", "open", "high", "low", "close"}
+    required = {
+        "date",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "is_st",
+        "is_suspended",
+        "is_limit_up",
+        "is_limit_down",
+        "limit_up",
+        "limit_down",
+    }
     missing = required - set(frame.columns)
     if missing:
         raise DataSourceError(f"Market data missing required columns: {sorted(missing)}")
 
     frame["date"] = pd.to_datetime(frame["date"].astype(str))
     frame["symbol"] = frame["symbol"].map(_normalize_symbol)
-    for column in ("open", "high", "low", "close"):
+    for column in ("open", "high", "low", "close", "limit_up", "limit_down"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    raw_open = frame["open"].replace([float("inf"), float("-inf")], pd.NA)
+    frame["_has_raw_open"] = raw_open.notna() & raw_open.gt(0.0)
     if "volume" in frame:
         frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce").fillna(0.0)
     else:
@@ -1961,15 +2008,25 @@ def _normalize_common_columns(data: pd.DataFrame) -> pd.DataFrame:
         frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce").fillna(0.0)
     else:
         frame["amount"] = frame["volume"] * frame["close"]
-    if "is_st" not in frame:
-        frame["is_st"] = False
-    if "is_suspended" not in frame:
-        frame["is_suspended"] = False
-    for column in ("is_limit_up", "is_limit_down"):
-        if column in frame:
-            frame[column] = frame[column].where(frame[column].notna(), False).infer_objects(copy=False).astype(bool)
-        else:
-            frame[column] = False
+    for column in ("is_st", "is_suspended", "is_limit_up", "is_limit_down"):
+        frame[column] = frame[column].astype("boolean")
+    if frame["is_suspended"].isna().any():
+        raise DataSourceError("Market data has rows with unknown is_suspended state.")
+    tradable = ~frame["is_suspended"].astype(bool)
+    critical_values = pd.DataFrame(
+        {
+            "is_st": frame["is_st"].notna(),
+            "is_limit_up": frame["is_limit_up"].notna(),
+            "is_limit_down": frame["is_limit_down"].notna(),
+            "limit_up": frame["limit_up"].notna(),
+            "limit_down": frame["limit_down"].notna(),
+        }
+    )
+    missing_constraint = tradable & ~critical_values.all(axis=1)
+    if missing_constraint.any():
+        raise DataSourceError(
+            "Market data has tradable rows with missing ST or price-limit constraints."
+        )
     if "dividend_yield" in frame:
         frame["dividend_yield"] = _normalize_yield_series(pd.to_numeric(frame["dividend_yield"], errors="coerce"))
     for column in ("pe", "pb", "roe"):
@@ -1986,27 +2043,36 @@ def _align_symbol_dates(data: pd.DataFrame) -> pd.DataFrame:
         reindexed = group.reindex(all_dates)
         traded = reindexed["close"].notna()
         reindexed["symbol"] = symbol
-        for column in ("close", "open", "high", "low"):
-            reindexed[column] = reindexed[column].ffill()
+        raw_close = pd.to_numeric(reindexed["close"], errors="coerce")
+        previous_close = raw_close.ffill().shift(1)
+        reindexed["close"] = raw_close.ffill()
+        raw_open = pd.to_numeric(reindexed["open"], errors="coerce")
+        has_raw_open = reindexed["_has_raw_open"].astype("boolean").fillna(False).astype(bool) & raw_open.notna()
+        reindexed["_has_raw_open"] = has_raw_open.where(traded, False).astype(bool)
+        reindexed["open"] = raw_open.where(reindexed["_has_raw_open"], previous_close)
         reindexed["open"] = reindexed["open"].fillna(reindexed["close"])
+        for column in ("high", "low"):
+            raw_values = pd.to_numeric(reindexed[column], errors="coerce")
+            reindexed[column] = raw_values.where(traded, raw_values.ffill())
         reindexed["high"] = reindexed["high"].fillna(reindexed["close"])
         reindexed["low"] = reindexed["low"].fillna(reindexed["close"])
         reindexed["volume"] = reindexed["volume"].where(traded, 0.0).fillna(0.0)
         reindexed["amount"] = reindexed["amount"].where(traded, 0.0).fillna(0.0)
-        reindexed["is_suspended"] = (~traded) | _bool_column(reindexed, "is_suspended")
-        reindexed["is_st"] = _bool_column(reindexed, "is_st", ffill=True)
+        raw_suspended = reindexed["is_suspended"].astype("boolean")
+        reindexed["is_suspended"] = raw_suspended.where(traded, True)
+        raw_st = reindexed["is_st"].astype("boolean")
+        reindexed["is_st"] = raw_st.where(traded, raw_st.ffill())
         for column in ("is_limit_up", "is_limit_down"):
-            reindexed[column] = _bool_column(reindexed, column).where(traded, False).astype(bool)
+            raw_flag = reindexed[column].astype("boolean")
+            reindexed[column] = raw_flag.where(traded, False)
         for column in ("pe", "pb", "roe", "dividend_yield"):
             if column in reindexed:
                 reindexed[column] = reindexed[column].ffill()
 
         reindexed = reindexed[reindexed["close"].notna()].copy()
-        previous_close = reindexed["close"].shift(1)
-        reindexed["limit_up"] = reindexed.get("limit_up", previous_close * 1.10)
-        reindexed["limit_down"] = reindexed.get("limit_down", previous_close * 0.90)
-        reindexed["limit_up"] = reindexed["limit_up"].fillna(previous_close * 1.10)
-        reindexed["limit_down"] = reindexed["limit_down"].fillna(previous_close * 0.90)
+        for column in ("limit_up", "limit_down"):
+            raw_limit = pd.to_numeric(reindexed[column], errors="coerce")
+            reindexed[column] = raw_limit.where(traded, raw_limit.ffill())
         reindexed["date"] = reindexed.index
         frames.append(reindexed.reset_index(drop=True))
 
@@ -2028,15 +2094,6 @@ def _normalize_tushare_daily(raw: pd.DataFrame) -> pd.DataFrame:
     frame["volume"] = pd.to_numeric(frame["vol"], errors="coerce") * 100.0
     frame["amount"] = pd.to_numeric(frame["amount"], errors="coerce") * 1000.0
     return frame[["date", "symbol", "open", "high", "low", "close", "volume", "amount"]]
-
-
-def _bool_column(frame: pd.DataFrame, column: str, default: bool = False, ffill: bool = False) -> pd.Series:
-    if column not in frame:
-        return pd.Series(default, index=frame.index, dtype=bool)
-    values = frame[column].astype("boolean")
-    if ffill:
-        values = values.ffill()
-    return values.fillna(default).astype(bool)
 
 
 def _normalize_tushare_basic(raw: pd.DataFrame) -> pd.DataFrame:
@@ -2157,9 +2214,13 @@ def _normalize_investoday_stock_basic_info(raw: pd.DataFrame) -> pd.DataFrame:
     for column in ("stockName", "stockFullName", "boardName", "stockType", "companyId", "listStatus"):
         if column in frame:
             frame[column] = frame[column].astype(str)
-    for column in ("listDate", "delistDate", "reportDate"):
+    for column in ("listDate", "delistDate"):
         if column in frame:
-            frame[column] = pd.to_datetime(frame[column], errors="coerce")
+            frame[column] = _parse_stock_master_date_column(
+                frame[column], field=column, source="Investoday stock/basic-info"
+            )
+    if "reportDate" in frame:
+        frame["reportDate"] = pd.to_datetime(frame["reportDate"], errors="coerce")
     for column in ("boardCode", "sharesTotal", "sharesFloat", "sharesFloatA", "companyGrowthStage"):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -2256,25 +2317,35 @@ def _normalize_external_stock_master(raw: pd.DataFrame) -> pd.DataFrame:
 
     frame["stockCode"] = frame["symbol"].str.split(".", n=1).str[0]
     frame["exchangeCode"] = frame["symbol"].str.split(".", n=1).str[1]
-    if "stockType" not in frame:
-        frame["stockType"] = "A股"
-    else:
-        normalized_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip().str.upper()
-        frame.loc[normalized_type.isin({"STOCK", "EQUITY", "A_SHARE", "A-SHARE", "ASHARE"}), "stockType"] = "A股"
-    if "listStatus" not in frame:
-        frame["listStatus"] = ""
+    required_lifecycle_fields = {"stockType", "listDate", "listStatus"}
+    missing_lifecycle_fields = required_lifecycle_fields - set(frame.columns)
+    if missing_lifecycle_fields:
+        raise DataSourceError(
+            "Historical stock master cannot prove point-in-time eligibility; "
+            f"missing fields: {sorted(missing_lifecycle_fields)}."
+        )
+    normalized_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip().str.upper()
+    frame.loc[normalized_type.isin({"STOCK", "EQUITY", "A_SHARE", "A-SHARE", "ASHARE"}), "stockType"] = "A股"
     for column in ("stockName", "stockFullName", "boardName", "stockType", "companyId", "listStatus"):
         if column not in frame:
             frame[column] = ""
         frame[column] = frame[column].where(frame[column].notna(), "").astype(str)
-    for column in ("listDate", "delistDate", "reportDate"):
+    for column in ("listDate", "delistDate"):
         if column in frame:
-            frame[column] = pd.to_datetime(frame[column], errors="coerce")
+            frame[column] = _parse_stock_master_date_column(
+                frame[column], field=column, source="Historical stock master CSV"
+            )
         else:
             frame[column] = pd.NaT
+    if "reportDate" in frame:
+        frame["reportDate"] = pd.to_datetime(frame["reportDate"], errors="coerce")
+    else:
+        frame["reportDate"] = pd.NaT
     for column in ("boardCode", "sharesTotal", "sharesFloat", "sharesFloatA", "companyGrowthStage"):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    _validate_historical_stock_master_lifecycle(frame, source="Historical stock master CSV")
 
     keep_columns = [
         "symbol",
@@ -2298,6 +2369,45 @@ def _normalize_external_stock_master(raw: pd.DataFrame) -> pd.DataFrame:
     return frame[[column for column in keep_columns if column in frame.columns]].dropna(subset=["symbol"]).drop_duplicates(
         "symbol", keep="first"
     )
+
+
+def _validate_historical_stock_master_lifecycle(frame: pd.DataFrame, *, source: str) -> None:
+    required = {"symbol", "stockType", "listDate", "listStatus"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise DataSourceError(
+            f"{source} cannot prove historical point-in-time eligibility; missing fields: {sorted(missing)}."
+        )
+    stock_type = frame["stockType"].where(frame["stockType"].notna(), "").astype(str).str.strip()
+    status = frame["listStatus"].where(frame["listStatus"].notna(), "").astype(str).str.strip().str.upper()
+    list_dates = pd.to_datetime(frame["listDate"], errors="coerce")
+    missing_tokens = {"", "NAN", "NONE", "<NA>"}
+    if stock_type.str.upper().isin(missing_tokens).any():
+        raise DataSourceError(f"{source} has rows with missing stockType/asset_type.")
+    if status.isin(missing_tokens).any():
+        raise DataSourceError(f"{source} has rows with missing listStatus/status.")
+    if list_dates.isna().any():
+        raise DataSourceError(f"{source} has rows with missing or invalid listDate/list_date.")
+
+    delist_dates = (
+        pd.to_datetime(frame["delistDate"], errors="coerce")
+        if "delistDate" in frame
+        else pd.Series(pd.NaT, index=frame.index)
+    )
+    delisted = status.isin({"DELISTED", "TERMINATED", "D", "退市", "终止上市"})
+    if (delisted & delist_dates.isna()).any():
+        raise DataSourceError(f"{source} has delisted/terminated rows without delistDate/delist_date.")
+    if (delist_dates.notna() & (delist_dates <= list_dates)).any():
+        raise DataSourceError(f"{source} has delistDate values that are not after listDate.")
+
+
+def _parse_stock_master_date_column(series: pd.Series, *, field: str, source: str) -> pd.Series:
+    raw_text = series.where(series.notna(), "").astype(str).str.strip().str.upper()
+    supplied = ~raw_text.isin({"", "NAN", "NAT", "NONE", "<NA>"})
+    parsed = pd.to_datetime(series, errors="coerce")
+    if (supplied & parsed.isna()).any():
+        raise DataSourceError(f"{source} has non-empty invalid {field} values.")
+    return parsed
 
 
 def _normalize_investoday_index_quotes(raw: pd.DataFrame) -> pd.DataFrame:

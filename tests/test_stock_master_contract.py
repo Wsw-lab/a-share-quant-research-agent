@@ -7,9 +7,11 @@ from pathlib import Path
 import pandas as pd
 
 from a_share_quant_agent.data_sources import (
+    DataSourceError,
     apply_point_in_time_stock_master_filter,
     enrich_panel_with_stock_master,
     load_stock_master_csv,
+    symbols_from_stock_master,
 )
 
 
@@ -61,14 +63,121 @@ class QDataStockMasterContractTest(unittest.TestCase):
 
         self.assertEqual(list(filtered["is_stock_master_member"]), [False, True, True, False])
 
+    def test_historical_master_rejects_missing_asset_type(self) -> None:
+        raw = (
+            "symbol,name,list_date,delist_date,status\n"
+            "000001.SZ,Unknown Type,2020-01-02,,active\n"
+        )
+
+        with self.assertRaises(DataSourceError):
+            self._load_unchecked(raw)
+
+    def test_historical_master_rejects_missing_or_invalid_list_date(self) -> None:
+        fixtures = (
+            "symbol,name,asset_type,list_date,delist_date,status\n"
+            "000001.SZ,Missing Date,stock,,,active\n",
+            "symbol,name,asset_type,list_date,delist_date,status\n"
+            "000001.SZ,Invalid Date,stock,not-a-date,,active\n",
+        )
+
+        for raw in fixtures:
+            with self.subTest(raw=raw):
+                with self.assertRaises(DataSourceError):
+                    self._load_unchecked(raw)
+
+    def test_delisted_master_row_requires_delist_date(self) -> None:
+        raw = (
+            "symbol,name,asset_type,list_date,delist_date,status\n"
+            "000001.SZ,Incomplete Delisting,stock,2020-01-02,,delisted\n"
+        )
+
+        with self.assertRaises(DataSourceError):
+            self._load_unchecked(raw)
+
+    def test_nonempty_invalid_delist_date_is_rejected(self) -> None:
+        raw = (
+            "symbol,name,asset_type,list_date,delist_date,status\n"
+            "000001.SZ,Invalid Delist,stock,2020-01-02,not-a-date,active\n"
+        )
+
+        with self.assertRaises(DataSourceError):
+            self._load_unchecked(raw)
+
+    def test_delist_date_cannot_precede_list_date(self) -> None:
+        raw = (
+            "symbol,name,asset_type,list_date,delist_date,status\n"
+            "000001.SZ,Impossible Lifecycle,stock,2020-01-02,2019-12-31,delisted\n"
+        )
+
+        with self.assertRaises(DataSourceError):
+            self._load_unchecked(raw)
+
+    def test_current_only_master_cannot_claim_historical_point_in_time_coverage(self) -> None:
+        raw = "symbol,name,status\n000001.SZ,Current Only,active\n"
+
+        with self.assertRaises(DataSourceError):
+            self._load_unchecked(raw)
+
+    def test_point_in_time_filter_fails_closed_for_unknown_lifecycle(self) -> None:
+        panel = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2020-01-03", "2020-01-03", "2020-01-03"]),
+                "symbol": ["000001.SZ", "000002.SZ", "000003.SZ"],
+                "listDate": [pd.NaT, pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-01")],
+                "delistDate": [pd.NaT, pd.NaT, pd.NaT],
+                "stockType": ["A股", pd.NA, "A股"],
+                "listStatus": ["active", "active", "delisted"],
+            }
+        )
+
+        filtered = apply_point_in_time_stock_master_filter(panel).data
+
+        self.assertEqual(list(filtered["is_stock_master_member"]), [False, False, False])
+
+    def test_active_and_delisted_lifecycle_boundaries_remain_explicit(self) -> None:
+        panel = pd.DataFrame(
+            {
+                "date": pd.to_datetime(
+                    ["2019-12-31", "2020-01-01", "2020-01-04", "2020-01-05"]
+                ),
+                "symbol": ["000001.SZ"] * 4,
+                "listDate": [pd.Timestamp("2020-01-01")] * 4,
+                "delistDate": [pd.Timestamp("2020-01-05")] * 4,
+                "stockType": ["A股"] * 4,
+                "listStatus": ["delisted"] * 4,
+            }
+        )
+
+        filtered = apply_point_in_time_stock_master_filter(panel).data
+
+        self.assertEqual(list(filtered["is_stock_master_member"]), [False, True, True, False])
+
+    def test_candidate_symbol_extraction_fails_closed_without_lifecycle_evidence(self) -> None:
+        incomplete = pd.DataFrame(
+            {
+                "symbol": ["000001.SZ"],
+                "stockType": [pd.NA],
+                "listDate": [pd.NaT],
+                "delistDate": [pd.NaT],
+                "listStatus": ["active"],
+            }
+        )
+
+        symbols = symbols_from_stock_master(incomplete, start="2020-01-01", end="2020-12-31")
+
+        self.assertEqual(symbols, ())
+
     def _load(self, raw: str) -> pd.DataFrame:
+        try:
+            return self._load_unchecked(raw)
+        except Exception as exc:  # The contract requires both QData field families to load.
+            self.fail(f"QData stock master should normalize without error: {exc}")
+
+    def _load_unchecked(self, raw: str) -> pd.DataFrame:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "security_master.csv"
             path.write_text(raw, encoding="utf-8")
-            try:
-                return load_stock_master_csv(path).master
-            except Exception as exc:  # The contract requires both QData field families to load.
-                self.fail(f"QData stock master should normalize without error: {exc}")
+            return load_stock_master_csv(path).master
 
 
 if __name__ == "__main__":
