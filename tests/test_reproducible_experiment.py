@@ -255,6 +255,58 @@ class ReproducibleExperimentCliTest(unittest.TestCase):
 
 
 class ReproducibleExperimentBoundaryTest(unittest.TestCase):
+    def test_artifact_mutated_during_semantic_verification_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            _run_test_experiment(output)
+            equity_path = output / "equity.jsonl"
+            original_verify_metrics = experiment._verify_metrics_payload
+            mutated = False
+
+            def mutate_after_payloads_were_read(metrics):
+                nonlocal mutated
+                if not mutated:
+                    payload = equity_path.read_bytes()
+                    changed = payload.replace(b'"cash":"1000000.0"', b'"cash":"1000001.0"', 1)
+                    self.assertEqual(len(changed), len(payload))
+                    equity_path.write_bytes(changed)
+                    mutated = True
+                return original_verify_metrics(metrics)
+
+            with patch.object(
+                experiment,
+                "_verify_metrics_payload",
+                side_effect=mutate_after_payloads_were_read,
+            ):
+                with self.assertRaisesRegex(experiment.ExperimentError, "changed during verification"):
+                    experiment.verify_experiment(output)
+
+    def test_output_path_replaced_during_semantic_verification_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "output"
+            moved_output = Path(temp_dir) / "original-output-moved"
+            replacement = Path(temp_dir) / "replacement"
+            _run_test_experiment(output)
+            shutil.copytree(output, replacement)
+            original_verify_metrics = experiment._verify_metrics_payload
+            replaced = False
+
+            def replace_output_path_before_final_check(metrics):
+                nonlocal replaced
+                if not replaced:
+                    output.rename(moved_output)
+                    replacement.rename(output)
+                    replaced = True
+                return original_verify_metrics(metrics)
+
+            with patch.object(
+                experiment,
+                "_verify_metrics_payload",
+                side_effect=replace_output_path_before_final_check,
+            ):
+                with self.assertRaisesRegex(experiment.ExperimentError, "changed during verification"):
+                    experiment.verify_experiment(output)
+
     def test_resealed_research_values_cannot_change_fixed_artifact_payloads(self) -> None:
         mutations = {
             "trade_gross": ("trades.jsonl", lambda value: value[0].__setitem__("gross", "855001.0")),

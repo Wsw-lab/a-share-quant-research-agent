@@ -7,6 +7,7 @@ contract evidence, not a strategy search or a performance claim.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from copy import deepcopy
 from decimal import Decimal
 import hashlib
@@ -21,7 +22,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import pandas as pd
 
@@ -271,8 +272,21 @@ def verify_experiment(
 ) -> dict[str, Any]:
     """Verify the exact artifact set, canonical bytes, hashes, and semantics."""
 
-    root = Path(output_dir)
-    payloads = _read_exact_output_files(root)
+    root = Path(os.path.abspath(os.fspath(Path(output_dir).expanduser())))
+    with _open_exact_output_files(root) as payloads:
+        return _verify_experiment_payloads(
+            payloads,
+            expected_agent_sha=expected_agent_sha,
+            expected_qdata_sha=expected_qdata_sha,
+        )
+
+
+def _verify_experiment_payloads(
+    payloads: Mapping[str, bytes],
+    *,
+    expected_agent_sha: str | None,
+    expected_qdata_sha: str | None,
+) -> dict[str, Any]:
     receipt = _decode_canonical_json(payloads["receipt.json"], "receipt.json")
     if not isinstance(receipt, dict):
         raise ExperimentError("receipt.json root must be an object")
@@ -1102,17 +1116,27 @@ def _require_output_untracked_if_inside_checkout(output: Path, checkout_root: An
         raise ExperimentError("output inside the Agent checkout must be covered by .gitignore")
 
 
-def _read_exact_output_files(root: Path) -> dict[str, bytes]:
+@contextmanager
+def _open_exact_output_files(root: Path) -> Iterator[dict[str, bytes]]:
+    """Hold the verified directory and file objects through semantic checks.
+
+    This is a fail-closed consistency check for regular local filesystem
+    objects. It does not claim to lock out a process that retains concurrent
+    write authority; the final path/object checks define the success boundary.
+    """
+
     nofollow = getattr(os, "O_NOFOLLOW", None)
     directory_only = getattr(os, "O_DIRECTORY", None)
     if nofollow is None or directory_only is None:
         raise ExperimentError("strict no-follow output verification is unavailable")
     close_on_exec = getattr(os, "O_CLOEXEC", 0)
     nonblocking = getattr(os, "O_NONBLOCK", 0)
+    directory_flags = os.O_RDONLY | directory_only | nofollow | close_on_exec
+    file_flags = os.O_RDONLY | nofollow | close_on_exec | nonblocking
     directory_fd: int | None = None
     file_descriptors: dict[str, int] = {}
     try:
-        directory_fd = os.open(root, os.O_RDONLY | directory_only | nofollow | close_on_exec)
+        directory_fd = os.open(root, directory_flags)
         directory_info = os.fstat(directory_fd)
         if not stat.S_ISDIR(directory_info.st_mode):
             raise ExperimentError("experiment output must be a regular directory")
@@ -1124,11 +1148,7 @@ def _read_exact_output_files(root: Path) -> dict[str, bytes]:
         directory_identity = _file_identity(directory_info)
         file_identities: dict[str, tuple[int, ...]] = {}
         for filename in OUTPUT_FILENAMES:
-            descriptor = os.open(
-                filename,
-                os.O_RDONLY | nofollow | close_on_exec | nonblocking,
-                dir_fd=directory_fd,
-            )
+            descriptor = os.open(filename, file_flags, dir_fd=directory_fd)
             file_descriptors[filename] = descriptor
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode):
@@ -1141,12 +1161,6 @@ def _read_exact_output_files(root: Path) -> dict[str, bytes]:
             filename: _read_file_descriptor(descriptor)
             for filename, descriptor in file_descriptors.items()
         }
-
-        if _file_identity(os.fstat(directory_fd)) != directory_identity:
-            raise ExperimentError("experiment output directory changed during verification")
-        if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
-            raise ExperimentError("experiment output file set changed during verification")
-
         for filename, descriptor in file_descriptors.items():
             identity = file_identities[filename]
             if _file_identity(os.fstat(descriptor)) != identity:
@@ -1154,17 +1168,24 @@ def _read_exact_output_files(root: Path) -> dict[str, bytes]:
             entry_info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
             if _file_identity(entry_info) != identity:
                 raise ExperimentError(f"{filename} changed during verification")
-            second_payload = _read_file_descriptor(descriptor)
-            if _sha256(second_payload) != _sha256(payloads[filename]):
-                raise ExperimentError(f"{filename} changed during verification")
-            if _file_identity(os.fstat(descriptor)) != identity:
-                raise ExperimentError(f"{filename} changed during verification")
-
         if _file_identity(os.fstat(directory_fd)) != directory_identity:
             raise ExperimentError("experiment output directory changed during verification")
         if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
             raise ExperimentError("experiment output file set changed during verification")
-        return payloads
+
+        # The context deliberately spans JSON decoding and every semantic
+        # contract check in verify_experiment.
+        yield payloads
+
+        _verify_open_output_files_unchanged(
+            root=root,
+            directory_fd=directory_fd,
+            directory_flags=directory_flags,
+            directory_identity=directory_identity,
+            file_descriptors=file_descriptors,
+            file_identities=file_identities,
+            payloads=payloads,
+        )
     except ExperimentError:
         raise
     except OSError as exc:
@@ -1180,6 +1201,79 @@ def _read_exact_output_files(root: Path) -> dict[str, bytes]:
                 os.close(directory_fd)
             except OSError:
                 pass
+
+
+def _verify_open_output_files_unchanged(
+    *,
+    root: Path,
+    directory_fd: int,
+    directory_flags: int,
+    directory_identity: tuple[int, ...],
+    file_descriptors: Mapping[str, int],
+    file_identities: Mapping[str, tuple[int, ...]],
+    payloads: Mapping[str, bytes],
+) -> None:
+    if _file_identity(os.fstat(directory_fd)) != directory_identity:
+        raise ExperimentError("experiment output directory changed during verification")
+    if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
+        raise ExperimentError("experiment output file set changed during verification")
+
+    for filename in OUTPUT_FILENAMES:
+        descriptor = file_descriptors[filename]
+        identity = file_identities[filename]
+        if _file_identity(os.fstat(descriptor)) != identity:
+            raise ExperimentError(f"{filename} changed during verification")
+        entry_info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+        if _file_identity(entry_info) != identity:
+            raise ExperimentError(f"{filename} changed during verification")
+        if _read_file_descriptor(descriptor) != payloads[filename]:
+            raise ExperimentError(f"{filename} changed during verification")
+        if _file_identity(os.fstat(descriptor)) != identity:
+            raise ExperimentError(f"{filename} changed during verification")
+        entry_info = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+        if _file_identity(entry_info) != identity:
+            raise ExperimentError(f"{filename} changed during verification")
+
+    if _file_identity(os.fstat(directory_fd)) != directory_identity:
+        raise ExperimentError("experiment output directory changed during verification")
+    if set(os.listdir(directory_fd)) != set(OUTPUT_FILENAMES):
+        raise ExperimentError("experiment output file set changed during verification")
+
+    # Re-open the user-visible root as the last verification stage. Holding the
+    # original directory fd is insufficient if the pathname was swapped while
+    # semantic validation used the already-read payloads.
+    reopened_directory_fd: int | None = None
+    try:
+        reopened_directory_fd = os.open(root, directory_flags)
+        original_info = os.fstat(directory_fd)
+        reopened_info = os.fstat(reopened_directory_fd)
+        if not stat.S_ISDIR(reopened_info.st_mode):
+            raise ExperimentError("experiment output directory changed during verification")
+        if _directory_object_identity(reopened_info) != _directory_object_identity(original_info):
+            raise ExperimentError("experiment output directory path changed during verification")
+        if set(os.listdir(reopened_directory_fd)) != set(OUTPUT_FILENAMES):
+            raise ExperimentError("experiment output file set changed during verification")
+        for filename in OUTPUT_FILENAMES:
+            entry_info = os.stat(
+                filename,
+                dir_fd=reopened_directory_fd,
+                follow_symlinks=False,
+            )
+            if _file_identity(entry_info) != file_identities[filename]:
+                raise ExperimentError(f"{filename} changed during verification")
+            if _file_identity(os.fstat(file_descriptors[filename])) != file_identities[filename]:
+                raise ExperimentError(f"{filename} changed during verification")
+        if set(os.listdir(reopened_directory_fd)) != set(OUTPUT_FILENAMES):
+            raise ExperimentError("experiment output file set changed during verification")
+        if _file_identity(os.fstat(directory_fd)) != directory_identity:
+            raise ExperimentError("experiment output directory changed during verification")
+        if _directory_object_identity(os.fstat(reopened_directory_fd)) != _directory_object_identity(
+            os.fstat(directory_fd)
+        ):
+            raise ExperimentError("experiment output directory path changed during verification")
+    finally:
+        if reopened_directory_fd is not None:
+            os.close(reopened_directory_fd)
 
 
 def _read_file_descriptor(descriptor: int) -> bytes:
@@ -1202,6 +1296,10 @@ def _file_identity(info: os.stat_result) -> tuple[int, ...]:
         int(info.st_mtime_ns),
         int(info.st_ctime_ns),
     )
+
+
+def _directory_object_identity(info: os.stat_result) -> tuple[int, int]:
+    return (int(info.st_dev), int(info.st_ino))
 
 
 def _write_new_file(path: Path, payload: bytes) -> None:
