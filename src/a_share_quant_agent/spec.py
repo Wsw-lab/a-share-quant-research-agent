@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 Direction = Literal["asc", "desc"]
 Frequency = Literal["monthly", "weekly"]
+ExecutionModel = Literal["close_signal_next_open", "same_close_legacy"]
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,18 @@ class CostSpec:
     commission_rate: float = 0.0003
     stamp_tax_rate: float = 0.0005
     slippage_bps: float = 5.0
+
+
+@dataclass(frozen=True)
+class ExecutionSpec:
+    """Set the information cutoff and fill convention for daily bars."""
+
+    model: ExecutionModel = "close_signal_next_open"
+
+    def __post_init__(self) -> None:
+        supported = {"close_signal_next_open", "same_close_legacy"}
+        if self.model not in supported:
+            raise ValueError(f"Unsupported execution model: {self.model}. Expected one of {sorted(supported)}")
 
 
 @dataclass(frozen=True)
@@ -176,6 +189,7 @@ class StrategySpec:
     costs: CostSpec
     factors: tuple[FactorSpec, ...]
     risk: RiskSpec
+    execution: ExecutionSpec = field(default_factory=ExecutionSpec)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StrategySpec":
@@ -195,6 +209,14 @@ class StrategySpec:
         else:
             risk_payload["risk_overlay"] = RiskOverlaySpec()
 
+        execution_payload = payload.get("execution", {})
+        if isinstance(execution_payload, dict):
+            execution = ExecutionSpec(**execution_payload)
+        elif isinstance(execution_payload, ExecutionSpec):
+            execution = execution_payload
+        else:
+            raise ValueError("execution must be a mapping or ExecutionSpec")
+
         return cls(
             name=payload["name"],
             description=payload.get("description", ""),
@@ -204,6 +226,7 @@ class StrategySpec:
             costs=CostSpec(**payload.get("costs", {})),
             factors=factors,
             risk=RiskSpec(**risk_payload),
+            execution=execution,
         )
 
     @classmethod
@@ -220,6 +243,7 @@ def spec_to_dict(spec: StrategySpec) -> dict[str, Any]:
         "rebalance": spec.rebalance.__dict__,
         "portfolio": spec.portfolio.__dict__,
         "costs": spec.costs.__dict__,
+        "execution": spec.execution.__dict__,
         "factors": [factor.__dict__ for factor in spec.factors],
         "risk": asdict(spec.risk),
     }

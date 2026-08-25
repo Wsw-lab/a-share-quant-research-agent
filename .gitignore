@@ -1,0 +1,30 @@
+# Python/build state
+__pycache__/
+*.py[cod]
+/.venv/
+/build/
+/dist/
+*.egg-info/
+.env
+.env.*
+!.env.example
+*.feather
+*.parquet
+*.pkl
+
+# Runtime research outputs. Deliberate fixtures and templates stay tracked.
+/.research-artifacts/
+/.research-receipt-staging-*/
+/reports/
+/snapshots/
+/cache/
+/data_assets/cache/
+/data_assets/backups/
+/data_assets/manifests/
+/data_assets/market/
+/data_assets/fundamentals/
+/data_assets/events/
+/data_assets/index/
+/data_assets/industry/
+/data_assets/stock_master/
+/data_assets/investoday_candidate/

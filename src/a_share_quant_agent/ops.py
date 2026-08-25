@@ -1,10 +1,11 @@
+"""Legacy operations helpers outside the maintained public workflow."""
+
 from __future__ import annotations
 
 from datetime import date, datetime
 import json
 from pathlib import Path
 import subprocess
-import sys
 from typing import Any
 
 import pandas as pd
@@ -70,6 +71,11 @@ def run_scheduler_once(
     command: list[str] | None = None,
     timeout_seconds: int = 7200,
 ) -> dict[str, object]:
+    if command is None:
+        raise RuntimeError(
+            "Legacy scheduler is not a maintained public workflow and has no default command; "
+            "pass an explicit command only when auditing legacy behavior."
+        )
     reports_path = Path(reports_root)
     reports_path.mkdir(parents=True, exist_ok=True)
     scheduler_id = _make_id("scheduler")
@@ -78,12 +84,7 @@ def run_scheduler_once(
     trading_day = _is_trading_day(target_date) if skip_weekends else True
     duplicate = _has_scheduler_run_for_date(reports_path, target_date)
     started_at = _now()
-    cmd = command or [
-        sys.executable,
-        str(Path(__file__).resolve().parents[2] / "examples" / "run_daily_pipeline.py"),
-        "--config",
-        str(config_path),
-    ]
+    cmd = list(command)
     row: dict[str, object] = {
         "scheduler_run_id": scheduler_id,
         "created_at": started_at,

@@ -1,27 +1,11 @@
-"""A-share quant research agent MVP."""
+"""A-share quant research and audit prototype."""
 
 __all__ = [
     "audit",
-    "alpha_line_retirement",
-    "artifacts",
-    "attribution",
     "backtest",
-    "cache_governance",
-    "completion_readiness",
-    "data_sources",
-    "exposure",
-    "factor_diagnostics",
-    "job_queue",
-    "nl_parser",
-    "operations",
-    "ops",
-    "paper",
-    "paper_control",
-    "pit_structure_sources",
+    "qdata_snapshot",
     "report",
-    "run_registry",
+    "reproducible_experiment",
     "sample_data",
     "spec",
-    "walk_forward",
 ]
-

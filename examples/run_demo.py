@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> None:
     spec_path = ROOT / "examples" / "strategy_specs" / "quality_value_momentum.json"
-    report_path = ROOT / "reports" / "demo_report.md"
+    report_relative = Path(".research-artifacts") / "demo" / "demo_report.md"
+    report_path = ROOT / report_relative
 
     spec = StrategySpec.from_json(spec_path)
     data = make_sample_panel()
@@ -24,13 +25,10 @@ def main() -> None:
     write_report(report_path, markdown)
 
     print(f"Strategy: {spec.name}")
-    print(f"Verdict: {audit['verdict']}")
-    print(f"Annualized return: {result.metrics['annualized_return']:.2%}")
-    print(f"Max drawdown: {result.metrics['max_drawdown']:.2%}")
-    print(f"Trades: {result.metrics['trade_count']:.0f}")
-    print(f"Report: {report_path}")
+    print("Evidence: synthetic engine demonstration only; no performance claim")
+    print(f"Synthetic audit outcome: {audit['verdict']}")
+    print(f"Report: {report_relative.as_posix()}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -16,6 +16,7 @@ class BacktestResult:
     trades: pd.DataFrame
     holdings: pd.DataFrame
     metrics: dict[str, float]
+    orders: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -42,8 +43,257 @@ class _WindowFuseState:
     force_rebalance: bool = False
 
 
+@dataclass(frozen=True)
+class _PendingRebalance:
+    signal_date: pd.Timestamp
+    targets: tuple[str, ...]
+    risk_target_weight: float
+
+
+@dataclass(frozen=True)
+class _PendingStop:
+    signal_date: pd.Timestamp
+    symbol: str
+    position_return: float
+
+
 def run_backtest(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
-    data = _prepare_data(data)
+    if spec.execution.model == "close_signal_next_open":
+        return _run_close_signal_next_open(_prepare_data(data, required_price_field="open"), spec)
+    if spec.execution.model == "same_close_legacy":
+        return _run_same_close_legacy(_prepare_data(data), spec)
+    raise ValueError(f"Unsupported execution model: {spec.execution.model}")
+
+
+def _run_close_signal_next_open(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
+    """Create orders after a completed close and fill them at the next open."""
+
+    dates = list(data.index.get_level_values("date").unique())
+    rebalance_dates = set(_get_rebalance_dates(dates, spec.rebalance.frequency))
+
+    cash = spec.portfolio.initial_cash
+    positions: dict[str, int] = {}
+    buy_dates: dict[str, pd.Timestamp] = {}
+    entry_prices: dict[str, float] = {}
+    stopped_until: dict[str, pd.Timestamp] = {}
+    trade_rows: list[dict[str, Any]] = []
+    order_rows: list[dict[str, Any]] = []
+    holding_rows: list[dict[str, Any]] = []
+    equity_rows: list[dict[str, Any]] = []
+    peak_nav = spec.portfolio.initial_cash
+    previous_nav: float | None = None
+    cumulative_cash_yield = 0.0
+    fuse_state = _WindowFuseState()
+    pending_rebalance: _PendingRebalance | None = None
+    pending_stops: dict[str, _PendingStop] = {}
+
+    for date in dates:
+        today = data.xs(date, level="date")
+        cash_yield_accrued = 0.0
+        if previous_nav is not None:
+            cash_yield_accrued = _cash_yield_for_day(cash, spec)
+            cash += cash_yield_accrued
+            cumulative_cash_yield += cash_yield_accrued
+
+        pending_stops, cash, positions = _execute_pending_stops(
+            date=date,
+            today=today,
+            pending_stops=pending_stops,
+            cash=cash,
+            positions=positions,
+            buy_dates=buy_dates,
+            entry_prices=entry_prices,
+            stopped_until=stopped_until,
+            spec=spec,
+            trade_rows=trade_rows,
+            order_rows=order_rows,
+        )
+        if pending_rebalance is not None:
+            open_nav = _portfolio_value(cash, positions, today, price_field="open")
+            cash, positions = _rebalance(
+                date=date,
+                today=today,
+                cash=cash,
+                positions=positions,
+                buy_dates=buy_dates,
+                entry_prices=entry_prices,
+                targets=list(pending_rebalance.targets),
+                nav=open_nav,
+                risk_target_weight=pending_rebalance.risk_target_weight,
+                spec=spec,
+                trade_rows=trade_rows,
+                order_rows=order_rows,
+                price_field="open",
+                signal_date=pending_rebalance.signal_date,
+                execution_model="close_signal_next_open",
+                skip_symbols=set(pending_stops),
+            )
+            pending_rebalance = None
+
+        nav = _portfolio_value(cash, positions, today)
+        peak_nav = max(peak_nav, nav)
+        daily_return = 0.0 if previous_nav is None or previous_nav <= 0 else nav / previous_nav - 1.0
+        _update_window_fuse_state(
+            today,
+            spec.risk.risk_overlay,
+            fuse_state,
+            nav=nav,
+            peak_nav=peak_nav,
+            daily_return=daily_return,
+        )
+        risk_target_weight = _risk_target_weight(today, spec, nav=nav, peak_nav=peak_nav, fuse_state=fuse_state)
+        alpha_health_filter_weight = _alpha_health_filter_target_weight(today, spec.risk.risk_overlay)
+
+        for stop in _position_stop_signals(
+            date=date,
+            today=today,
+            positions=positions,
+            entry_prices=entry_prices,
+            spec=spec,
+        ):
+            pending_stops.setdefault(stop.symbol, stop)
+
+        is_scheduled_rebalance = date in rebalance_dates
+        pre_rebalance_gross = max(nav - cash, 0.0) / nav if nav else 0.0
+        if (
+            is_scheduled_rebalance
+            or _should_window_fuse_rebalance(
+                spec.risk.risk_overlay,
+                fuse_state,
+                pre_rebalance_gross,
+                risk_target_weight,
+                positions,
+            )
+            or _should_overheated_guard_rebalance(
+                today,
+                spec.risk.risk_overlay,
+                pre_rebalance_gross,
+                risk_target_weight,
+                positions,
+            )
+        ):
+            selected = (
+                _select_symbols(today, spec, stopped_until=stopped_until, date=date)
+                if is_scheduled_rebalance
+                else list(positions)
+            )
+            candidate_rebalance = _PendingRebalance(
+                signal_date=date,
+                targets=tuple(symbol for symbol in selected if symbol not in pending_stops),
+                risk_target_weight=risk_target_weight,
+            )
+            pending_rebalance = (
+                candidate_rebalance
+                if _rebalance_requires_action(
+                    today=today,
+                    cash=cash,
+                    positions=positions,
+                    targets=list(candidate_rebalance.targets),
+                    nav=nav,
+                    risk_target_weight=risk_target_weight,
+                    spec=spec,
+                    price_field="close",
+                    skip_symbols=set(pending_stops),
+                )
+                else None
+            )
+
+        invested_value = max(nav - cash, 0.0)
+        equity_rows.append(
+            {
+                "date": date,
+                "equity": nav,
+                "cash": cash,
+                "cash_yield_accrued": cash_yield_accrued,
+                "cumulative_cash_yield": cumulative_cash_yield,
+                "gross_exposure": invested_value / nav if nav else 0.0,
+                "risk_target_weight": risk_target_weight,
+                "alpha_health_filter_weight": alpha_health_filter_weight,
+                "alpha_health_score": _alpha_health_signal(today, spec.risk.risk_overlay),
+                "market_breadth_score": _market_breadth_signal(today, spec.risk.risk_overlay),
+                "overheated_reversal_guard_active": float(
+                    _overheated_reversal_guard_active(today, spec.risk.risk_overlay)
+                ),
+                "window_fuse_active": float(fuse_state.active),
+                "window_reentry_active": float(fuse_state.reentry_remaining > 0),
+                "window_reentry_target_weight": fuse_state.latest_reentry_target_weight,
+                "window_fuse_cooldown_remaining": float(fuse_state.cooldown_remaining),
+                "window_fuse_drawdown": fuse_state.latest_drawdown,
+                "window_fuse_rolling_return": fuse_state.latest_rolling_return,
+                "window_fuse_consecutive_loss_days": float(fuse_state.consecutive_loss_days),
+            }
+        )
+        for symbol, shares in positions.items():
+            if shares <= 0 or symbol not in today.index:
+                continue
+            price = float(today.loc[symbol, "close"])
+            holding_rows.append(
+                {
+                    "date": date,
+                    "symbol": symbol,
+                    "shares": shares,
+                    "price": price,
+                    "market_value": shares * price,
+                    "weight": shares * price / nav if nav else 0.0,
+                    "risk_target_weight": risk_target_weight,
+                    "window_fuse_active": float(fuse_state.active),
+                    "window_reentry_active": float(fuse_state.reentry_remaining > 0),
+                    "window_reentry_target_weight": fuse_state.latest_reentry_target_weight,
+                }
+            )
+        previous_nav = nav
+
+    if pending_rebalance is not None:
+        _append_order(
+            order_rows,
+            date=pd.NaT,
+            signal_date=pending_rebalance.signal_date,
+            symbol="",
+            side="rebalance_intent",
+            requested_shares=None,
+            status="unfilled_no_next_session",
+            price_field="open",
+            execution_model="close_signal_next_open",
+            record_type="signal_intent",
+            targets=pending_rebalance.targets,
+        )
+    for stop in pending_stops.values():
+        _append_order(
+            order_rows,
+            date=pd.NaT,
+            signal_date=stop.signal_date,
+            symbol=stop.symbol,
+            side="stop_exit_intent",
+            requested_shares=positions.get(stop.symbol, 0),
+            status="unfilled_no_next_session",
+            price_field="open",
+            execution_model="close_signal_next_open",
+            note=f"position_stop_loss:{stop.position_return:.4f}",
+            record_type="signal_intent",
+        )
+
+    equity_curve = pd.DataFrame(equity_rows)
+    trades = pd.DataFrame(trade_rows)
+    holdings = pd.DataFrame(holding_rows)
+    orders = _orders_frame(order_rows)
+    metrics = _calculate_metrics(equity_curve, trades, spec.portfolio.initial_cash)
+    metrics["unfilled_final_signal_count"] = float(
+        (
+            (orders["record_type"] == "signal_intent")
+            & (orders["status"] == "unfilled_no_next_session")
+        ).sum()
+    )
+    return BacktestResult(
+        spec=spec,
+        equity_curve=equity_curve,
+        trades=trades,
+        holdings=holdings,
+        metrics=metrics,
+        orders=orders,
+    )
+
+
+def _run_same_close_legacy(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
     dates = list(data.index.get_level_values("date").unique())
     rebalance_dates = set(_get_rebalance_dates(dates, spec.rebalance.frequency))
 
@@ -156,10 +406,19 @@ def run_backtest(data: pd.DataFrame, spec: StrategySpec) -> BacktestResult:
     trades = pd.DataFrame(trade_rows)
     holdings = pd.DataFrame(holding_rows)
     metrics = _calculate_metrics(equity_curve, trades, spec.portfolio.initial_cash)
+    metrics["unfilled_final_signal_count"] = 0.0
     return BacktestResult(spec=spec, equity_curve=equity_curve, trades=trades, holdings=holdings, metrics=metrics)
 
 
-def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:
+def _prepare_data(data: pd.DataFrame, *, required_price_field: str = "close") -> pd.DataFrame:
+    prepared = data.copy()
+    if isinstance(prepared.index, pd.MultiIndex) and list(prepared.index.names) == ["date", "symbol"]:
+        index_dates = prepared.index.get_level_values("date")
+        index_symbols = prepared.index.get_level_values("symbol")
+        prepared.index = pd.RangeIndex(len(prepared))
+        prepared["date"] = index_dates
+        prepared["symbol"] = index_symbols
+
     required = {
         "date",
         "symbol",
@@ -169,17 +428,38 @@ def _prepare_data(data: pd.DataFrame) -> pd.DataFrame:
         "is_suspended",
         "limit_up",
         "limit_down",
+        "is_limit_up",
+        "is_limit_down",
     }
-    missing = required - set(data.columns)
+    required.add(required_price_field)
+    missing = required - set(prepared.columns)
     if missing:
         raise ValueError(f"Missing required data columns: {sorted(missing)}")
 
-    if isinstance(data.index, pd.MultiIndex) and list(data.index.names) == ["date", "symbol"]:
-        return data
+    prepared["date"] = pd.to_datetime(prepared["date"], errors="coerce")
+    if prepared["date"].isna().any():
+        raise ValueError("Backtest data contains invalid date values.")
+    prepared["symbol"] = prepared["symbol"].astype(str)
+    if prepared.duplicated(["date", "symbol"]).any():
+        raise ValueError("Backtest data contains duplicate date/symbol keys.")
+    prepared.sort_values(["date", "symbol"], kind="mergesort", inplace=True)
 
-    prepared = data.copy()
-    prepared["date"] = pd.to_datetime(prepared["date"])
-    prepared.sort_values(["date", "symbol"], inplace=True)
+    if "open" in prepared:
+        raw_open = pd.to_numeric(prepared["open"], errors="coerce").replace(
+            [float("inf"), float("-inf")], pd.NA
+        )
+        inferred_raw_open = raw_open.notna() & raw_open.gt(0.0)
+        if "_has_raw_open" in prepared:
+            provided_raw_open = prepared["_has_raw_open"].astype("boolean").fillna(False).astype(bool)
+            has_raw_open = provided_raw_open & inferred_raw_open
+        else:
+            has_raw_open = inferred_raw_open
+        prepared["_has_raw_open"] = has_raw_open.astype(bool)
+        previous_close = pd.to_numeric(prepared["close"], errors="coerce").groupby(prepared["symbol"]).shift(1)
+        prepared["open"] = raw_open.where(has_raw_open, previous_close)
+        prepared["open"] = prepared["open"].fillna(pd.to_numeric(prepared["close"], errors="coerce"))
+    else:
+        prepared["_has_raw_open"] = False
     return prepared.set_index(["date", "symbol"], drop=False)
 
 
@@ -202,6 +482,15 @@ def _select_symbols(
     date: pd.Timestamp | None = None,
 ) -> list[str]:
     candidates = today.copy()
+    known_constraints = (
+        candidates["is_st"].notna()
+        & candidates["is_suspended"].notna()
+        & candidates["is_limit_up"].notna()
+        & candidates["is_limit_down"].notna()
+        & pd.to_numeric(candidates["limit_up"], errors="coerce").notna()
+        & pd.to_numeric(candidates["limit_down"], errors="coerce").notna()
+    )
+    candidates = candidates[known_constraints]
     if "is_universe_member" in candidates:
         candidates = candidates[candidates["is_universe_member"].fillna(False).astype(bool)]
     if bool(getattr(spec.universe, "use_index_membership", False)):
@@ -210,9 +499,9 @@ def _select_symbols(
     if "is_stock_master_member" in candidates:
         candidates = candidates[candidates["is_stock_master_member"].fillna(False).astype(bool)]
     if spec.universe.exclude_st:
-        candidates = candidates[~candidates["is_st"]]
+        candidates = candidates[~candidates["is_st"].astype("boolean").fillna(True).astype(bool)]
     if spec.universe.exclude_suspended:
-        candidates = candidates[~candidates["is_suspended"]]
+        candidates = candidates[~candidates["is_suspended"].astype("boolean").fillna(True).astype(bool)]
     if spec.universe.min_amount > 0:
         candidates = candidates[candidates["amount"] >= spec.universe.min_amount]
     if stopped_until and date is not None and not candidates.empty:
@@ -341,7 +630,14 @@ def _rebalance(
     risk_target_weight: float,
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
+    order_rows: list[dict[str, Any]] | None = None,
+    *,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
+    skip_symbols: set[str] | None = None,
 ) -> tuple[float, dict[str, int]]:
+    skip_symbols = skip_symbols or set()
     target_set = set(targets)
     target_gross_weight = _clamp(risk_target_weight, 0.0, 1.0)
     max_position_value = nav * target_gross_weight * min(
@@ -352,14 +648,21 @@ def _rebalance(
     # First reduce or exit positions that are not wanted anymore.
     for symbol in list(positions):
         shares = positions[symbol]
-        if shares <= 0 or symbol not in today.index:
+        if shares <= 0 or symbol not in today.index or symbol in skip_symbols:
             continue
-        current_value = shares * float(today.loc[symbol, "close"])
+        current_value = shares * float(today.loc[symbol, price_field])
         target_value = max_position_value if symbol in target_set else 0.0
         if current_value <= target_value:
             continue
         sell_value = current_value - target_value
-        sell_shares = min(shares, _round_lot(int(sell_value / float(today.loc[symbol, "close"]))))
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        sell_shares = min(
+            shares,
+            _round_lot(
+                int(sell_value / float(today.loc[symbol, price_field])),
+                lot_size=lot_size,
+            ),
+        )
         cash, positions[symbol] = _sell(
             date=date,
             symbol=symbol,
@@ -370,6 +673,10 @@ def _rebalance(
             today=today,
             spec=spec,
             trade_rows=trade_rows,
+            order_rows=order_rows,
+            price_field=price_field,
+            signal_date=signal_date,
+            execution_model=execution_model,
         )
         if positions.get(symbol, 0) <= 0:
             positions.pop(symbol, None)
@@ -377,32 +684,190 @@ def _rebalance(
 
     # Then buy up to target weights with remaining cash.
     for symbol in targets:
-        if symbol not in today.index:
+        if symbol not in today.index or symbol in skip_symbols:
             continue
-        price = float(today.loc[symbol, "close"])
+        price = float(today.loc[symbol, price_field])
         current_shares = positions.get(symbol, 0)
         current_value = current_shares * price
         buy_value = max_position_value - current_value
-        if buy_value <= price * 100:
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        if buy_value <= price * lot_size:
             continue
         buy_price = _buy_price(price, spec)
-        shares = _round_lot(int(buy_value / buy_price))
+        shares = _round_lot(int(buy_value / buy_price), lot_size=lot_size)
         if shares <= 0:
             continue
-        max_affordable = _round_lot(int(cash / buy_price))
+        total_rate = 1.0 + max(0.0, float(spec.costs.commission_rate))
+        max_affordable = _round_lot(
+            int(cash / (buy_price * total_rate)), lot_size=lot_size
+        )
         shares = min(shares, max_affordable)
         if shares <= 0:
             continue
         buy_price = _buy_price(price, spec)
-        cash, new_shares = _buy(date, symbol, shares, cash, current_shares, today, spec, trade_rows)
+        cash, new_shares = _buy(
+            date,
+            symbol,
+            shares,
+            cash,
+            current_shares,
+            today,
+            spec,
+            trade_rows,
+            order_rows=order_rows,
+            price_field=price_field,
+            signal_date=signal_date,
+            execution_model=execution_model,
+        )
         if new_shares > current_shares:
             prior_value = current_shares * float(entry_prices.get(symbol, buy_price))
             added_shares = new_shares - current_shares
             entry_prices[symbol] = (prior_value + added_shares * buy_price) / max(1, new_shares)
         positions[symbol] = new_shares
-        buy_dates[symbol] = date
+        if new_shares > current_shares:
+            buy_dates[symbol] = date
 
     return cash, positions
+
+
+def _rebalance_requires_action(
+    *,
+    today: pd.DataFrame,
+    cash: float,
+    positions: dict[str, int],
+    targets: list[str],
+    nav: float,
+    risk_target_weight: float,
+    spec: StrategySpec,
+    price_field: str,
+    skip_symbols: set[str] | None = None,
+) -> bool:
+    """Resolve a close signal into an execution intent without using future prices."""
+
+    skip_symbols = skip_symbols or set()
+    target_set = set(targets)
+    target_gross_weight = _clamp(risk_target_weight, 0.0, 1.0)
+    max_position_value = nav * target_gross_weight * min(
+        1.0 / max(1, spec.portfolio.max_positions),
+        spec.risk.max_single_position_weight,
+    )
+
+    for symbol, shares in positions.items():
+        if shares <= 0 or symbol not in today.index or symbol in skip_symbols:
+            continue
+        price = _finite_positive_price(today.loc[symbol], price_field)
+        if price is None:
+            continue
+        current_value = shares * price
+        target_value = max_position_value if symbol in target_set else 0.0
+        if current_value > target_value:
+            lot_size = _execution_lot_size(today.loc[symbol]) or 100
+            sell_shares = min(
+                shares,
+                _round_lot(
+                    int((current_value - target_value) / price), lot_size=lot_size
+                ),
+            )
+            if sell_shares > 0:
+                return True
+
+    for symbol in targets:
+        if symbol not in today.index or symbol in skip_symbols:
+            continue
+        price = _finite_positive_price(today.loc[symbol], price_field)
+        if price is None:
+            continue
+        current_value = positions.get(symbol, 0) * price
+        buy_value = max_position_value - current_value
+        lot_size = _execution_lot_size(today.loc[symbol]) or 100
+        if buy_value <= price * lot_size:
+            continue
+        buy_price = _buy_price(price, spec)
+        desired_shares = _round_lot(
+            int(buy_value / buy_price), lot_size=lot_size
+        )
+        total_rate = 1.0 + max(0.0, float(spec.costs.commission_rate))
+        affordable_shares = _round_lot(
+            int(cash / (buy_price * total_rate)), lot_size=lot_size
+        )
+        if min(desired_shares, affordable_shares) > 0:
+            return True
+    return False
+
+
+def _position_stop_signals(
+    *,
+    date: pd.Timestamp,
+    today: pd.DataFrame,
+    positions: dict[str, int],
+    entry_prices: dict[str, float],
+    spec: StrategySpec,
+) -> list[_PendingStop]:
+    stop_limit = float(getattr(spec.risk, "position_stop_loss_limit", 0.0) or 0.0)
+    if stop_limit >= 0.0 or not positions:
+        return []
+    signals: list[_PendingStop] = []
+    for symbol, shares in positions.items():
+        if shares <= 0 or symbol not in today.index:
+            continue
+        entry_price = float(entry_prices.get(symbol, 0.0) or 0.0)
+        close = float(today.loc[symbol, "close"])
+        if entry_price <= 0.0 or not math.isfinite(close) or close <= 0.0:
+            continue
+        position_return = close / entry_price - 1.0
+        if position_return <= stop_limit:
+            signals.append(_PendingStop(signal_date=date, symbol=symbol, position_return=position_return))
+    return signals
+
+
+def _execute_pending_stops(
+    *,
+    date: pd.Timestamp,
+    today: pd.DataFrame,
+    pending_stops: dict[str, _PendingStop],
+    cash: float,
+    positions: dict[str, int],
+    buy_dates: dict[str, pd.Timestamp],
+    entry_prices: dict[str, float],
+    stopped_until: dict[str, pd.Timestamp],
+    spec: StrategySpec,
+    trade_rows: list[dict[str, Any]],
+    order_rows: list[dict[str, Any]],
+) -> tuple[dict[str, _PendingStop], float, dict[str, int]]:
+    remaining_stops: dict[str, _PendingStop] = {}
+    cooldown_days = max(0, int(getattr(spec.risk, "position_stop_cooldown_days", 0) or 0))
+    for symbol, stop in pending_stops.items():
+        shares = positions.get(symbol, 0)
+        if shares <= 0:
+            continue
+        if symbol not in today.index:
+            remaining_stops[symbol] = stop
+            continue
+        cash, remaining = _sell(
+            date=date,
+            symbol=symbol,
+            shares=shares,
+            cash=cash,
+            held_shares=shares,
+            buy_dates=buy_dates,
+            today=today,
+            spec=spec,
+            trade_rows=trade_rows,
+            note=f"position_stop_loss:{stop.position_return:.4f}",
+            order_rows=order_rows,
+            price_field="open",
+            signal_date=stop.signal_date,
+            execution_model="close_signal_next_open",
+        )
+        if remaining <= 0:
+            positions.pop(symbol, None)
+            entry_prices.pop(symbol, None)
+            if cooldown_days > 0:
+                stopped_until[symbol] = date + pd.Timedelta(days=cooldown_days)
+        else:
+            positions[symbol] = remaining
+            remaining_stops[symbol] = stop
+    return remaining_stops, cash, positions
 
 
 def _apply_position_stops(
@@ -465,19 +930,67 @@ def _buy(
     today: pd.DataFrame,
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
+    *,
+    order_rows: list[dict[str, Any]] | None = None,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
 ) -> tuple[float, int]:
     row = today.loc[symbol]
-    if bool(row["is_suspended"]) or _is_limit_up(row):
+    effective_signal_date = signal_date if signal_date is not None else date
+    blocked_status = _execution_block_status(row, side="buy", price_field=price_field, spec=spec)
+    if blocked_status is not None:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=shares,
+            status=blocked_status,
+            price_field=price_field,
+            execution_model=execution_model,
+        )
         return cash, held_shares
-    price = _buy_price(float(row["close"]), spec)
+    lot_size = _execution_lot_size(row)
+    if lot_size is None:
+        raise AssertionError("validated execution row has no lot size")
+    requested_shares = shares
+    shares = _round_lot(shares, lot_size=lot_size)
+    if shares <= 0:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=requested_shares,
+            status="blocked_below_lot_size",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
+        return cash, held_shares
+    price = _buy_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
     total = gross + commission
     if total > cash:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="buy",
+            requested_shares=shares,
+            status="blocked_insufficient_cash",
+            price_field=price_field,
+            execution_model=execution_model,
+        )
         return cash, held_shares
     trade_rows.append(
         {
             "date": date,
+            "signal_date": effective_signal_date,
             "symbol": symbol,
             "side": "buy",
             "shares": shares,
@@ -486,8 +999,21 @@ def _buy(
             "commission": commission,
             "stamp_tax": 0.0,
             "cash_delta": -total,
+            "execution_model": execution_model,
+            "fill_price_field": price_field,
             "note": "",
         }
+    )
+    _append_order(
+        order_rows,
+        date=date,
+        signal_date=effective_signal_date,
+        symbol=symbol,
+        side="buy",
+        requested_shares=shares,
+        status="filled",
+        price_field=price_field,
+        execution_model=execution_model,
     )
     return cash - total, held_shares + shares
 
@@ -503,16 +1029,67 @@ def _sell(
     spec: StrategySpec,
     trade_rows: list[dict[str, Any]],
     note: str = "",
+    *,
+    order_rows: list[dict[str, Any]] | None = None,
+    price_field: str = "close",
+    signal_date: pd.Timestamp | None = None,
+    execution_model: str = "same_close_legacy",
 ) -> tuple[float, int]:
     if shares <= 0:
         return cash, held_shares
     row = today.loc[symbol]
-    if buy_dates.get(symbol) == date:
+    effective_signal_date = signal_date if signal_date is not None else date
+    blocked_status = _execution_block_status(row, side="sell", price_field=price_field, spec=spec)
+    if blocked_status is not None:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status=blocked_status,
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
         return cash, held_shares
-    if bool(row["is_suspended"]) or _is_limit_down(row):
+    t_plus_one = _execution_boolean(row, "t_plus_one", default=True)
+    if t_plus_one and buy_dates.get(symbol) == date:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=shares,
+            status="blocked_t_plus_one",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
         return cash, held_shares
+    requested_shares = shares
     shares = min(shares, held_shares)
-    price = _sell_price(float(row["close"]), spec)
+    lot_size = _execution_lot_size(row)
+    if lot_size is None:
+        raise AssertionError("validated execution row has no lot size")
+    shares = _round_lot(shares, lot_size=lot_size)
+    if shares <= 0:
+        _append_order(
+            order_rows,
+            date=date,
+            signal_date=effective_signal_date,
+            symbol=symbol,
+            side="sell",
+            requested_shares=requested_shares,
+            status="blocked_below_lot_size",
+            price_field=price_field,
+            execution_model=execution_model,
+            note=note,
+        )
+        return cash, held_shares
+    price = _sell_price(float(row[price_field]), spec)
     gross = shares * price
     commission = gross * spec.costs.commission_rate
     stamp_tax = gross * spec.costs.stamp_tax_rate
@@ -520,6 +1097,7 @@ def _sell(
     trade_rows.append(
         {
             "date": date,
+            "signal_date": effective_signal_date,
             "symbol": symbol,
             "side": "sell",
             "shares": shares,
@@ -528,18 +1106,127 @@ def _sell(
             "commission": commission,
             "stamp_tax": stamp_tax,
             "cash_delta": proceeds,
+            "execution_model": execution_model,
+            "fill_price_field": price_field,
             "note": note,
         }
+    )
+    _append_order(
+        order_rows,
+        date=date,
+        signal_date=effective_signal_date,
+        symbol=symbol,
+        side="sell",
+        requested_shares=shares,
+        status="filled",
+        price_field=price_field,
+        execution_model=execution_model,
+        note=note,
     )
     return cash + proceeds, held_shares - shares
 
 
-def _portfolio_value(cash: float, positions: dict[str, int], today: pd.DataFrame) -> float:
+def _portfolio_value(
+    cash: float,
+    positions: dict[str, int],
+    today: pd.DataFrame,
+    *,
+    price_field: str = "close",
+) -> float:
     value = cash
     for symbol, shares in positions.items():
         if symbol in today.index:
-            value += shares * float(today.loc[symbol, "close"])
+            value += shares * float(today.loc[symbol, price_field])
     return value
+
+
+def _execution_block_status(
+    row: pd.Series,
+    *,
+    side: str,
+    price_field: str,
+    spec: StrategySpec,
+) -> str | None:
+    if price_field == "open":
+        if "_has_raw_open" not in row or pd.isna(row["_has_raw_open"]) or not bool(row["_has_raw_open"]):
+            return "blocked_missing_open"
+    if _finite_positive_price(row, price_field) is None:
+        return "blocked_missing_open" if price_field == "open" else "blocked_missing_price"
+
+    boolean_constraints = ("is_st", "is_suspended", "is_limit_up", "is_limit_down")
+    numeric_constraints = ("limit_up", "limit_down")
+    if any(field not in row or pd.isna(row[field]) for field in boolean_constraints):
+        return "blocked_missing_constraint"
+    if any(_finite_positive_price(row, field) is None for field in numeric_constraints):
+        return "blocked_missing_constraint"
+
+    optional_status = _optional_execution_constraint_status(row, side=side)
+    if optional_status is not None:
+        return optional_status
+
+    if bool(row["is_suspended"]):
+        return "blocked_suspended"
+    if side == "buy" and spec.universe.exclude_st and bool(row["is_st"]):
+        return "blocked_st"
+    if side == "buy" and _is_limit_up(row, price_field=price_field):
+        return "blocked_limit_up"
+    if side == "sell" and _is_limit_down(row, price_field=price_field):
+        return "blocked_limit_down"
+    return None
+
+
+def _optional_execution_constraint_status(row: pd.Series, *, side: str) -> str | None:
+    for field in ("can_buy", "can_sell", "t_plus_one"):
+        if field in row and _execution_boolean(row, field, default=None) is None:
+            return "blocked_missing_constraint"
+    if _execution_lot_size(row) is None:
+        return "blocked_missing_constraint"
+    if side == "buy" and not _execution_boolean(row, "can_buy", default=True):
+        return "blocked_cannot_buy"
+    if side == "sell" and not _execution_boolean(row, "can_sell", default=True):
+        return "blocked_cannot_sell"
+    return None
+
+
+def _execution_boolean(
+    row: pd.Series,
+    field: str,
+    *,
+    default: bool | None,
+) -> bool | None:
+    if field not in row:
+        return default
+    value = row[field]
+    if not pd.api.types.is_bool(value):
+        return None
+    return bool(value)
+
+
+def _execution_lot_size(row: pd.Series) -> int | None:
+    if "lot_size" not in row:
+        return 100
+    value = row["lot_size"]
+    if pd.api.types.is_bool(value) or pd.isna(value):
+        return None
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    number = float(numeric)
+    if not math.isfinite(number) or number <= 0.0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _finite_positive_price(row: pd.Series, field: str) -> float | None:
+    if field not in row:
+        return None
+    value = pd.to_numeric(pd.Series([row[field]]), errors="coerce").iloc[0]
+    if pd.isna(value):
+        return None
+    price = float(value)
+    if not math.isfinite(price) or price <= 0.0:
+        return None
+    return price
 
 
 def _risk_target_weight(
@@ -1025,20 +1712,79 @@ def _cash_yield_for_day(cash: float, spec: StrategySpec) -> float:
     return cash * daily_rate
 
 
-def _is_limit_up(row: pd.Series) -> bool:
-    if "is_limit_up" in row and pd.notna(row["is_limit_up"]):
-        return bool(row["is_limit_up"])
-    return float(row["close"]) >= float(row["limit_up"])
+def _is_limit_up(row: pd.Series, *, price_field: str = "close") -> bool:
+    explicit = bool(row["is_limit_up"]) if "is_limit_up" in row and pd.notna(row["is_limit_up"]) else False
+    return explicit or _price_reaches_limit(row, price_field=price_field, limit_field="limit_up", upper=True)
 
 
-def _is_limit_down(row: pd.Series) -> bool:
-    if "is_limit_down" in row and pd.notna(row["is_limit_down"]):
-        return bool(row["is_limit_down"])
-    return float(row["close"]) <= float(row["limit_down"])
+def _is_limit_down(row: pd.Series, *, price_field: str = "close") -> bool:
+    explicit = bool(row["is_limit_down"]) if "is_limit_down" in row and pd.notna(row["is_limit_down"]) else False
+    return explicit or _price_reaches_limit(row, price_field=price_field, limit_field="limit_down", upper=False)
 
 
-def _round_lot(shares: int) -> int:
-    return max(0, shares // 100 * 100)
+def _price_reaches_limit(row: pd.Series, *, price_field: str, limit_field: str, upper: bool) -> bool:
+    if price_field not in row or limit_field not in row:
+        return False
+    price = pd.to_numeric(pd.Series([row[price_field]]), errors="coerce").iloc[0]
+    limit = pd.to_numeric(pd.Series([row[limit_field]]), errors="coerce").iloc[0]
+    if pd.isna(price) or pd.isna(limit):
+        return False
+    return bool(float(price) >= float(limit)) if upper else bool(float(price) <= float(limit))
+
+
+def _append_order(
+    order_rows: list[dict[str, Any]] | None,
+    *,
+    date: pd.Timestamp,
+    signal_date: pd.Timestamp,
+    symbol: str,
+    side: str,
+    requested_shares: int | None,
+    status: str,
+    price_field: str,
+    execution_model: str,
+    note: str = "",
+    record_type: str = "order_attempt",
+    targets: tuple[str, ...] = (),
+) -> None:
+    if order_rows is None:
+        return
+    order_rows.append(
+        {
+            "date": date,
+            "signal_date": signal_date,
+            "symbol": symbol,
+            "side": side,
+            "requested_shares": pd.NA if requested_shares is None else int(requested_shares),
+            "status": status,
+            "fill_price_field": price_field,
+            "execution_model": execution_model,
+            "note": note,
+            "record_type": record_type,
+            "targets": tuple(targets),
+        }
+    )
+
+
+def _orders_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    columns = [
+        "date",
+        "signal_date",
+        "symbol",
+        "side",
+        "requested_shares",
+        "status",
+        "fill_price_field",
+        "execution_model",
+        "note",
+        "record_type",
+        "targets",
+    ]
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _round_lot(shares: int, *, lot_size: int = 100) -> int:
+    return max(0, shares // lot_size * lot_size)
 
 
 def _calculate_metrics(equity_curve: pd.DataFrame, trades: pd.DataFrame, initial_cash: float) -> dict[str, float]:
