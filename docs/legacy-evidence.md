@@ -6,4 +6,4 @@
 
 这些文件记录的是较早工作区状态，包含未随仓库提供的本地数据或运行上下文。由于省略的输入无法由审阅者从 fresh checkout 重建，它们不能验证修正后的执行引擎，也不能支持市场有效性、策略表现或生产能力结论。
 
-当前证据入口以 [README](../README.md) 中的唯一离线绿色路径为准：维护中的合成 demo、严格 QData fixture 实验、receipt verifier 和 unittest。若未来恢复真实研究，应从有权使用的不可变数据 snapshot 重新运行，并保存新的输入身份、命令、代码版本和失败边界，而不是沿用历史输出。
+当前证据入口以 [README](../README.md) 为准：合成 demo 与严格 QData fixture 走唯一离线绿色路径；锁定真实市场因子研究另有绑定输入哈希、方案和代码 commit 的新 receipt。当前公开状态只从这个通过验证的 receipt 派生，不从历史 readiness 或 registry 推断。新 receipt 仍不公开授权原始数据，也不声称拥有完整 revision/vintage 历史。

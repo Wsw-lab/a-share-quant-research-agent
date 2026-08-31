@@ -21,6 +21,8 @@ README = ROOT / "README.md"
 PORTFOLIO = ROOT / "PROJECT_PORTFOLIO.md"
 DATA_AVAILABILITY = ROOT / "DATA_AVAILABILITY.md"
 CHECKLIST = ROOT / "GITHUB_SUBMISSION_CHECKLIST.md"
+PUBLIC_EVIDENCE_STATUS = ROOT / "evidence" / "PUBLIC_EVIDENCE_STATUS.json"
+CONFIRMATORY_RECEIPT = ROOT / "evidence" / "pit_factor_replication_v1" / "receipt.json"
 LEGACY_NOTE = ROOT / "docs" / "legacy-evidence.md"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 TOOLCHAIN = ROOT / ".github" / "ci-toolchain.txt"
@@ -61,6 +63,9 @@ MAINTAINED_FILES = (
     "examples/run_demo.py",
     "examples/strategy_specs/quality_value_momentum.json",
     "studies/pit_factor_replication_v1/plan.json",
+    "studies/pit_factor_replication_v1/data_declaration.example.json",
+    "evidence/PUBLIC_EVIDENCE_STATUS.json",
+    "evidence/pit_factor_replication_v1/receipt.json",
     "src/a_share_quant_agent/confirmatory_study.py",
     "src/a_share_quant_agent/reproducible_experiment.py",
 )
@@ -325,6 +330,9 @@ class ReadmeContractTest(unittest.TestCase):
             "PostgreSQL",
             "cross-store transactions",
             "GitHub Actions",
+            "REAL_MARKET_OOS_STATISTICS",
+            "全部 16 个登记结果",
+            "不声称分析过“数据修订历史”",
         ):
             self.assertIn(marker, text)
         self.assertIn("不声称远端工作流已经运行", text)
@@ -336,6 +344,20 @@ class ReadmeContractTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, text.lower())
         self.assertNotRegex(text, r"(?i)(annualized return|max drawdown|sharpe)\s*[:：]\s*[-+]?\d")
+
+    def test_public_status_is_verified_receipt_derived_and_fail_closed(self) -> None:
+        from a_share_quant_agent.confirmatory_study import verify_study_receipt
+
+        receipt = verify_study_receipt(CONFIRMATORY_RECEIPT)
+        status = json.loads(PUBLIC_EVIDENCE_STATUS.read_text(encoding="utf-8"))
+        self.assertEqual(status["status"], "REAL_MARKET_OOS_STATISTICS")
+        self.assertEqual(status["source_of_truth"], "verified_confirmatory_receipts")
+        self.assertEqual(status["study_ids"], [receipt["study_id"]])
+        self.assertEqual(status["verified_receipt_count"], 1)
+        for flag in ("performance_claim", "generalization_claim", "usable_for_trading_decisions"):
+            self.assertFalse(status[flag])
+        self.assertEqual(receipt["selection_control"]["reported_result_count"], 16)
+        self.assertFalse(receipt["selection_control"]["best_result_selected"])
 
     def test_all_relative_readme_links_resolve(self) -> None:
         text = README.read_text(encoding="utf-8")

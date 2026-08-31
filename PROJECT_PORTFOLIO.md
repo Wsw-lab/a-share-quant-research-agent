@@ -9,9 +9,12 @@
 - `implemented`：研究 spec、回测、审计、QData 严格适配器和 receipt 生成器存在并可导入。
 - `unit-tested`：时间可得性、下一会话成交、交易约束、快照拒绝条件和 receipt 语义由离线测试覆盖。
 - `local-integration-tested`：严格合成 fixture 可运行两次并产生相同字节，receipt 可独立验证；同级 QData checkout 模式还会重建并逐字节比较 fixture。
-- `open`：真实市场有效性、样本外泛化、统计推断、完整数据权利/覆盖、数据库生产拓扑、券商与实盘交易。
+- `receipt-verified`：锁定因子方案在本地授权 A 股数据上产生 18 个按月样本外截面，全部 16 个登记结果随输入哈希和代码 commit 公开；验证不等于原始数据可公开重算。
+- `open`：可实施市场 alpha、样本外泛化、多重检验后的发现、完整数据权利/覆盖、数据库生产拓扑、券商与实盘交易。
 
 严格实验固定为合成的 2 个标的和 3 个交易会话，结论必须是 `INSUFFICIENT_EVIDENCE`。它证明的是时序与审计合同，不是策略收益，也不能用于交易决策。
+
+独立的真实市场研究把 4 个因子和 4 个偏差控制变体视为一组完整的敏感性分析，不挑最佳结果。当前最有力的结论是 publication-time 对齐和一会话滞后会实质改变 ROE/composite 统计；这是一项方法学审计发现，不是策略晋级。其唯一状态来自[验证后的 receipt](evidence/PUBLIC_EVIDENCE_STATUS.json)，旧 registry/readiness 不参与当前结论。
 
 ## 可审阅的工程判断
 
@@ -23,7 +26,7 @@
 
 ## 不作为申请证据的内容
 
-历史生成报告、生产导入清单和旧示例依赖的输入未随仓库提供，也不是修正后引擎的证据。当前公开树不发布无法从本 checkout 重建的历史策略指标。详见[历史证据说明](docs/legacy-evidence.md)。
+历史生成报告、生产导入清单和旧示例依赖的输入未随仓库提供，也不是修正后引擎的证据。当前只发布新锁定研究的全量统计 receipt；因为原始数据受许可限制，checkout 可验证 receipt，但不能重算其数据行。详见[历史证据说明](docs/legacy-evidence.md)。
 
 ## 复现入口
 

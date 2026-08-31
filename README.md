@@ -6,7 +6,8 @@
 | `research_snapshot_v1` 严格输入 | `unit-tested` | QData 快照先由独立验证器校验 schema、文件集合、哈希、cutoff、PIT 可得性和覆盖，再规范化为 Agent 面板；异常输入 fail closed。 |
 | 信号与成交时序 | `unit-tested` | 固定为“t 日收盘决策 → t+1 原始开盘参考 → 显式摩擦 → 成交”；不允许复权价充当成交价。 |
 | 确定性跨仓实验与 receipt | `local-integration-tested` | 本地以同级 QData checkout 做过构建器字节比对；公开路径使用固定测试 SHA，产出可重复 receipt 并由独立命令复核。 |
-| 市场有效性与生产运行 | `open` | 样本外、统计推断、真实数据覆盖、数据权利、券商接入、实盘交易、容量与长期运行均未建立证据。 |
+| 锁定方案的真实市场因子统计 | `receipt-verified` | 公开 receipt 含 4735 个标的、3894242 行、18 个按月样本外截面及全部 16 个登记结果，并绑定方案、输入哈希与 Agent commit；原始授权数据不再分发，第三方不能仅靠 checkout 重算。 |
+| 市场有效性与生产运行 | `open` | 可实施 alpha、跨时期泛化、多重检验后的发现、完整数据权利/覆盖、券商接入、实盘交易、容量与长期运行均未建立证据。 |
 
 这是一个 A 股量化研究与失败审计原型。它把数据身份、信号可得时间、执行参考、交易摩擦和失败结论放进同一条可复验链，而不是展示一条无法从公开 checkout 重建的收益曲线。
 
@@ -62,18 +63,34 @@ test -z "$(git status --short --untracked-files=all)"
 
 `examples/run_demo.py` 是另一个确定性合成引擎演示，只检查公开策略 spec 能走通执行与审计路径。它产生的本地报告属于运行时输出，不是历史表现证据。
 
+## 锁定的真实市场样本外因子研究
+
+[分析方案](studies/pit_factor_replication_v1/plan.json)固定了 4 个因子和 4 级偏差控制，不按结果选择“最佳策略”。本地授权数据覆盖 2023-01-03 至 2026-07-24；测试期为 2025-01-01 至 2026-06-30，共 18 个按月截面。公开的[完整 receipt](evidence/pit_factor_replication_v1/receipt.json)逐项报告 16 个登记单元，并绑定输入文件哈希、方案哈希和 Agent commit `cbf5414c2613032dfa29ef2c295c760a3f4769ef`。[唯一公开状态](evidence/PUBLIC_EVIDENCE_STATUS.json)为 `REAL_MARKET_OOS_STATISTICS`，只能由通过验证的 receipt 派生，不读取旧 registry/readiness 报告。
+
+下表每格依次为“平均 rank IC / Newey-West t / top-quintile minus universe 20-session return”；没有挑选或高亮最佳单元。
+
+| 变体 | ROE | Momentum 60d | Low volatility 20d | Composite |
+|---|---:|---:|---:|---:|
+| M0 naive | 0.0435 / 2.452 / 0.0056 | -0.0514 / -1.683 / 0.0076 | 0.0529 / 1.857 / -0.0104 | 0.0302 / 1.380 / 0.0050 |
+| M1 PIT universe | 0.0461 / 2.629 / 0.0059 | -0.0495 / -1.622 / 0.0078 | 0.0550 / 1.936 / -0.0099 | 0.0332 / 1.532 / 0.0054 |
+| M2 PIT publication | 0.0105 / 0.612 / -0.0011 | -0.0495 / -1.622 / 0.0078 | 0.0550 / 1.936 / -0.0099 | 0.0038 / 0.185 / -0.0001 |
+| M3 audited lag | -0.0108 / -0.475 / -0.0039 | -0.0446 / -1.860 / 0.0086 | 0.0291 / 0.907 / -0.0142 | -0.0194 / -0.758 / -0.0034 |
+
+最清楚的审计发现不是“哪个因子最好”，而是 ROE/composite 在按财报 `publishDate` 对齐后明显衰减，并在完整过滤和一会话滞后下改变符号。这支持“时间对齐会改变研究结论”的方法学判断，不构成显著性、可实施收益或泛化主张。方案的 `locked_at` 是仓库内声明，不是第三方时间戳预注册；因此它降低选择性披露风险，但不把本次结果包装成严格的事前发现。原始数据受许可限制，receipt 能验证内容身份和完整性，不能替代数据访问。
+
 ## 证据等级
 
 - `implemented`：代码存在且当前可导入，不等于行为已充分验证。
 - `unit-tested`：离线确定性单元或合同测试覆盖所述行为。
 - `local-integration-tested`：维护者在本地跨模块或跨 checkout 跑通过有界测试；不代表托管服务或生产运行。
+- `receipt-verified`：公开验证器接受规范化 receipt；证明记录自洽、范围完整且未扩大主张，不证明未公开原始数据本身正确。
 - `open`：尚未建立可复验证据，不能对外作肯定结论。
 
 仓库内 `.github/workflows/ci.yml` 定义了只读、离线研究验证 GitHub Actions 工作流，矩阵与 Python 3.10–3.12 元数据一致。这里仅声称工作流文件和命令在本地接受检查，不声称远端工作流已经运行；应以 GitHub 上真实的 run 记录为准。
 
 ## QData 关系与数据库边界
 
-[QData](https://github.com/Wsw-lab/qdata-free-source-quant-research-db) 是上游数据仓库；Agent 只接受它的冻结 `research_snapshot_v1`，不从可变的 `latest` 查询直接开始研究。QData 当前公开说明记录了有界的 PostgreSQL 16 selector 与 ClickHouse 24.8 迁移本地集成测试；Agent 的绿色路径和 CI 不启动数据库，也没有覆盖 query plans、故障恢复或 `cross-store transactions`。这些数据库结论属于 QData 的限定证据，不应转写成 Agent 的生产能力。
+[QData](https://github.com/Wsw-lab/qdata-free-source-quant-research-db) 是上游数据仓库；Agent 的执行合同实验只接受其冻结 `research_snapshot_v1`，不从可变的 `latest` 查询开始。独立的因子研究读取已声明的本地文件并把哈希写入 receipt；这些文件没有完整 revision/vintage 历史，因此本研究不声称分析过“数据修订历史”。QData 当前公开 SDK 已为价格、复权因子和因子值提供严格 `latest`/`asof`/`vintage` 选择器，并在 SQL backend 通过 PostgreSQL 解析版本，但这不倒推本地导出文件拥有修订历史。Agent 的绿色路径和 CI 不启动数据库，也没有覆盖 query plans、故障恢复或 `cross-store transactions`。
 
 真实免费/公开源的许可、归属、缓存、再分发、稳定性、限频、数据权利和覆盖率尚未由本仓库建立。模板只说明字段形状；它们不证明相应数据可获得、完整或可合法分发。
 
@@ -84,6 +101,9 @@ test -z "$(git status --short --untracked-files=all)"
 - `examples/run_demo.py`；
 - `examples/strategy_specs/quality_value_momentum.json`；
 - `a_share_quant_agent.reproducible_experiment` 的 `run` / `verify` 命令；
+- `a_share_quant_agent.confirmatory_study` 的 `run` / `verify` / `status` 命令；
+- `studies/pit_factor_replication_v1/` 的锁定方案与数据声明模板；
+- `evidence/pit_factor_replication_v1/receipt.json` 与由其派生的 `evidence/PUBLIC_EVIDENCE_STATUS.json`；
 - `tests/fixtures/qdata_research_snapshot_v1/` 合成快照；
 - `tests/` 离线 unittest。
 
@@ -97,8 +117,8 @@ test -z "$(git status --short --untracked-files=all)"
 
 ## 明确未覆盖
 
-- 没有真实 A 股样本外结果或统计显著性结论；
-- 没有经授权数据集的权利、全市场覆盖或再分发证明；
+- 没有把真实 A 股样本外统计提升为可实施 alpha、统计显著性或跨时期泛化结论；
+- 没有公开原始授权数据、完整 revision/vintage 历史或再分发权；
 - 没有券商、订单路由、实盘交易或投资建议功能；
 - 没有生产部署、服务等级、容量、性能、容灾或安全认证；
 - 没有可从当前 checkout 精确复建的历史策略绩效，因此主叙事不发布历史指标。
