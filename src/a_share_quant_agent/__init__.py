@@ -3,6 +3,7 @@
 __all__ = [
     "audit",
     "backtest",
+    "confirmatory_study",
     "qdata_snapshot",
     "report",
     "reproducible_experiment",

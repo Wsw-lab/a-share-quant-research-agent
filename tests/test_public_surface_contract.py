@@ -60,11 +60,14 @@ STALE_GENERATED = (
 MAINTAINED_FILES = (
     "examples/run_demo.py",
     "examples/strategy_specs/quality_value_momentum.json",
+    "studies/pit_factor_replication_v1/plan.json",
+    "src/a_share_quant_agent/confirmatory_study.py",
     "src/a_share_quant_agent/reproducible_experiment.py",
 )
 MAINTAINED_PUBLIC_MODULES = [
     "audit",
     "backtest",
+    "confirmatory_study",
     "qdata_snapshot",
     "report",
     "reproducible_experiment",

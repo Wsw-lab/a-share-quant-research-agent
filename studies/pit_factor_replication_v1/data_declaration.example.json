@@ -1,0 +1,7 @@
+{
+  "source_classification": "real_market_data",
+  "source_name": "replace with the licensed or permitted local source",
+  "redistributable": false,
+  "price_semantics": "document raw versus adjusted fields; this study uses close-to-close factor returns and is not execution evidence",
+  "rights_review": "replace with the applicable local-research and redistribution terms"
+}
