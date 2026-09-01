@@ -67,6 +67,8 @@ test -z "$(git status --short --untracked-files=all)"
 
 [分析方案](studies/pit_factor_replication_v1/plan.json)固定了 4 个因子和 4 级偏差控制，不按结果选择“最佳策略”。本地授权数据覆盖 2023-01-03 至 2026-07-24；测试期为 2025-01-01 至 2026-06-30，共 18 个按月截面。公开的[完整 receipt](evidence/pit_factor_replication_v1/receipt.json)逐项报告 16 个登记单元，并绑定输入文件哈希、方案哈希和 Agent commit `cbf5414c2613032dfa29ef2c295c760a3f4769ef`。[唯一公开状态](evidence/PUBLIC_EVIDENCE_STATUS.json)为 `REAL_MARKET_OOS_STATISTICS`，只能由通过验证的 receipt 派生，不读取旧 registry/readiness 报告。
 
+基于这条证据链撰写的 15 页英文 working paper 可直接查看 [PDF](docs/working-paper/A_Share_Factor_Replication_Working_Paper.pdf)，或下载[可编辑 DOCX](docs/working-paper/A_Share_Factor_Replication_Working_Paper.docx)。论文完整披露 16 个登记结果，并沿用 receipt 的三项主张边界；它不是额外的绩效证据源。
+
 下表每格依次为“平均 rank IC / Newey-West t / top-quintile minus universe 20-session return”；没有挑选或高亮最佳单元。
 
 | 变体 | ROE | Momentum 60d | Low volatility 20d | Composite |
