@@ -9,12 +9,12 @@
 - `implemented`：研究 spec、回测、审计、QData 严格适配器和 receipt 生成器存在并可导入。
 - `unit-tested`：时间可得性、下一会话成交、交易约束、快照拒绝条件和 receipt 语义由离线测试覆盖。
 - `local-integration-tested`：严格合成 fixture 可运行两次并产生相同字节，receipt 可独立验证；同级 QData checkout 模式还会重建并逐字节比较 fixture。
-- `receipt-verified`：锁定因子方案在本地授权 A 股数据上产生 18 个按月样本外截面，全部 16 个登记结果随输入哈希和代码 commit 公开；验证不等于原始数据可公开重算。
+- `receipt-verified`：锁定因子方案在本地授权 A 股数据上产生 18 个按月测试窗截面，全部 16 个登记结果随输入哈希和代码 commit 公开；这是已观察的 pilot，不是外部预注册或长期样本外泛化证据，验证也不等于原始数据可公开重算。
 - `open`：可实施市场 alpha、样本外泛化、多重检验后的发现、完整数据权利/覆盖、数据库生产拓扑、券商与实盘交易。
 
 严格实验固定为合成的 2 个标的和 3 个交易会话，结论必须是 `INSUFFICIENT_EVIDENCE`。它证明的是时序与审计合同，不是策略收益，也不能用于交易决策。
 
-独立的真实市场研究把 4 个因子和 4 个偏差控制变体视为一组完整的敏感性分析，不挑最佳结果。当前最有力的结论是 publication-time 对齐和一会话滞后会实质改变 ROE/composite 统计；这是一项方法学审计发现，不是策略晋级。其唯一状态来自[验证后的 receipt](evidence/PUBLIC_EVIDENCE_STATUS.json)，旧 registry/readiness 不参与当前结论。
+独立的真实市场 pilot 把 4 个因子和 4 个偏差控制变体视为一组完整的敏感性分析，不挑最佳结果。当前最有力的结论是 publication-time 对齐和一会话滞后会实质改变 ROE/composite 统计；这是一项方法学审计发现，不是策略晋级。其唯一状态来自[验证后的 receipt](evidence/PUBLIC_EVIDENCE_STATUS.json)，旧 registry/readiness 不参与当前结论。Stage-2 的 2010—2022 期刊研究尚未运行，缺少官方日历、完整历史输入、签署审阅与外部登记，因此保持 `BLOCKED_FOR_STAGE2`。
 
 ## 可审阅的工程判断
 

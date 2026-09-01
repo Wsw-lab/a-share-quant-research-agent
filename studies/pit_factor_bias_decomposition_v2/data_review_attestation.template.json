@@ -1,0 +1,87 @@
+{
+  "schema_version": "stage2_data_review_attestation_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_not_reviewed",
+  "review_scope_cutoff_at": null,
+  "reviewed_at": null,
+  "reviewer": null,
+  "reviewer_role": null,
+  "reviewer_authority_basis": null,
+  "execution_semantics_verified": false,
+  "tradability_fields_verified": false,
+  "data_rights_verified": false,
+  "official_calendar_verified": false,
+  "input_file_sha256": {
+    "quotes": null,
+    "stock_master": null,
+    "fundamentals": null,
+    "official_calendar": null
+  },
+  "input_identity": {
+    "quotes": {
+      "byte_size": null,
+      "row_count": null,
+      "minimum_date": null,
+      "maximum_date": null
+    },
+    "stock_master": {
+      "byte_size": null,
+      "row_count": null,
+      "symbol_count": null
+    },
+    "fundamentals": {
+      "byte_size": null,
+      "row_count": null,
+      "minimum_publish_date": null,
+      "maximum_publish_date": null
+    },
+    "official_calendar": {
+      "byte_size": null,
+      "row_count": null,
+      "minimum_date": null,
+      "maximum_date": null,
+      "source_name": null,
+      "source_reference": null,
+      "source_generated_at": null,
+      "timezone": "Asia/Shanghai"
+    }
+  },
+  "evidence_sha256": {
+    "execution_semantics": null,
+    "tradability_fields": null,
+    "data_rights": null,
+    "official_calendar": null
+  },
+  "review_assertions": {
+    "adjusted_close_return_semantics_and_corporate_action_handling_are_documented": false,
+    "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core": false,
+    "amount_units_and_cutoff_timing_are_documented": false,
+    "st_and_suspension_fields_are_non_degenerate_and_historically_effective": false,
+    "licensed_local_analysis_is_permitted": false,
+    "public_aggregate_outputs_metadata_and_hashes_are_permitted": false,
+    "public_official_calendar_session_dates_are_permitted": false,
+    "calendar_rows_are_unique_strictly_increasing_common_sse_szse_sessions": false,
+    "calendar_covers_2009_01_through_2023_01_and_all_target_endpoints": false,
+    "every_quote_date_is_a_calendar_member": false,
+    "no_factor_ic_return_or_variant_ranking_was_reviewed": false
+  },
+  "evidence_notes": {
+    "execution_semantics": "Document adjusted-close construction, decision cutoff, timezone, corporate-action handling, and official-session endpoints. Unadjusted open and nonfill semantics belong to a later portfolio module.",
+    "tradability_fields": "Show non-degenerate ST and suspension behavior under historically effective vendor definitions. Price-limit, missing-open, and nonfill evidence is required only for a later portfolio module and does not authorize that unimplemented module.",
+    "data_rights": "Cite the contract or license terms permitting local analysis, public aggregate outputs, metadata, hashes, and publication of the exact official-calendar session dates embedded in the receipt.",
+    "official_calendar": "Retain authoritative SSE/SZSE provenance, resolve any disagreement, verify all endpoint and quote-date membership rules, and bind the exact CSV bytes."
+  },
+  "chronology_contract": {
+    "required_order": "review_scope_cutoff_at <= reviewed_at <= prior_exposure_attestation.attested_at <= execution_plan.design_frozen_at",
+    "timezone_rule": "Every timestamp must be finite ISO-8601 with an explicit UTC offset.",
+    "mutation_rule": "Any input-byte or evidence change after reviewed_at invalidates this attestation and requires a new review and hash."
+  },
+  "signature": {
+    "type": null,
+    "evidence_sha256": null,
+    "signer_identity": null,
+    "verification_uri": null,
+    "trust_boundary": "Identity and evidence authenticity require independent human verification."
+  },
+  "completion_gate": "All required booleans must be true, all hashes must be 64 lowercase hexadecimal characters, all identities and timestamps must be complete, and status must become reviewed_pass before this artifact may enter the plan core."
+}

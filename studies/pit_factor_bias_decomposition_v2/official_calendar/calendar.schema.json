@@ -1,0 +1,47 @@
+{
+  "schema_version": "stage2_official_calendar_csv_v1",
+  "title": "Stage-2 common SSE/SZSE official-session calendar",
+  "file_format": {
+    "media_type": "text/csv",
+    "encoding": "UTF-8",
+    "header_required": true,
+    "required_columns": [
+      {
+        "name": "date",
+        "type": "date",
+        "format": "YYYY-MM-DD",
+        "nullable": false,
+        "unique": true
+      }
+    ],
+    "additional_columns_allowed": false
+  },
+  "semantics": {
+    "timezone": "Asia/Shanghai",
+    "row_meaning": "One common official session on which both SSE and SZSE are open; closed dates are omitted.",
+    "sort_order": "date_strictly_increasing",
+    "required_first_month": "2009-01",
+    "required_last_month": "2023-01",
+    "boundary_rule": "Include every authoritative common session in both boundary months; do not fabricate closed-day rows to match calendar-month endpoints.",
+    "required_target_months": [
+      "2010-01",
+      "2022-12"
+    ],
+    "minimum_common_sessions_per_target_month": 15,
+    "quote_membership_rule": "Every quote date used by Stage 2 must appear exactly once in this calendar.",
+    "endpoint_rule": "The first monthly rebalance and every fixed t+20 and t+21 endpoint must resolve by position in this calendar; a missing symbol row never shifts the endpoint.",
+    "exchange_disagreement_rule": "Fail closed until authoritative evidence establishes whether both SSE and SZSE were open."
+  },
+  "required_sidecar_evidence": [
+    "source_name",
+    "source_reference",
+    "generated_at",
+    "timezone",
+    "byte_size",
+    "row_count",
+    "minimum_date",
+    "maximum_date",
+    "sha256"
+  ],
+  "hash_rule": "SHA-256 over the exact CSV bytes without normalization after design freeze."
+}

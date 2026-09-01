@@ -1,0 +1,533 @@
+{
+  "schema_version": "stage2_coverage_probe_spec_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "probe_id": "stage2-akshare-raw-coverage-2016-2018-v1",
+  "status": "specified_not_executed",
+  "purpose": "Outcome-blind feasibility testing of whether a bounded set of Shanghai and Shenzhen A-share raw daily bars can be retrieved for two pre-specified historical dates. This probe is not a factor test, portfolio test, trading simulation, or study outcome analysis.",
+  "field_scope_boundary": "This source-retrieval probe deliberately requests a complete raw-bar payload including open and volume. Those two fields are probe-specific diagnostics and possible future portfolio inputs; they are not required inputs or readiness gates for the current Stage-2 IC core, which uses date, symbol, adjusted close, amount, ST state, and suspension state plus separate master, fundamental, and official-calendar inputs.",
+  "execution_boundary": {
+    "must_not_execute_before_repository_commit": true,
+    "required_commit_contents": [
+      "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v1.json",
+      "studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json"
+    ],
+    "external_timestamp_required_before_execution": true,
+    "authoring_assertion": "This probe was not executed while these two files were authored and MUST NOT be executed before the first repository commit containing both files has been externally timestamped.",
+    "prohibited_pre_lock_actions": [
+      "requesting any date or symbol outside this specification",
+      "inspecting or computing factor values, forward returns, information coefficients, portfolio returns, costs, t-statistics, or rankings",
+      "changing the symbols, dates, provider, adjustment mode, or quality thresholds after observing a response",
+      "starting a full-market or multi-year extraction"
+    ]
+  },
+  "selection_protocol": {
+    "selection_is_outcome_blind": true,
+    "selection_input": {
+      "logical_source": "current licensed historical stock-master export",
+      "sha256": "29b75f0de74c96395bb5d2e311d424cf45a9600a712903c4a96dc9d3d3d26b8b",
+      "permitted_selection_fields": [
+        "symbol",
+        "exchangeCode",
+        "listDate",
+        "delistDate",
+        "listStatus",
+        "stockType"
+      ],
+      "forbidden_selection_fields": "All prices, returns, factors, accounting values, portfolio results, and test statistics."
+    },
+    "seed": "stage2-coverage-probe-v1",
+    "hash_function": "SHA-256",
+    "eligibility": [
+      "Shanghai or Shenzhen A-share symbol",
+      "listDate no later than 2016-01-01",
+      "Beijing Stock Exchange excluded"
+    ],
+    "strata": [
+      {
+        "id": "early_listed_current",
+        "rule": "Within each exchange, take the two earliest-listed securities with no observed delist date and a listed status; break ties by symbol."
+      },
+      {
+        "id": "current_hash_sample",
+        "rule": "Within each exchange, exclude the early-listed selections, order remaining currently listed eligible symbols by SHA-256(seed + '|current|' + symbol), and take the first two."
+      },
+      {
+        "id": "delisted_after_2018_hash_sample",
+        "rule": "Within each exchange, retain eligible symbols with a delist date on or after 2019-01-01, order by SHA-256(seed + '|delisted|' + symbol), and take the first two. This is a diagnostic survivorship-coverage stratum, not a study universe rule."
+      }
+    ],
+    "symbols": [
+      {
+        "symbol": "600601.SH",
+        "exchange": "SH",
+        "stratum": "early_listed_current"
+      },
+      {
+        "symbol": "600602.SH",
+        "exchange": "SH",
+        "stratum": "early_listed_current"
+      },
+      {
+        "symbol": "000002.SZ",
+        "exchange": "SZ",
+        "stratum": "early_listed_current"
+      },
+      {
+        "symbol": "000001.SZ",
+        "exchange": "SZ",
+        "stratum": "early_listed_current"
+      },
+      {
+        "symbol": "600831.SH",
+        "exchange": "SH",
+        "stratum": "current_hash_sample"
+      },
+      {
+        "symbol": "603077.SH",
+        "exchange": "SH",
+        "stratum": "current_hash_sample"
+      },
+      {
+        "symbol": "000908.SZ",
+        "exchange": "SZ",
+        "stratum": "current_hash_sample"
+      },
+      {
+        "symbol": "002380.SZ",
+        "exchange": "SZ",
+        "stratum": "current_hash_sample"
+      },
+      {
+        "symbol": "600093.SH",
+        "exchange": "SH",
+        "stratum": "delisted_after_2018_hash_sample"
+      },
+      {
+        "symbol": "600146.SH",
+        "exchange": "SH",
+        "stratum": "delisted_after_2018_hash_sample"
+      },
+      {
+        "symbol": "002504.SZ",
+        "exchange": "SZ",
+        "stratum": "delisted_after_2018_hash_sample"
+      },
+      {
+        "symbol": "300367.SZ",
+        "exchange": "SZ",
+        "stratum": "delisted_after_2018_hash_sample"
+      }
+    ]
+  },
+  "request_protocol": {
+    "dates": [
+      "2016-06-30",
+      "2018-06-29"
+    ],
+    "expected_symbol_date_cells": 24,
+    "provider_adapter": "qdata.sources.providers.akshare_provider.AkShareProvider",
+    "provider_interface": "akshare.stock_zh_a_hist",
+    "price_mode": "raw_unadjusted",
+    "akshare_adjust_argument": "",
+    "frequency": "daily",
+    "lookup_names": false,
+    "full_market_discovery": false,
+    "database_write": false,
+    "qdata_dry_run": true,
+    "authentication_expected": "none for the AkShare adapter",
+    "network_access_when_eventually_executed": true,
+    "upstream_provider_identity": "Must be recorded from the runtime response path or adapter metadata; do not infer it solely from the Python package name.",
+    "locked_runtime": {
+      "qdata_repository_commit": "19b2dd1df8cfbe875809179a4772e4656dce01bd",
+      "agent_repository_commit": "COMMIT_CONTAINING_THIS_SPEC",
+      "python_version": "3.12.12",
+      "akshare_version": "1.18.81",
+      "clean_worktrees_required": true
+    }
+  },
+  "storage_and_immutability": {
+    "private_output_root": ".research-artifacts/stage2_data_probes/stage2-akshare-raw-coverage-2016-2018-v1",
+    "public_raw_rows_allowed": false,
+    "fresh_nonexistent_output_directory_required": true,
+    "overwrite_allowed": false,
+    "resume_from_existing_files_allowed": false,
+    "staging_then_atomic_publish_required": true,
+    "manifest_written_last": true,
+    "file_set_must_be_closed_and_verified": true,
+    "file_hash": "SHA-256",
+    "canonical_manifest_encoding": "UTF-8 canonical JSON with sorted object keys and no insignificant whitespace",
+    "receipt_id_rule": "receipt_id is sha256 of the canonical public receipt with receipt_id omitted",
+    "secret_handling": "Do not store credentials, request headers, cookies, absolute private paths, environment values, or unredacted provider errors in either private manifests or the public receipt."
+  },
+  "pre_execution_gates": [
+    {
+      "id": "SPEC_COMMITTED",
+      "rule": "The first commit containing this specification and the prior-specification inventory exists and is recorded."
+    },
+    {
+      "id": "SPEC_EXTERNALLY_TIMESTAMPED",
+      "rule": "The commit or an identical canonical spec hash has an external timestamp before the first request."
+    },
+    {
+      "id": "CODE_STATE_CLEAN_AND_BOUND",
+      "rule": "Both repository worktrees are clean and their exact commits and dependency versions are written to the private manifest."
+    },
+    {
+      "id": "OUTPUT_TARGET_NEW",
+      "rule": "The private output directory does not exist; any existing target causes a fail-closed stop."
+    },
+    {
+      "id": "RIGHTS_REVIEW_RECORDED",
+      "rule": "The source terms, local-storage authorization, and permission to publish aggregate coverage and cryptographic hashes have been reviewed and recorded."
+    }
+  ],
+  "post_collection_quality_gates": [
+    {
+      "id": "EXACT_REQUEST_SCOPE",
+      "rule": "Responses contain no requested date or symbol outside the locked two dates and twelve symbols."
+    },
+    {
+      "id": "COMPLETE_CELL_COVERAGE",
+      "rule": "Exactly one normalized daily-bar row exists for every one of the 24 expected symbol-date cells; missing, duplicate, or extra cells fail the probe."
+    },
+    {
+      "id": "PROBE_SPECIFIC_RAW_BAR_FIELDS",
+      "rule": "For this bounded source probe only, symbol, trade_date, open, high, low, close, volume, and amount are present and non-null for every observed cell. Open and volume are not IC-core requirements."
+    },
+    {
+      "id": "BASIC_VALUE_INTEGRITY",
+      "rule": "OHLC values are finite and positive with low <= open and close <= high; volume and amount are finite and non-negative."
+    },
+    {
+      "id": "RAW_MODE_ATTESTED",
+      "rule": "The runtime records an empty AkShare adjustment argument and does not merge qfq, hfq, factor, fundamental, or return fields."
+    },
+    {
+      "id": "FAILURES_ACCOUNTED_FOR",
+      "rule": "Every request has a success, empty-response, provider-error, validation-error, or network-error record; errors are redacted before publication."
+    },
+    {
+      "id": "ARTIFACT_HASHES_VERIFIED",
+      "rule": "All private raw and normalized artifacts match the SHA-256 values in the closed manifest after collection finishes."
+    }
+  ],
+  "stop_rules": [
+    "If any pre-execution gate fails, make no request.",
+    "If any post-collection gate fails, record BLOCKED and do not alter the probe scope or thresholds.",
+    "An empty row for a delisted security is classified as source-or-adapter ambiguous and cannot establish that historical data do not exist.",
+    "No full-market or multi-year acquisition may start from this probe alone.",
+    "No claim about executable prices, tradability, suspension, price limits, corporate-action vintages, fundamentals, data revisions, or investment performance is allowed."
+  ],
+  "public_receipt_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:a-share-factor-timing-bias-decomposition-v2:coverage-probe-receipt-v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schema_version",
+      "study_id",
+      "probe_id",
+      "receipt_id",
+      "spec_sha256",
+      "status",
+      "executed_at_utc",
+      "repository_state",
+      "request",
+      "artifacts",
+      "coverage",
+      "field_quality",
+      "failures",
+      "gates",
+      "rights",
+      "claim_boundaries"
+    ],
+    "properties": {
+      "schema_version": {
+        "const": "stage2_coverage_probe_receipt_v1"
+      },
+      "study_id": {
+        "const": "a-share-factor-timing-bias-decomposition-v2"
+      },
+      "probe_id": {
+        "const": "stage2-akshare-raw-coverage-2016-2018-v1"
+      },
+      "receipt_id": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      },
+      "spec_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "status": {
+        "enum": [
+          "PASSED",
+          "BLOCKED",
+          "ERROR"
+        ]
+      },
+      "executed_at_utc": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "repository_state": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent_commit",
+          "qdata_commit",
+          "agent_clean",
+          "qdata_clean",
+          "python_version",
+          "akshare_version"
+        ],
+        "properties": {
+          "agent_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "qdata_commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "agent_clean": {
+            "type": "boolean"
+          },
+          "qdata_clean": {
+            "type": "boolean"
+          },
+          "python_version": {
+            "type": "string"
+          },
+          "akshare_version": {
+            "type": "string"
+          }
+        }
+      },
+      "request": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider_adapter",
+          "provider_interface",
+          "upstream_provider_identity",
+          "dates",
+          "symbols",
+          "price_mode",
+          "adjust_argument"
+        ],
+        "properties": {
+          "provider_adapter": {
+            "type": "string"
+          },
+          "provider_interface": {
+            "type": "string"
+          },
+          "upstream_provider_identity": {
+            "type": "string"
+          },
+          "dates": {
+            "const": [
+              "2016-06-30",
+              "2018-06-29"
+            ]
+          },
+          "symbols": {
+            "type": "array",
+            "minItems": 12,
+            "maxItems": 12,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9]{6}\\.(SH|SZ)$"
+            }
+          },
+          "price_mode": {
+            "const": "raw_unadjusted"
+          },
+          "adjust_argument": {
+            "const": ""
+          }
+        }
+      },
+      "artifacts": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "relative_path",
+            "sha256",
+            "size_bytes",
+            "row_count",
+            "symbol_count",
+            "minimum_date",
+            "maximum_date",
+            "schema_sha256"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "raw_private",
+                "normalized_private",
+                "request_log_private"
+              ]
+            },
+            "relative_path": {
+              "type": "string",
+              "not": {
+                "pattern": "^(\\/|[A-Za-z]:)"
+              }
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "symbol_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 12
+            },
+            "minimum_date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maximum_date": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "schema_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      },
+      "coverage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_symbol_date_cells",
+          "observed_symbol_date_cells",
+          "missing_symbol_date_cells",
+          "duplicate_symbol_date_cells",
+          "extra_symbol_date_cells"
+        ],
+        "properties": {
+          "expected_symbol_date_cells": {
+            "const": 24
+          },
+          "observed_symbol_date_cells": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 24
+          },
+          "missing_symbol_date_cells": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "duplicate_symbol_date_cells": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "extra_symbol_date_cells": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "field_quality": {
+        "type": "object"
+      },
+      "failures": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "gates": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "boolean"
+        }
+      },
+      "rights": {
+        "type": "object",
+        "required": [
+          "review_status",
+          "raw_redistribution_allowed",
+          "aggregate_receipt_publication_allowed"
+        ],
+        "properties": {
+          "review_status": {
+            "enum": [
+              "verified",
+              "pending",
+              "blocked"
+            ]
+          },
+          "raw_redistribution_allowed": {
+            "type": "boolean"
+          },
+          "aggregate_receipt_publication_allowed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "claim_boundaries": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "factor_outcome_claim_allowed",
+          "portfolio_claim_allowed",
+          "execution_semantics_verified",
+          "tradability_verified",
+          "fundamental_history_verified",
+          "revision_history_verified"
+        ],
+        "properties": {
+          "factor_outcome_claim_allowed": {
+            "const": false
+          },
+          "portfolio_claim_allowed": {
+            "const": false
+          },
+          "execution_semantics_verified": {
+            "const": false
+          },
+          "tradability_verified": {
+            "const": false
+          },
+          "fundamental_history_verified": {
+            "const": false
+          },
+          "revision_history_verified": {
+            "const": false
+          }
+        }
+      }
+    }
+  },
+  "forbidden_public_receipt_content": [
+    "raw or normalized OHLCV/amount values",
+    "API keys, headers, cookies, environment values, or credential paths",
+    "absolute private filesystem paths",
+    "factor values, rankings, returns, information coefficients, portfolio metrics, or test statistics",
+    "unredacted exception text that may contain a secret or private endpoint"
+  ]
+}

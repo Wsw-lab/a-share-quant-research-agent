@@ -1,0 +1,423 @@
+{
+  "schema_version": "prior_specification_inventory_v1",
+  "inventory_id": "a-share-factor-prior-specifications-2026-09-01",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_incomplete_not_manifest_eligible",
+  "prepared_on_local_date": "2026-09-01",
+  "inventory_cutoff_at": null,
+  "generated_at": null,
+  "prepared_by": null,
+  "preparer_role": null,
+  "outcome_blind_inventory": true,
+  "contains_outcome_values": false,
+  "purpose": "Record specifications and plans present at the documented repository snapshot, outcome-blindly and without reporting factor returns, rankings, test statistics, or inferred execution histories. Any separately named unexecuted probe retains its own narrower execution-status assertion.",
+  "entry_count": 13,
+  "entries_sha256": "0b6f41afb062cdc930a68b90dba5dc11f464ecd665013a63f2302cf4805f0e45",
+  "chronology_contract": {
+    "required_order": "repository_snapshot.inspected_at <= inventory_cutoff_at <= generated_at <= prior_exposure_attestation.attested_at <= execution_plan.design_frozen_at",
+    "timestamp_rule": "inspected_at, inventory_cutoff_at, generated_at, and every downstream attestation time must be finite ISO-8601 with an explicit UTC offset",
+    "cutoff_rule": "The inventory includes every in-scope artifact known through inventory_cutoff_at. Later discoveries require a new version, new entries_sha256, new inventory-file hash, and new prior-exposure attestation.",
+    "entries_hash_rule": "entries_sha256 is SHA-256 of the canonical UTF-8 JSON entries array with sorted keys, compact separators, and one trailing LF; entry_count equals the exact array length.",
+    "manifest_gate": "No null root identity or timestamp field, count mismatch, hash mismatch, post-cutoff silent edit, or outcome value is permitted when this inventory enters design_manifest_v1."
+  },
+  "repository_snapshot": {
+    "head_commit": "4dfd0ad6298a6fcf0246e6f3bb8a7bb6c527d6ad",
+    "head_commit_subject": "Publish A-share factor replication working paper",
+    "inspected_at": null,
+    "working_tree_state": "dirty",
+    "working_tree_porcelain_sha256": null,
+    "working_tree_note": "Stage 2 planning artifacts, including this inventory, were uncommitted at inventory preparation time. present_in_repository therefore means present in the inspected working tree, not necessarily tracked at HEAD."
+  },
+  "classification_contract": {
+    "present_in_repository": {
+      "type": "boolean",
+      "meaning": "Whether the named primary path existed in the inspected working tree when this inventory was prepared.",
+      "does_not_mean": [
+        "the specification was executed",
+        "the specification passed a readiness gate",
+        "the specification was portfolio-ready",
+        "the specification produced real-market evidence"
+      ]
+    },
+    "outcome_exposure_known": {
+      "type": "enum",
+      "allowed_values": [
+        "yes",
+        "no",
+        "unknown"
+      ],
+      "meaning": {
+        "yes": "A repository artifact explicitly establishes exposure to outcomes relevant to the named specification; no unrecorded run details are inferred.",
+        "no": "A narrow contemporaneous authoring assertion establishes that the named specification has not yet been executed or exposed to its own outcomes.",
+        "unknown": "The inspected repository does not establish either exposure or non-exposure. This is the required value when evidence is ambiguous or absent."
+      },
+      "does_not_mean": "A yes value does not establish which person ran a job, when it ran, which unrecorded inputs were used, or that every listed variant was evaluated."
+    },
+    "repository_state": {
+      "allowed_values": [
+        "tracked_at_head",
+        "working_tree_uncommitted"
+      ]
+    },
+    "execution_history_policy": "Do not convert repository presence, a strategy name, a commit subject, or an absent receipt into a claim about execution history."
+  },
+  "commit_registry": {
+    "dfc9914995d62b4f9f2a214d53be244fa05b51b3": {
+      "committed_at": "2026-07-31T16:45:29+08:00",
+      "subject": "Initial portfolio-ready quant research agent",
+      "inventory_semantics": "Introduced the strategy-factory configuration files. The subject is historical commit metadata and is not treated as proof of current readiness or out-of-sample performance."
+    },
+    "551ed616bfbd08e6e051d9d88cae2ac5f84e3cbf": {
+      "committed_at": "2026-08-25T11:47:54+08:00",
+      "subject": "Make the A-share research chain reproducible and fail closed (#1)",
+      "inventory_semantics": "Introduced the reproducible-research plan and deterministic synthetic example. The subject does not establish that the example was run."
+    },
+    "cbf5414c2613032dfa29ef2c295c760a3f4769ef": {
+      "committed_at": "2026-08-31T22:47:38+08:00",
+      "subject": "Add locked confirmatory factor study",
+      "inventory_semantics": "Introduced the locked pilot study plan and its example data declaration."
+    },
+    "fc9727b238872de281d4652a5ef1abd384b70ee0": {
+      "committed_at": "2026-08-31T22:52:19+08:00",
+      "subject": "Publish bounded real-market OOS evidence",
+      "inventory_semantics": "Introduced the public pilot receipt. Its existence establishes outcome exposure for the pilot, without this inventory reproducing any outcome values."
+    },
+    "4dfd0ad6298a6fcf0246e6f3bb8a7bb6c527d6ad": {
+      "committed_at": "2026-09-01T10:23:51+08:00",
+      "subject": "Publish A-share factor replication working paper",
+      "inventory_semantics": "Introduced the public pilot working-paper PDF and DOCX at the inspected HEAD."
+    }
+  },
+  "entries": [
+    {
+      "inventory_id": "strategy-factory-templates",
+      "artifact_type": "strategy_specification_set",
+      "primary_path": "configs/strategy_factory_templates.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Initial strategy-factory template set; the historical commit label is not a readiness finding.",
+      "specification_ids": [
+        "quality_value_momentum",
+        "low_vol_dividend",
+        "profit_repair",
+        "event_momentum_proxy",
+        "industry_rotation_proxy",
+        "liquidity_breakout",
+        "defensive_cashflow_proxy"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "The file establishes template presence but does not establish whether any template was evaluated before selection.",
+      "execution_history_claim": "unknown"
+    },
+    {
+      "inventory_id": "strategy-factory-capital-flow-candidates",
+      "artifact_type": "strategy_candidate_set",
+      "primary_path": "configs/strategy_factory_capital_flow_candidate_variants.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Introduced with the initial strategy-factory configuration bundle.",
+      "specification_ids": [
+        "capital_flow_quality_recovery_guard",
+        "capital_flow_dragon_tiger_event_guard"
+      ],
+      "outcome_exposure_known": "yes",
+      "outcome_exposure_basis": "The specification text itself refers to already supportive diagnostics or evidence. This establishes prior evidence exposure at the specification-writing level but not a particular run history.",
+      "execution_history_claim": "No job, date, data vintage, or complete evaluated set is established by the inspected file."
+    },
+    {
+      "inventory_id": "strategy-factory-defensive-quality-cash-buffer",
+      "artifact_type": "strategy_candidate_set",
+      "primary_path": "configs/strategy_factory_defensive_quality_cash_buffer_variants.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Introduced with the initial strategy-factory configuration bundle.",
+      "specification_ids": [
+        "defensive_quality_cash_buffer_045",
+        "defensive_quality_cash_buffer_055",
+        "defensive_quality_cash_buffer_065"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "Repository presence and parameter variation do not establish whether results were observed before the variants were fixed.",
+      "execution_history_claim": "unknown"
+    },
+    {
+      "inventory_id": "strategy-factory-margin-defensive-cash-buffer",
+      "artifact_type": "strategy_candidate_set",
+      "primary_path": "configs/strategy_factory_margin_defensive_cash_buffer_variants.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Introduced with the initial strategy-factory configuration bundle.",
+      "specification_ids": [
+        "defensive_margin_crowding_avoid_052",
+        "defensive_margin_crowding_avoid_055"
+      ],
+      "outcome_exposure_known": "yes",
+      "outcome_exposure_basis": "The specification text explicitly characterizes earlier margin diagnostics and blocked loss windows. This establishes prior evidence exposure but not which job generated it.",
+      "execution_history_claim": "No exact run, input bundle, or outcome table is claimed."
+    },
+    {
+      "inventory_id": "strategy-factory-margin-trade-alpha",
+      "artifact_type": "strategy_candidate_set",
+      "primary_path": "configs/strategy_factory_margin_trade_alpha_variants.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Introduced with the initial strategy-factory configuration bundle.",
+      "specification_ids": [
+        "margin_leverage_flow_quality_guard",
+        "margin_deleveraging_defensive_guard",
+        "margin_net_buy_repair_guard"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "The inspected artifact specifies candidate logic but does not establish pre-specification outcome exposure.",
+      "execution_history_claim": "unknown"
+    },
+    {
+      "inventory_id": "strategy-factory-overheated-reversal-guard",
+      "artifact_type": "strategy_candidate_set",
+      "primary_path": "configs/strategy_factory_overheated_reversal_guard_variants.json",
+      "related_paths": [
+        "src/a_share_quant_agent/strategy_factory.py"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "dfc9914995d62b4f9f2a214d53be244fa05b51b3",
+      "commit_semantics": "Introduced with the initial strategy-factory configuration bundle.",
+      "specification_ids": [
+        "defensive_quality_overheated_reversal_052",
+        "defensive_quality_overheated_reversal_055"
+      ],
+      "outcome_exposure_known": "yes",
+      "outcome_exposure_basis": "The specification text explicitly refers to a prior best candidate having failed. This establishes prior outcome exposure but not a reconstructable run history.",
+      "execution_history_claim": "No exact prior candidate run, input bundle, or result is asserted here."
+    },
+    {
+      "inventory_id": "synthetic-quality-value-momentum-example",
+      "artifact_type": "synthetic_example_specification",
+      "primary_path": "examples/strategy_specs/quality_value_momentum.json",
+      "related_paths": [
+        "examples/run_demo.py",
+        "docs/plans/2026-08-24-reproducible-research-chain.md"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "551ed616bfbd08e6e051d9d88cae2ac5f84e3cbf",
+      "commit_semantics": "Introduced as part of a fail-closed reproducibility chain.",
+      "specification_ids": [
+        "Synthetic Quality Value Momentum"
+      ],
+      "outcome_domain": "synthetic_by_explicit_description",
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "The file explicitly labels itself a deterministic synthetic-data example, but the repository does not establish whether it was run before or after selection.",
+      "execution_history_claim": "unknown"
+    },
+    {
+      "inventory_id": "reproducible-research-chain-plan",
+      "artifact_type": "implementation_plan",
+      "primary_path": "docs/plans/2026-08-24-reproducible-research-chain.md",
+      "related_paths": [
+        "examples/strategy_specs/quality_value_momentum.json"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "551ed616bfbd08e6e051d9d88cae2ac5f84e3cbf",
+      "commit_semantics": "Plan for a reproducible, fail-closed research chain; not itself a result receipt.",
+      "specification_ids": [
+        "reproducible-research-chain"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "A methodological plan does not by itself establish outcome exposure or non-exposure.",
+      "execution_history_claim": "unknown"
+    },
+    {
+      "inventory_id": "pit-factor-replication-v1-plan",
+      "artifact_type": "locked_confirmatory_study_plan",
+      "primary_path": "studies/pit_factor_replication_v1/plan.json",
+      "related_paths": [
+        "studies/pit_factor_replication_v1/data_declaration.example.json",
+        "evidence/pit_factor_replication_v1/receipt.json",
+        "docs/working-paper/A_Share_Factor_Replication_Working_Paper.pdf",
+        "docs/working-paper/A_Share_Factor_Replication_Working_Paper.docx"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "cbf5414c2613032dfa29ef2c295c760a3f4769ef",
+      "commit_semantics": "Locked pilot confirmatory study introduced before the separately committed public receipt.",
+      "specification_ids": [
+        "M0_naive",
+        "M1_pit_universe",
+        "M2_pit_publication",
+        "M3_audited_lag"
+      ],
+      "factor_ids": [
+        "roe",
+        "momentum_60d",
+        "low_vol_20d",
+        "composite"
+      ],
+      "outcome_exposure_known": "yes",
+      "outcome_exposure_basis": "The later public receipt and working paper establish that outcomes for this locked pilot specification became observable. This inventory intentionally omits all values.",
+      "execution_history_claim": "Only the existence of the tracked public receipt is asserted; no additional or unrecorded run is inferred."
+    },
+    {
+      "inventory_id": "pit-factor-replication-v1-public-evidence",
+      "artifact_type": "outcome_exposure_evidence",
+      "primary_path": "evidence/pit_factor_replication_v1/receipt.json",
+      "related_paths": [
+        "studies/pit_factor_replication_v1/plan.json",
+        "docs/working-paper/A_Share_Factor_Replication_Working_Paper.pdf",
+        "docs/working-paper/A_Share_Factor_Replication_Working_Paper.docx"
+      ],
+      "present_in_repository": true,
+      "repository_state": "tracked_at_head",
+      "introduced_in_commit": "fc9727b238872de281d4652a5ef1abd384b70ee0",
+      "commit_semantics": "Public bounded real-market receipt; listed only as evidence of exposure and not reproduced here.",
+      "specification_ids": [
+        "pit-factor-replication-v1-public-receipt"
+      ],
+      "outcome_exposure_known": "yes",
+      "outcome_exposure_basis": "The primary artifact is itself a public result receipt.",
+      "execution_history_claim": "The tracked receipt exists. This inventory does not infer any other run."
+    },
+    {
+      "inventory_id": "pit-factor-bias-decomposition-v2-draft-plan",
+      "artifact_type": "draft_study_plan",
+      "primary_path": "studies/pit_factor_bias_decomposition_v2/plan.draft.json",
+      "related_paths": [
+        "studies/pit_factor_bias_decomposition_v2/README.md",
+        "studies/pit_factor_bias_decomposition_v2/data_requirements.json",
+        "studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json",
+        "studies/pit_factor_bias_decomposition_v2/current_bundle_gap_assessment.md",
+        "studies/pit_factor_bias_decomposition_v2/statistical_analysis_plan.md",
+        "studies/pit_factor_bias_decomposition_v2/prior_exposure_log.md",
+        "studies/pit_factor_bias_decomposition_v2/data_review_attestation.template.json",
+        "studies/pit_factor_bias_decomposition_v2/prior_exposure_attestation.template.json",
+        "studies/pit_factor_bias_decomposition_v2/design_manifest.template.json",
+        "studies/pit_factor_bias_decomposition_v2/registration_receipt.template.json",
+        "studies/pit_factor_bias_decomposition_v2/execution_authorization.template.json",
+        "studies/pit_factor_bias_decomposition_v2/official_calendar/README.md",
+        "studies/pit_factor_bias_decomposition_v2/official_calendar/calendar.schema.json",
+        "studies/pit_factor_bias_decomposition_v2/pbfj_phase1_eoi_draft.md",
+        "studies/pit_factor_bias_decomposition_v2/pbfj_phase2_pitch.md"
+      ],
+      "present_in_repository": true,
+      "repository_state": "working_tree_uncommitted",
+      "introduced_in_commit": null,
+      "commit_semantics": "No introducing commit exists at the inspected HEAD; the artifact is a working-tree draft.",
+      "specification_ids": [
+        "A0_final_report_end",
+        "A1_pit_report_end",
+        "I0000_pit_publication",
+        "I1000_st",
+        "I0100_suspension",
+        "I0010_liquidity",
+        "I0001_lag",
+        "I1100_st_suspension",
+        "I1010_st_liquidity",
+        "I1001_st_lag",
+        "I0110_suspension_liquidity",
+        "I0101_suspension_lag",
+        "I0011_liquidity_lag",
+        "I1110_st_suspension_liquidity",
+        "I1101_st_suspension_lag",
+        "I1011_st_liquidity_lag",
+        "I0111_suspension_liquidity_lag",
+        "I1111_full_implementation"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "No Stage 2 result receipt was identified in the inspected repository, but absence of a receipt is not proof of non-exposure.",
+      "related_prior_outcome_exposure_known": "yes",
+      "related_prior_outcome_exposure_basis": "The Stage 2 prior-exposure log identifies the separate pilot outcomes as previously observed; this does not establish exposure to Stage 2 outcomes.",
+      "execution_history_claim": "No Stage 2 execution is claimed."
+    },
+    {
+      "inventory_id": "pit-factor-bias-decomposition-v2-execution-template",
+      "artifact_type": "draft_execution_plan_template",
+      "primary_path": "studies/pit_factor_bias_decomposition_v2/execution_plan.template.json",
+      "related_paths": [
+        "studies/pit_factor_bias_decomposition_v2/plan.draft.json",
+        "studies/pit_factor_bias_decomposition_v2/data_review_attestation.template.json",
+        "studies/pit_factor_bias_decomposition_v2/design_manifest.template.json",
+        "studies/pit_factor_bias_decomposition_v2/registration_receipt.template.json",
+        "studies/pit_factor_bias_decomposition_v2/execution_authorization.template.json",
+        "studies/pit_factor_bias_decomposition_v2/official_calendar/calendar.schema.json"
+      ],
+      "present_in_repository": true,
+      "repository_state": "working_tree_uncommitted",
+      "introduced_in_commit": null,
+      "commit_semantics": "No introducing commit exists at the inspected HEAD; the artifact is a do-not-run template.",
+      "specification_ids": [
+        "stage2-execution-plan-template"
+      ],
+      "outcome_exposure_known": "unknown",
+      "outcome_exposure_basis": "Template status and an absent receipt do not prove that no related work occurred outside the repository.",
+      "related_prior_outcome_exposure_known": "yes",
+      "related_prior_outcome_exposure_basis": "The separate pilot receipt is public and the Stage 2 prior-exposure log records pilot exposure.",
+      "execution_history_claim": "No Stage 2 execution is claimed."
+    },
+    {
+      "inventory_id": "stage2-akshare-raw-coverage-2016-2018-v1",
+      "artifact_type": "locked_outcome_blind_coverage_probe_specification",
+      "primary_path": "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v1.json",
+      "related_paths": [
+        "studies/pit_factor_bias_decomposition_v2/data_requirements.json",
+        "studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json"
+      ],
+      "present_in_repository": true,
+      "repository_state": "working_tree_uncommitted",
+      "introduced_in_commit": null,
+      "commit_semantics": "The specification must first be committed and externally timestamped together with this inventory before execution is permitted.",
+      "content_sha256_at_inventory": "35e63a90dacd412868345e051031af52801ea91c22e6bd181baa482364d102e8",
+      "specification_ids": [
+        "stage2-akshare-raw-coverage-2016-2018-v1"
+      ],
+      "outcome_exposure_known": "no",
+      "outcome_exposure_basis": "Contemporaneous authoring assertion: the probe was not executed while these two outcome-blind files were prepared, and the specification forbids execution before their first externally timestamped commit.",
+      "execution_history_claim": "not_executed_during_inventory_preparation"
+    }
+  ],
+  "scope_exclusions": [
+    {
+      "path": "configs/vendor_mapping.template.yaml",
+      "reason": "Vendor-field mapping template, not a strategy or study specification."
+    },
+    {
+      "path": "src/a_share_quant_agent",
+      "reason": "Implementation code is referenced by relevant entries but is not inventoried as a strategy specification unless a parameterized specification artifact exists."
+    },
+    {
+      "path": "docs/legacy-evidence.md",
+      "reason": "Describes historical readiness and strategy-factory artifacts whose exact inputs are not reconstructable from the current tree; it is not used to fabricate run-level inventory entries."
+    },
+    {
+      "path": "external_or_uncommitted_historical_outputs",
+      "reason": "No claim is made about files, runs, reports, or data outside the inspected working tree and named Git history."
+    }
+  ],
+  "limitations": [
+    "This is an inventory of repository artifacts, not an audit of every experiment ever performed.",
+    "An absent receipt is not evidence that a specification was never run.",
+    "A historical commit subject containing portfolio-ready is not a current readiness result.",
+    "The inventory does not claim that QData supports complete vintage or as-of revision-history research.",
+    "No factor outcome, candidate ranking, or model-selection statistic was consulted or copied into this file."
+  ]
+}

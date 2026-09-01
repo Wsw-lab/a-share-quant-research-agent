@@ -1,0 +1,157 @@
+{
+  "schema_version": "study_v2_data_requirements_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "minimum_coverage": {
+    "history_years": 13,
+    "monthly_observations": 156,
+    "sessions_per_month": 15,
+    "publish_date_non_null_rate": 0.95,
+    "quoted_symbols_per_target_month": 1000,
+    "target_primary_interval": [
+      "2010-01-01",
+      "2022-12-31"
+    ],
+    "warmup_start": "2009-01-01",
+    "required_quote_outcome_end": "2023-01-31",
+    "required_fundamental_publication_start": "2009-01-01"
+  },
+  "post_execution_evidence_eligibility": {
+    "minimum_finite_signal_outcome_pairs_per_registered_factor_variant_month": 1000,
+    "required_complete_registered_months": 156,
+    "timing": "Evaluate only after externally authorized execution; this is not a pre-lock coverage test.",
+    "failure_status": "INSUFFICIENT_EVIDENCE"
+  },
+  "daily_quotes": {
+    "required": [
+      "date",
+      "symbol",
+      "close",
+      "amount",
+      "is_st",
+      "is_suspended"
+    ],
+    "planned_portfolio_or_robustness_fields_not_required_by_current_ic_core": [
+      "high",
+      "low",
+      "open",
+      "volume",
+      "previous_close",
+      "upper_limit",
+      "lower_limit",
+      "adjustment_factor",
+      "float_market_cap"
+    ],
+    "semantics": "The adjusted close return series, amount units and cutoff timing, official-session calendar, adjustment convention, and missing-session behavior must be documented and hash-bound for the IC core. Unadjusted open, price-limit, volume, and nonfill semantics are inputs to a planned portfolio module and are not required or claimed by the current runner."
+  },
+  "official_calendar": {
+    "required": true,
+    "schema_version": "stage2_official_calendar_csv_v1",
+    "schema_path": "official_calendar/calendar.schema.json",
+    "format": "UTF-8 CSV",
+    "timezone": "Asia/Shanghai",
+    "required_first_month": "2009-01",
+    "required_last_month": "2023-01",
+    "required_columns": [
+      "date"
+    ],
+    "semantic_gates": [
+      "one unique ISO date per row and dates are strictly increasing",
+      "every row is a common official session on which both SSE and SZSE are open",
+      "every target month has at least 15 common sessions",
+      "first rebalance and all t+20/t+21 endpoints resolve on this calendar",
+      "every quote date is a member of the bound calendar",
+      "source name, source reference, generation time, timezone, and any SSE/SZSE disagreement resolution are retained in the data declaration and review evidence before design freeze"
+    ],
+    "binding": "The exact file bytes, source provenance, byte size, session count, date range, and SHA-256 hash must be bound in the review attestation, plan core, and design manifest."
+  },
+  "stock_master": {
+    "required": [
+      "symbol",
+      "listDate",
+      "delistDate",
+      "listStatus",
+      "stockType"
+    ],
+    "strongly_preferred": [
+      "board",
+      "industry_code",
+      "industry_effective_date",
+      "ownership_type",
+      "ownership_effective_date"
+    ]
+  },
+  "fundamentals": {
+    "required": [
+      "symbol",
+      "roeDiluted",
+      "publishDate",
+      "reportPeriodEnd"
+    ],
+    "primary_roe_contract": {
+      "source_field": "roeDiluted mapped to roe",
+      "unit": "decimal",
+      "transformation": "latest disclosed cumulative interim or annual observation; no analyst annualization",
+      "maximum_staleness_months": 18,
+      "duplicate_symbol_report_period_rule": "fail closed without a separately validated vintage schema",
+      "required_evidence": [
+        "provider_field_dictionary_sha256",
+        "endpoint_mapping_sha256",
+        "unit_reconciliation_sha256"
+      ]
+    },
+    "reconstructed_roe_module": {
+      "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
+      "required_fields_if_later_implemented": [
+        "net_income_ttm",
+        "common_equity_current",
+        "common_equity_lagged"
+      ]
+    },
+    "required_for_revision_history_claim": [
+      "as_of_or_vintage_timestamp",
+      "version_or_revision_identifier",
+      "value_as_of_vintage"
+    ],
+    "boundary": "publishDate supports only first-availability timing. The current runner has no validated revision-vintage adapter, so revision-history claims are unconditionally prohibited; merely observing vintage-like columns, high field completeness, or multiple symbol-period versions is diagnostic and cannot open that claim gate."
+  },
+  "market_controls": {
+    "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
+    "required_if_later_implemented": [
+      "market_return",
+      "risk_free_rate",
+      "size_factor",
+      "value_factor"
+    ],
+    "preferred_if_later_implemented": [
+      "profitability_factor",
+      "investment_factor",
+      "momentum_factor"
+    ]
+  },
+  "rights_and_identity": {
+    "required": [
+      "source_name",
+      "license_or_contract_scope",
+      "redistribution_status",
+      "field_definitions",
+      "raw_file_sha256",
+      "row_count",
+      "symbol_count",
+      "minimum_and_maximum_dates"
+    ],
+    "public_release": "Publish code, schemas, synthetic fixtures, hashes, and aggregate coverage only; the receipt may embed the exact official-calendar session dates only when that publication right is explicitly attested, and no licensed market or fundamental row may be published without separate explicit rights."
+  },
+  "outcome_blind_boundary": {
+    "allowed_before_registration": [
+      "schema and field dictionary review",
+      "aggregate date, row, symbol, session, and non-null coverage",
+      "fixed-symbol fixed-date source probes",
+      "hashing and rights review"
+    ],
+    "prohibited_before_registration": [
+      "factor IC or return inspection on the 2010-2022 primary panel",
+      "variant ranking",
+      "threshold changes based on Stage-2 outcomes"
+    ]
+  }
+}

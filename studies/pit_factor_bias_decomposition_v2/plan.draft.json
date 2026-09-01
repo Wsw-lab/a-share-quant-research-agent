@@ -1,0 +1,330 @@
+{
+  "schema_version": "stage2_protocol_source_v1",
+  "document_type": "outcome_blind_protocol_source_not_runner_input",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_data_feasibility_pending",
+  "title": "How Much Do Information Timing and Implementation Choices Shift A-Share Factor Evidence? A Pre-Specified Bias Decomposition",
+  "target_journal_route": "Pacific-Basin Finance Journal hybrid pre-registration pathway",
+  "research_question": "How much do final-survivor sampling, report-period rather than publication-date availability, tradability screens, liquidity requirements, and a one-session implementation lag shift A-share factor evidence?",
+  "pilot_evidence": {
+    "study_id": "pit-factor-replication-v1",
+    "receipt": "../../evidence/pit_factor_replication_v1/receipt.json",
+    "role": "disclosed empirical precondition only; excluded from claims of prospective confirmation",
+    "data_already_seen": true
+  },
+  "lock_conditions": {
+    "external_timestamp_required": true,
+    "journal_or_osf_registration_required_before_outcome_analysis": true,
+    "minimum_history_years": 13,
+    "target_history_years": 13,
+    "minimum_monthly_observations": 156,
+    "target_monthly_observations": 156,
+    "minimum_sessions_per_month": 15,
+    "minimum_publish_date_non_null_rate": 0.95,
+    "minimum_quoted_symbols_per_target_month": 1000,
+    "owner_attestation_that_primary_sample_outcomes_were_not_previously_inspected": true,
+    "coverage_audit_must_pass": true,
+    "execution_semantics_tradability_and_rights_attestation_required": true,
+    "official_calendar_schema_and_sha256_required": true,
+    "execution_plan_must_be_materialized_as_a_separate_flat_file": true,
+    "design_manifest_must_bind_the_frozen_plan_before_external_registration": true,
+    "registration_receipt_must_bind_the_exact_design_manifest_sha256": true,
+    "execution_authorization_required_before_blind_data_release": true,
+    "changing_only_this_draft_status_is_prohibited": true,
+    "outcome_blind_data_feasibility_only_before_lock": true,
+    "failure_rule": "If a minimum gate fails, stop and report the failed gate; do not shorten the sample, substitute a later interval, or relax a threshold after inspecting factor outcomes."
+  },
+  "post_execution_evidence_eligibility": {
+    "minimum_finite_signal_outcome_pairs_per_registered_factor_variant_month": 1000,
+    "required_complete_registered_months": 156,
+    "timing": "Evaluate only after externally authorized execution; this is an evidence-status stop rule, not a pre-lock coverage test or permission for the analysis team to inspect outcomes.",
+    "failure_rule": "Report INSUFFICIENT_EVIDENCE without shortening the interval, dropping registered cells, or changing thresholds."
+  },
+  "target_sample": {
+    "market": "Shanghai and Shenzhen A-shares; Beijing Stock Exchange is outside the current data boundary",
+    "target_start": "2010-01-01",
+    "target_end": "2022-12-31",
+    "warmup_start": "2009-01-01",
+    "confirmatory_boundary": "The 2010-2022 historical panel is the intended previously uninspected primary sample and requires an owner exposure attestation before lock; the disclosed 2023-2026 pilot is excluded from primary inference.",
+    "rebalance_frequency": "monthly",
+    "rebalance_session": "first eligible exchange session of each month",
+    "forward_horizon_sessions": 20,
+    "prospective_extension": "At least 12 months collected after external registration or in-principle acceptance, reported separately from both the historical panel and the disclosed pilot."
+  },
+  "primary_factors": [
+    "roe",
+    "momentum_60d",
+    "low_vol_20d",
+    "composite"
+  ],
+  "composite_weights": {
+    "roe": 0.5,
+    "momentum_60d": 0.3,
+    "low_vol_20d": 0.2
+  },
+  "robustness_factors": {
+    "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
+    "items": {
+      "momentum_12_1": "cumulative return from month t-12 through t-2",
+      "low_vol_60d": "negative standard deviation of daily returns over 60 sessions",
+      "roe_reconstructed": "trailing net income divided by average common equity when point-in-time statement fields permit"
+    }
+  },
+  "implementation_components": [
+    "exclude_st",
+    "exclude_suspended",
+    "minimum_amount_20d",
+    "one_session_lag"
+  ],
+  "minimum_amount": 5000000,
+  "variants": [
+    {
+      "id": "A0_final_report_end",
+      "universe_mode": "final_survivor",
+      "fundamental_availability": "report_period_end",
+      "components": []
+    },
+    {
+      "id": "A1_pit_report_end",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "report_period_end",
+      "components": []
+    },
+    {
+      "id": "I0000_pit_publication",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": []
+    },
+    {
+      "id": "I1000_st",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st"]
+    },
+    {
+      "id": "I0100_suspension",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_suspended"]
+    },
+    {
+      "id": "I0010_liquidity",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["minimum_amount_20d"]
+    },
+    {
+      "id": "I0001_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["one_session_lag"]
+    },
+    {
+      "id": "I1100_st_suspension",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "exclude_suspended"]
+    },
+    {
+      "id": "I1010_st_liquidity",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "minimum_amount_20d"]
+    },
+    {
+      "id": "I1001_st_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "one_session_lag"]
+    },
+    {
+      "id": "I0110_suspension_liquidity",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_suspended", "minimum_amount_20d"]
+    },
+    {
+      "id": "I0101_suspension_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_suspended", "one_session_lag"]
+    },
+    {
+      "id": "I0011_liquidity_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["minimum_amount_20d", "one_session_lag"]
+    },
+    {
+      "id": "I1110_st_suspension_liquidity",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "exclude_suspended", "minimum_amount_20d"]
+    },
+    {
+      "id": "I1101_st_suspension_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "exclude_suspended", "one_session_lag"]
+    },
+    {
+      "id": "I1011_st_liquidity_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "minimum_amount_20d", "one_session_lag"]
+    },
+    {
+      "id": "I0111_suspension_liquidity_lag",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_suspended", "minimum_amount_20d", "one_session_lag"]
+    },
+    {
+      "id": "I1111_full_implementation",
+      "universe_mode": "point_in_time",
+      "fundamental_availability": "publication_date",
+      "components": ["exclude_st", "exclude_suspended", "minimum_amount_20d", "one_session_lag"]
+    }
+  ],
+  "primary_estimands": [
+    {
+      "id": "P1_roe_publication_signed_decrement",
+      "definition": "paired monthly mean IC difference I0000_pit_publication minus A1_pit_report_end for ROE",
+      "directional_expectation": "less_than_or_equal_to_zero",
+      "interpretation_rule": "Call the result timing inflation or attenuation only when the report-period comparator IC is positive and the signed difference is negative; otherwise describe it neutrally as timing displacement."
+    }
+  ],
+  "secondary_estimands": [
+    "paired composite IC difference I0000_pit_publication minus A1_pit_report_end as a downstream, mechanically ROE-dependent result",
+    "paired IC difference A1_pit_report_end minus A0_final_report_end",
+    "paired IC difference I1111_full_implementation minus I0000_pit_publication",
+    "Shapley contribution of each implementation component to the full IC implementation effect",
+    "momentum and low-volatility publication-timing contrasts as deterministic negative controls outside the inferential family"
+  ],
+  "roe_definition": {
+    "primary_field": "provider roeDiluted normalized to decimal units and mapped to roe",
+    "frequency_rule": "Use the latest reported cumulative interim or annual observation without analyst annualization; report-period frequency remains as supplied and is disclosed by quarter.",
+    "staleness_limit_months": 18,
+    "duplicate_rule": "Fail closed on duplicate symbol-reportPeriodEnd records unless a separately validated vintage schema identifies versions.",
+    "lock_gate": "The provider field dictionary, formula, units, and endpoint mapping must be hash-bound before registration; otherwise the plan cannot lock."
+  },
+  "outcome_clocks": {
+    "ic_no_lag": "Signal at exchange close t; adjusted close-to-close return from t to t+20 official exchange sessions.",
+    "ic_one_session_lag": "Same signal definition; adjusted close-to-close return from t+1 to t+21 official exchange sessions. Missing symbol sessions do not move the endpoints.",
+    "portfolio_baseline_planned": "Signal after close t; unadjusted-open entry at t+1 and exit at t+21.",
+    "portfolio_lag_planned": "Signal after close t; unadjusted-open entry at t+2 and exit at t+22.",
+    "publication_date_rule": "A date-only publishDate becomes usable strictly after that date, never on the same exchange session."
+  },
+  "official_calendar_contract": {
+    "schema_version": "stage2_official_calendar_csv_v1",
+    "implementation_status": "required_design_input_not_bundled_in_repository",
+    "format": "UTF-8 CSV with one header named date and one unique common SSE/SZSE official open session per row",
+    "timezone": "Asia/Shanghai",
+    "required_first_month": "2009-01",
+    "required_last_month": "2023-01",
+    "session_definition": "Each row is a common session on which both SSE and SZSE are officially open; any exchange disagreement fails closed until resolved from authoritative provenance",
+    "required_bindings": [
+      "relative_path_or_private_artifact_id",
+      "source_name",
+      "source_reference_in_data_declaration",
+      "generated_at_in_data_declaration",
+      "byte_size",
+      "session_count",
+      "minimum_date",
+      "maximum_date",
+      "sha256"
+    ],
+    "schema_path": "official_calendar/calendar.schema.json",
+    "hash_rule": "SHA-256 of the exact UTF-8 CSV bytes; no line-ending or row normalization after freeze"
+  },
+  "portfolio_protocol": {
+    "implementation_status": "planned_and_unimplemented_in_the_current_ic_core_runner",
+    "sorts": "monthly cross-sectional deciles",
+    "headline_spread": "top decile minus bottom decile",
+    "weighting": ["equal_weight", "lagged_float_market_cap_weight"],
+    "entry": "next-session unadjusted open when available; otherwise the plan may not be locked for portfolio claims",
+    "holding_period": "20 exchange sessions",
+    "costs": "date-indexed statutory taxes plus documented commission and slippage schedules; also report 10, 25, and 50 basis-point round-trip stress cases",
+    "entry_nonfills": "A price-limit, suspension, or missing-open entry is not chased; the intended weight remains cash until the next scheduled rebalance.",
+    "exit_nonfills": "Attempt the first executable unadjusted open for up to 20 subsequent official sessions. If neither a trade nor independently verified cash settlement occurs, assign zero terminal recovery and report a last-observed-price sensitivity.",
+    "delisting": "Use verified exchange or depository cash settlement when available; otherwise apply the exit-nonfill terminal rule and report the count and value affected.",
+    "turnover": "one-way and round-trip turnover reported for every portfolio"
+  },
+  "inference": {
+    "unit": "monthly cross-section for the current IC core",
+    "primary_test": "paired monthly variant difference with Newey-West HAC lag 3 and 95% confidence interval",
+    "secondary_check": "Stationary block bootstrap is a planned, unimplemented module and is excluded from the current registered IC core.",
+    "primary_family_correction": "No multiplicity adjustment because ROE publication-timing signed decrement is the sole primary estimand; report a two-sided p-value and 95% confidence interval.",
+    "secondary_family_correction": "Benjamini-Hochberg false-discovery rate 0.10 across one downstream composite publication contrast, eight paired IC contrasts, and sixteen component-factor Shapley IC estimates (25 fixed members, including non-estimable members as non-rejections); later portfolio families require a separate locked plan.",
+    "small_sample_rule": "If fewer than 120 paired monthly observations remain for an estimand, report its estimate and interval but make no significance or generalization claim; evidentiary status still requires all 156 target rebalances.",
+    "shapley_rule": "Compute exact four-component Shapley values from all 16 pre-specified implementation combinations; order-invariance applies only within this four-component implementation block.",
+    "precision_design": "At 156 months, a normal-approximation 80% power sensitivity with monthly paired standard deviation 0.08-0.12 and HAC variance inflation 1.0-1.5 implies an absolute IC minimum detectable effect of approximately 0.018-0.033. No Stage-2 outcome may be used to revise this threshold."
+  },
+  "current_ic_core_outputs": [
+    "registered monthly factor-variant IC cells",
+    "top-quintile-minus-universe diagnostic cells",
+    "cell-level eligible cross-sectional count",
+    "sole primary paired IC estimand",
+    "fixed 25-member secondary IC family",
+    "exact four-component IC Shapley allocation preserving interactions"
+  ],
+  "planned_excluded_modules": {
+    "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
+    "items": [
+      "dedicated signal-missingness tables",
+      "per-security exclusion reason codes",
+      "eligible-universe-loss output",
+      "percentage-attenuation output",
+      "raw-ratio regressions",
+      "robustness analyses",
+      "structured deviation log and receipt reporting",
+      "formal factorial interaction tests",
+      "stationary bootstrap intervals",
+      "next-open portfolios",
+      "transaction costs",
+      "turnover",
+      "nonfills"
+    ],
+    "promotion_rule": "No listed item may enter a registered claim unless its code, tests, data gates, exact estimands, numerical settings, and multiplicity treatment are completed and frozen before Stage-2 outcome access."
+  },
+  "robustness_protocol": {
+    "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
+    "items": [
+      "subperiods fixed before outcome analysis",
+      "Main Board, ChiNext, and STAR Market where coverage permits",
+      "state-owned versus non-state-owned firms when an independently sourced ownership field is available",
+      "industry and size neutralized ranks",
+      "alternative literature-standard momentum and volatility windows",
+      "equal-weight and float-market-cap-weight portfolios",
+      "second-vendor field-level audit on a pre-specified random sample when legally available"
+    ]
+  },
+  "registration_contract": {
+    "schema_version": "stage2_design_contract_v1",
+    "status": "planned_not_registered_not_authorized",
+    "sequence": [
+      "freeze outcome-blind gates, official calendar, prior inventory, prior-exposure attestation, code, and execution-plan core",
+      "create design_manifest_v1 binding the exact frozen core and input hashes without self-reference or later artifacts",
+      "externally timestamp the exact design-manifest bytes or SHA-256 digest",
+      "record registration_receipt_v1 binding that manifest digest and verify provider evidence",
+      "create execution_authorization binding the manifest, receipt, plan core, official calendar, and gates before blind-data release",
+      "populate the final execution-plan external_registration envelope and locked_at with backward-pointing hashes and the authorization timestamp without changing the registered plan core"
+    ],
+    "non_circularity_rule": "The canonical registered plan-core digest excludes only external_registration and locked_at. The design manifest cannot contain its own digest, the registration receipt, or execution authorization. The receipt points only backward to the manifest. The authorization points only backward to the manifest, receipt, and frozen design inputs. The later execution-plan envelope records those backward-pointing hashes but cannot alter the registered core.",
+    "unsigned_provider_trust_boundary": "When the provider offers no offline-verifiable digital signature, local hashes establish artifact identity and integrity but timestamp authenticity depends on a retained provider record and a named human verifier.",
+    "templates": {
+      "design_manifest": "design_manifest.template.json",
+      "registration_receipt": "registration_receipt.template.json",
+      "execution_authorization": "execution_authorization.template.json"
+    }
+  },
+  "reporting_rule": "Report every registered IC factor-variant cell, exactly 26 inferential estimands (the sole primary plus the fixed 25-member secondary family), and the two deterministic timing-isolation checks; do not select or headline a best strategy. Cell-level means, Newey-West t-statistics, and top-minus-universe spreads are descriptive completeness outputs only and cannot support cell-specific discovery claims. Dedicated missingness, reason-code, eligible-universe-loss, percentage-attenuation, raw-ratio, robustness, structured deviation-log/receipt-reporting, portfolio, cost, interaction-test, bootstrap, turnover, and nonfill outputs remain unavailable and excluded until their separately frozen module exists. The current receipt verifies the registered core lattice, cell and estimand identities and counts, exposed cross-sectional sizes, hashes, and claim gates; it does not detect arbitrary per-security silent drops.",
+  "claim_gates": {
+    "performance_claim": false,
+    "generalization_claim": false,
+    "usable_for_trading_decisions": false,
+    "revision_history_claim": false,
+    "promotion_rule": "A claim may change only in a new receipt schema after all corresponding pre-specified evidence gates pass."
+  }
+}

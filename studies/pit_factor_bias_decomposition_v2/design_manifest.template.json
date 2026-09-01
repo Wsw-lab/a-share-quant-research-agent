@@ -1,0 +1,40 @@
+{
+  "schema_version": "stage2_design_manifest_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_do_not_register",
+  "design_frozen_at": null,
+  "plan_core_sha256": null,
+  "artifacts": {
+    "data_declaration_sha256": null,
+    "official_calendar_sha256": null,
+    "coverage_report_sha256": null,
+    "review_attestation_sha256": null,
+    "protocol_source_sha256": null,
+    "statistical_analysis_plan_sha256": null,
+    "prior_specification_inventory_sha256": null,
+    "prior_exposure_log_sha256": null,
+    "prior_exposure_attestation_sha256": null
+  },
+  "input_file_sha256": {
+    "quotes": null,
+    "stock_master": null,
+    "fundamentals": null,
+    "official_calendar": null
+  },
+  "code_commit": null,
+  "hash_contract": {
+    "plan_core": "Canonical UTF-8 JSON with sorted keys and compact separators after removing only external_registration and locked_at from the fully materialized plan.",
+    "artifact_and_input_files": "SHA-256 over exact raw bytes; do not normalize line endings, row order, whitespace, or serialization after design_frozen_at.",
+    "this_manifest": "The external provider receives the exact manifest bytes or their SHA-256 digest. This file intentionally contains no self-digest."
+  },
+  "non_circularity_contract": {
+    "forbidden_fields": [
+      "design_manifest_sha256",
+      "registration_receipt_sha256",
+      "execution_authorization_sha256",
+      "external_registration_identifier"
+    ],
+    "later_artifacts": "registration_receipt_v1 and execution_authorization are created only after this exact manifest is frozen; neither may be inserted into or used to rewrite it."
+  },
+  "completion_gate": "Every null must be replaced with the exact frozen value, status must become frozen_outcome_blind, and the manifest must be independently reviewed before external submission."
+}

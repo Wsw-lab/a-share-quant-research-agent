@@ -1,0 +1,51 @@
+{
+  "schema_version": "stage2_prior_exposure_attestation_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_not_attested",
+  "analysis_period": [
+    "2010-01-01",
+    "2022-12-31"
+  ],
+  "inventory_cutoff_at": null,
+  "inventory_generated_at": null,
+  "knowledge_cutoff_at": null,
+  "attested_at": null,
+  "attestor": null,
+  "attestor_role": null,
+  "attestor_authority_basis": null,
+  "stage2_factor_outcomes_previously_inspected": null,
+  "prior_specification_inventory_sha256": null,
+  "prior_specification_entry_count": null,
+  "prior_specification_entries_sha256": null,
+  "prior_exposure_log_sha256": null,
+  "protocol_source_sha256": null,
+  "statistical_analysis_plan_sha256": null,
+  "coverage_report_sha256": null,
+  "review_attestation_sha256": null,
+  "data_declaration_sha256": null,
+  "official_calendar_sha256": null,
+  "code_commit": null,
+  "chronology_assertions": {
+    "all_timestamps_are_timezone_aware": false,
+    "inventory_cutoff_not_after_inventory_generation": false,
+    "inventory_generation_not_after_knowledge_cutoff": false,
+    "knowledge_cutoff_not_after_attestation": false,
+    "data_review_completed_not_after_attestation": false,
+    "attestation_will_precede_design_freeze": false,
+    "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": false
+  },
+  "statement": "I have reviewed the prior-exposure log and the complete machine-readable specification inventory through the stated cutoff. I attest that no factor IC, forward-return, portfolio-return, variant-ranking, or test-statistic outcome for the fixed 2010-2022 Stage-2 panel has been inspected by the research team through attested_at. I understand that known pilot exposure and unknown historical execution status remain disclosed. If this statement cannot be made truthfully, the plan core must not be frozen and the study must stop.",
+  "signature": {
+    "type": null,
+    "allowed_types": [
+      "detached_digital_signature",
+      "external_registry_attestation",
+      "human_verified_evidence"
+    ],
+    "evidence_sha256": null,
+    "signer_identity": null,
+    "verification_uri": null,
+    "trust_boundary": "Identity and evidence authenticity require independent human verification."
+  },
+  "completion_gate": "stage2_factor_outcomes_previously_inspected must be false; all registered artifact hashes and the code commit must match the plan core; prior_exposure_log_sha256 must match the actual log bytes and the design manifest; every chronology assertion must be true; and status must become attested_outcome_blind before design_frozen_at."
+}

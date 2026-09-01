@@ -1,0 +1,127 @@
+{
+  "schema_version": "confirmatory_factor_study_v2",
+  "design_contract_version": "stage2_design_contract_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_do_not_run",
+  "runner_scope": "ic_core_only",
+  "design_frozen_at": null,
+  "locked_at": null,
+  "registration_semantics": {
+    "plan_core_rule": "Before registration set status to locked, materialize every fixed field and variant, set design_frozen_at, and hash the plan after excluding only external_registration and locked_at.",
+    "manifest_rule": "stage2_design_manifest_v1 binds that plan-core hash and the exact research and input artifacts.",
+    "envelope_rule": "After receipt verification and execution authorization, populate external_registration and set locked_at equal to authorized_at. The final envelope is not part of the previously frozen plan-core hash.",
+    "non_circularity_rule": "The manifest has no self-hash or later-artifact hash; the receipt points backward to the manifest; the authorization points backward to the manifest, receipt, and plan core; the final plan envelope records their hashes only after authorization."
+  },
+  "external_registration": {
+    "provider": null,
+    "identifier": null,
+    "registered_at": null,
+    "registered_content_sha256": null,
+    "design_manifest_sha256": null,
+    "registration_receipt_sha256": null,
+    "execution_authorization_sha256": null,
+    "verification_uri": null
+  },
+  "coverage_report_sha256": null,
+  "review_attestation_sha256": null,
+  "data_declaration_sha256": null,
+  "official_calendar_sha256": null,
+  "protocol_source_sha256": null,
+  "statistical_analysis_plan_sha256": null,
+  "prior_specification_inventory_sha256": null,
+  "prior_exposure_attestation_sha256": null,
+  "code_commit": null,
+  "official_calendar_contract": {
+    "schema_version": "stage2_official_calendar_csv_v1",
+    "schema_path": "official_calendar/calendar.schema.json",
+    "format": "UTF-8 CSV with one date column and one common SSE/SZSE official open session per row",
+    "timezone": "Asia/Shanghai",
+    "required_first_month": "2009-01",
+    "required_last_month": "2023-01",
+    "session_rule": "every_row_is_a_common_session_on_which_both_sse_and_szse_are_officially_open",
+    "input_hash_rule": "official_calendar_sha256 is SHA-256 of the exact input bytes; no normalization after design freeze"
+  },
+  "train_period": [
+    "2009-01-01",
+    "2009-12-31"
+  ],
+  "test_period": [
+    "2010-01-01",
+    "2022-12-31"
+  ],
+  "rebalance_frequency": "monthly",
+  "forward_horizon_sessions": 20,
+  "minimum_amount": 5000000,
+  "minimum_symbols": 1000,
+  "minimum_oos_rebalances": 156,
+  "minimum_significance_months": 120,
+  "newey_west_lag": 3,
+  "factors": [
+    "roe",
+    "momentum_60d",
+    "low_vol_20d",
+    "composite"
+  ],
+  "composite_weights": {
+    "roe": 0.5,
+    "momentum_60d": 0.3,
+    "low_vol_20d": 0.2
+  },
+  "fundamental_contract": {
+    "roe_source_field": "roeDiluted",
+    "normalized_field": "roe",
+    "unit": "decimal",
+    "maximum_staleness_months": 18,
+    "same_day_publication_usable": false,
+    "duplicate_symbol_report_period_rule": "fail_closed"
+  },
+  "ic_outcome_clock": {
+    "no_lag": "adjusted close t to adjusted close t+20 on official exchange sessions",
+    "one_session_lag": "adjusted close t+1 to adjusted close t+21 on official exchange sessions",
+    "missing_symbol_session_rule": "return_missing_do_not_shift_to_next_observed_symbol_row"
+  },
+  "inference": {
+    "primary_estimand": "P1_roe_publication_signed_decrement",
+    "primary_multiplicity": "none_single_primary",
+    "confidence_level": 0.95,
+    "secondary_family_member_count": 25,
+    "secondary_fdr": 0.1,
+    "missing_family_member_rule": "retain_in_denominator_and_treat_as_non_rejection"
+  },
+  "missingness": {
+    "signal_imputation": "none",
+    "composite_complete_case": true,
+    "all_registered_monthly_cells_required_for_evidence_status": true
+  },
+  "portfolio_module": {
+    "status": "planned_unimplemented_excluded_from_this_runner",
+    "required_before_claims": "separate externally registered and tested execution plan"
+  },
+  "planned_excluded_modules": {
+    "status": "planned_unimplemented_excluded_from_this_runner",
+    "items": [
+      "dedicated_signal_missingness_tables",
+      "per_security_exclusion_reason_codes",
+      "eligible_universe_loss_output",
+      "percentage_attenuation_output",
+      "raw_ratio_regressions",
+      "robustness_analyses",
+      "structured_deviation_log_and_receipt_reporting",
+      "formal_interaction_tests",
+      "stationary_bootstrap_intervals",
+      "next_open_portfolios",
+      "transaction_costs",
+      "turnover",
+      "nonfills"
+    ],
+    "shapley_boundary": "Exact four-component Shapley allocation preserves interactions but does not implement formal interaction tests."
+  },
+  "variants_source": "Before design-manifest registration, copy the exact 18 variants from plan.draft.json, freeze their order in the plan core, and do not add, delete, or rename cells after design_frozen_at.",
+  "variants": [],
+  "reporting_rule": "Report every registered IC cell and exactly 26 inferential estimands (one primary plus 25 secondary family members), with two deterministic timing-isolation checks reported separately; cell-level means, Newey-West t-statistics, and top-minus-universe spreads are descriptive only and cannot support cell-specific discovery claims; do not select or headline a best result.",
+  "deviation_reporting_module": {
+    "status": "planned_unimplemented_excluded_from_this_runner",
+    "current_boundary": "The protocol requires manual disclosure, but the current runner and receipt do not create, bind, or verify a structured deviation log."
+  },
+  "deviation_rule": "Record every deviation without replacing the primary analysis; outcome-aware deviations are exploratory only."
+}

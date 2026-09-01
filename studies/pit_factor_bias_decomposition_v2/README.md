@@ -1,0 +1,70 @@
+# Stage-2 journal study
+
+This directory holds the outcome-blind draft protocol for the proposed paper:
+
+> **How Much Do Information Timing and Implementation Choices Shift A-Share Factor Evidence? A Pre-Specified Bias Decomposition**
+
+The existing `pit-factor-replication-v1` receipt is disclosed pilot evidence. It must not be relabeled as a prospective confirmation. The Stage-2 plan remains `draft_data_feasibility_pending` until a privacy-preserving coverage audit passes, data rights and the official calendar are documented, the plan core and code are frozen in a design manifest, the manifest receives an external timestamp or journal registration, that receipt is verified, and execution is separately authorized.
+
+## Why the design is different
+
+- The intended 2010-2022 primary panel ends before the observed 2023-2026 pilot and requires a signed prior-exposure attestation before release.
+- The prior bundled M3 is replaced by the complete 2^4 factorial of ST exclusion, suspension exclusion, a 20-session amount floor, and a one-session lag.
+- Exact Shapley values allocate the full IC implementation effect while preserving interactions; order-invariance is claimed only within that four-component block.
+- One primary outcome is fixed in advance: the publication-timing signed IC decrement for ROE. The composite is secondary; momentum and low volatility are deterministic timing-isolation checks.
+- Confirmatory inference contains exactly 26 estimands: one primary and a fixed 25-member Benjamini-Hochberg secondary family. The two timing-isolation checks are deterministic and separate. All 72 cell means, t-statistics, and top-minus-universe spreads are disclosed but descriptive only; they cannot support cell-specific discovery claims.
+- The current runner is IC-core-only. Dedicated signal-missingness tables, exclusion reason codes, eligible-universe-loss or percentage-attenuation outputs, raw-ratio regressions, robustness analyses, structured deviation logging and receipt reporting, portfolios, costs, nonfills, turnover, bootstrap intervals, and interaction tests are planned but not implemented or claimed.
+
+## Files
+
+- `plan.draft.json` - machine-readable protocol; deliberately not locked.
+- `execution_plan.template.json` - flat runner contract; its plan core is frozen before registration and its non-core envelope is completed only after authorization.
+- `design_manifest.template.json` - non-self-referential manifest binding the frozen plan core, code, calendar, protocol, and gate artifacts.
+- `registration_receipt.template.json` - external timestamp record binding the exact design-manifest hash.
+- `execution_authorization.template.json` - final, non-circular authorization binding the manifest, registration receipt, frozen plan, and blind-data release boundary.
+- `official_calendar/README.md` and `official_calendar/calendar.schema.json` - required common SSE/SZSE session-calendar input contract; no calendar data are included in the repository.
+- `data_requirements.json` - minimum fields, coverage, rights, and vintage boundary.
+- `data_review_attestation.template.json` - fail-closed human review of execution semantics, field informativeness, and rights.
+- `statistical_analysis_plan.md` - submission-grade research protocol and inference rules.
+- `current_bundle_coverage.json` - retained pre-calendar three-file diagnostic; not valid under the current four-input execution gate.
+- `current_bundle_gap_assessment.md` - interpretation of why that bundle is blocked for Stage 2.
+- `prior_exposure_log.md` - record of outcomes already seen before Stage 2.
+- `prior_specification_inventory.json` - machine-readable inventory of repository specifications and known/unknown outcome exposure.
+- `prior_exposure_attestation.template.json` - owner/authorized-role declaration binding the clean 2010-2022 outcome boundary to the protocol and inventory hashes.
+- `coverage_probe_spec.v1.json` - immutable, outcome-blind probe design; publishing it does not authorize or imply execution.
+- `pbfj_phase1_eoi_draft.md` and `pbfj_phase2_pitch.md` - journal-pathway drafts; neither has been sent.
+
+Run the coverage audit before changing the plan status:
+
+```bash
+PYTHONPATH=src python3 -m a_share_quant_agent.study_v2_coverage \
+  --quotes /authorized/path/daily_quotes.csv \
+  --stock-master /authorized/path/stock_master.csv \
+  --fundamentals /authorized/path/fundamentals.csv \
+  --official-calendar /authorized/path/official_calendar.csv \
+  --minimum-history-years 13 \
+  --minimum-publish-date-rate 0.95 \
+  --minimum-monthly-observations 156 \
+  --minimum-symbols-per-month 1000 \
+  --minimum-sessions-per-month 15 \
+  --output /private/output/study_v2_coverage.json
+```
+
+The current bundle has zero quoted months inside the fixed 2010-2022 target, fails the 13-year/156-month design gate, and has no completed review attestation, so it is `BLOCKED_FOR_STAGE2`. Column presence alone never passes the execution, tradability, or rights gates. Because the verifiable receipt embeds the exact official-calendar session dates, the rights review must explicitly permit publication of those dates; this does not authorize publication of licensed quote or fundamental rows. After an authorized reviewer completes the attestation, pass it with `--review-attestation /private/path/review.json`; the public repository receives only its hash and non-identifying status, never the local path or licensed market rows.
+
+Pre-lock feasibility uses only outcome-blind aggregate coverage and review evidence. The requirement that all 72 registered cells contain at least 1,000 finite signal-outcome pairs in each of 156 months is a separate post-authorization evidence-status stop; it is not evaluated by the coverage audit and cannot be used to inspect outcomes before registration.
+
+`plan.draft.json` is a protocol source, not a runner input. It must not be made executable by changing only its `status`. The registration contract is deliberately non-circular:
+
+1. Complete the outcome-blind coverage and review gates, freeze the official calendar, complete the prior-specification inventory, and sign the prior-exposure attestation.
+2. Materialize every plan-core field from `execution_plan.template.json`, set `design_frozen_at`, and compute `registered_content_sha256` over canonical plan content after excluding only `external_registration` and `locked_at`. No receipt or authorization exists at this point.
+3. Create `design_manifest_v1`, which binds that exact plan-core hash plus the code, calendar, protocol, SAP, inventory, actual prior-exposure log, attestation, coverage, and rights-review hashes. It contains neither its own hash nor any later receipt.
+4. Submit the exact design-manifest bytes or their SHA-256 digest to the external registration provider, then record the provider response in `registration_receipt_v1`.
+5. Only after independently verifying that receipt may an authorized person create `execution_authorization`, which binds the manifest, receipt, plan core, calendar, and gate artifacts and permits release of the blind 2010-2022 outcome data.
+6. Finally populate the non-core `external_registration` envelope with the three backward-pointing hashes and set `locked_at = execution_authorization.authorized_at`. Because the plan-core digest excludes only that later envelope and `locked_at`, this final packaging does not alter the registered design.
+
+The `run-stage2` command therefore requires the actual prior-exposure log as `--prior-exposure-log`, in addition to its signed attestation. The runner recomputes the log's file hash, and the design manifest, execution authorization, and final receipt must all bind that same digest.
+
+If the provider supplies no verifiable digital signature, hashes still establish artifact identity and integrity, but the authenticity of the provider timestamp rests on the retained provider record and a named human verifier. That human verification is an explicit trust boundary, not a cryptographic claim. No external registration, execution authorization, or Stage-2 outcome run has been performed by these templates.
+
+`execution_authorization` records the permitted study scope and verifies the registration chronology. The current implementation does not issue a consumable nonce, revoke an authorization after use, or technically enforce exactly one run; repeated authorized executions must therefore be disclosed and compared by receipt identity rather than described as impossible.
