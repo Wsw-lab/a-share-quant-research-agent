@@ -8,10 +8,10 @@ The existing `pit-factor-replication-v1` receipt is disclosed pilot evidence. It
 
 ## Why the design is different
 
-- The intended 2010-2022 primary panel ends before the observed 2023-2026 pilot and requires a signed prior-exposure attestation before release.
+- The intended 2010-2022 rebalance panel precedes the observed 2025-2026 pilot evaluation, but its final 20-session horizon extends into January 2023 and overlaps the pilot file's raw market-date boundary; that exposure boundary is disclosed and requires a signed prior-exposure attestation before release.
 - The prior bundled M3 is replaced by the complete 2^4 factorial of ST exclusion, suspension exclusion, a 20-session amount floor, and a one-session lag.
 - Exact Shapley values allocate the full IC implementation effect while preserving interactions; order-invariance is claimed only within that four-component block.
-- One primary outcome is fixed in advance: the publication-timing signed IC decrement for ROE. The composite is secondary; momentum and low volatility are deterministic timing-isolation checks.
+- One primary outcome is fixed in advance: the mean publication-timing IC contrast for ROE, with a pilot-informed negative directional prediction and a two-sided test of a zero mean. The composite is secondary; momentum and low volatility are deterministic timing-isolation checks.
 - Confirmatory inference contains exactly 26 estimands: one primary and a fixed 25-member Benjamini-Hochberg secondary family. The two timing-isolation checks are deterministic and separate. All 72 cell means, t-statistics, and top-minus-universe spreads are disclosed but descriptive only; they cannot support cell-specific discovery claims.
 - The current runner is IC-core-only. Dedicated signal-missingness tables, exclusion reason codes, eligible-universe-loss or percentage-attenuation outputs, raw-ratio regressions, robustness analyses, structured deviation logging and receipt reporting, portfolios, costs, nonfills, turnover, bootstrap intervals, and interaction tests are planned but not implemented or claimed.
 

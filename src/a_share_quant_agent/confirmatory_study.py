@@ -94,10 +94,13 @@ STAGE2_IC_OUTCOME_CLOCK = {
 }
 STAGE2_INFERENCE_CONTRACT = {
     "primary_estimand": "P1_roe_publication_signed_decrement",
+    "primary_directional_prediction": "mean_less_than_zero",
+    "reported_null_hypothesis": "two_sided_mean_equals_zero",
     "primary_multiplicity": "none_single_primary",
     "confidence_level": 0.95,
     "secondary_family_member_count": 25,
     "secondary_fdr": 0.1,
+    "timing_isolation_absolute_tolerance": 1e-12,
     "missing_family_member_rule": "retain_in_denominator_and_treat_as_non_rejection",
 }
 STAGE2_MISSINGNESS_CONTRACT = {

@@ -38,6 +38,14 @@ def build_registered_estimands(
     factors = tuple(plan.get("factors") or ())
     if factors != ("roe", "momentum_60d", "low_vol_20d", "composite"):
         raise Stage2EstimandError("registered estimands require the maintained factor order")
+    inference_contract = plan.get("inference") or {}
+    isolation_tolerance = _finite_float_or_none(
+        inference_contract.get("timing_isolation_absolute_tolerance")
+    )
+    if isolation_tolerance is None or isolation_tolerance <= 0:
+        raise Stage2EstimandError(
+            "timing-isolation absolute tolerance must be a finite positive number"
+        )
     final_report = _unique_semantic_variant(
         variants,
         universe_mode="final_survivor",
@@ -69,7 +77,8 @@ def build_registered_estimands(
     ):
         primary_family.append({
             "estimand_id": estimand_id,
-            "directional_expectation": "less_than_or_equal_to_zero",
+            "directional_expectation": "mean_less_than_zero",
+            "reported_null_hypothesis": "two_sided_mean_equals_zero",
             **paired_variant_difference(
                 observations,
                 minuend_variant=pit_publication.variant_id,
@@ -119,10 +128,10 @@ def build_registered_estimands(
                 minimum_claim_months=minimum_claim_months,
             ),
         }
-        control["absolute_tolerance"] = 1e-12
+        control["absolute_tolerance"] = isolation_tolerance
         control["isolation_check_passed"] = bool(
             control["unmatched_observation_count"] == 0
-            and control["maximum_absolute_difference"] <= 1e-12
+            and control["maximum_absolute_difference"] <= isolation_tolerance
         )
         timing_negative_controls.append(control)
 

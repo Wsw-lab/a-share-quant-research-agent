@@ -191,7 +191,8 @@
     {
       "id": "P1_roe_publication_signed_decrement",
       "definition": "paired monthly mean IC difference I0000_pit_publication minus A1_pit_report_end for ROE",
-      "directional_expectation": "less_than_or_equal_to_zero",
+      "directional_expectation": "mean_less_than_zero",
+      "reported_test": "two-sided H0: mean monthly difference equals zero",
       "interpretation_rule": "Call the result timing inflation or attenuation only when the report-period comparator IC is positive and the signed difference is negative; otherwise describe it neutrally as timing displacement."
     }
   ],
@@ -254,6 +255,9 @@
   "inference": {
     "unit": "monthly cross-section for the current IC core",
     "primary_test": "paired monthly variant difference with Newey-West HAC lag 3 and 95% confidence interval",
+    "primary_directional_prediction": "mean monthly difference less than zero",
+    "reported_null_hypothesis": "two-sided H0: mean monthly difference equals zero",
+    "timing_isolation_absolute_tolerance": 1e-12,
     "secondary_check": "Stationary block bootstrap is a planned, unimplemented module and is excluded from the current registered IC core.",
     "primary_family_correction": "No multiplicity adjustment because ROE publication-timing signed decrement is the sole primary estimand; report a two-sided p-value and 95% confidence interval.",
     "secondary_family_correction": "Benjamini-Hochberg false-discovery rate 0.10 across one downstream composite publication contrast, eight paired IC contrasts, and sixteen component-factor Shapley IC estimates (25 fixed members, including non-estimable members as non-rejections); later portfolio families require a separate locked plan.",
