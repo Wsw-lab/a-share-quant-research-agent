@@ -28,6 +28,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 TOOLCHAIN = ROOT / ".github" / "ci-toolchain.txt"
 RUNTIME = ROOT / ".github" / "ci-runtime.txt"
 PACKAGE = ROOT / "src" / "a_share_quant_agent"
+README_GREEN_PATH_TIMEOUT_SECONDS = 10 * 60
 
 EXPECTED_TOOLCHAIN = {
     "packaging": "26.3",
@@ -223,6 +224,8 @@ class ReadmeContractTest(unittest.TestCase):
     def test_readme_green_path_runs_verbatim_in_a_clean_canonical_checkout(self) -> None:
         if os.environ.get("AGENT_README_GREEN_PATH_CHILD") == "1":
             self.skipTest("avoid recursively executing the README path")
+        if os.environ.get("AGENT_SKIP_README_GREEN_PATH_E2E") == "1":
+            self.skipTest("the dedicated CI job executes the README path end to end")
 
         commands = _readme_green_path_commands(README.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -269,7 +272,7 @@ class ReadmeContractTest(unittest.TestCase):
                 env=environment,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=README_GREEN_PATH_TIMEOUT_SECONDS,
             )
             self.assertEqual(
                 completed.returncode,
@@ -603,6 +606,92 @@ class CiContractTest(unittest.TestCase):
         readme = README.read_text(encoding="utf-8")
         self.assertIn("Python 3.10–3.12", readme)
 
+    def test_ci_runs_the_readme_green_path_once_on_the_slowest_python(self) -> None:
+        workflow = _workflow_payload()
+        jobs = workflow["jobs"]
+        self.assertIn("readme-green-path", jobs)
+
+        skip_key = "AGENT_SKIP_README_GREEN_PATH_E2E"
+        matrix_steps = {
+            step["name"]: step
+            for step in jobs["offline-verification"]["steps"]
+        }
+        skip_environment = {skip_key: "1"}
+        allowed_skip_locations = {
+            ("offline-verification", "Run public-surface contract"),
+            ("offline-verification", "Run complete offline unittest suite"),
+        }
+        for step_name in (
+            "Run public-surface contract",
+            "Run complete offline unittest suite",
+        ):
+            self.assertEqual(matrix_steps[step_name].get("env"), skip_environment)
+        self.assertNotIn(skip_key, workflow.get("env", {}))
+        for job_name, job in jobs.items():
+            self.assertNotIn(skip_key, job.get("env", {}))
+            for step in job["steps"]:
+                if skip_key in step.get("env", {}):
+                    self.assertIn((job_name, step["name"]), allowed_skip_locations)
+
+        green_path_job = jobs["readme-green-path"]
+        self.assertNotIn("strategy", green_path_job)
+        self.assertNotIn("if", green_path_job)
+        self.assertNotIn("continue-on-error", green_path_job)
+        self.assertGreaterEqual(green_path_job["timeout-minutes"], 10)
+        self.assertLessEqual(green_path_job["timeout-minutes"], 20)
+        self.assertGreaterEqual(README_GREEN_PATH_TIMEOUT_SECONDS, 5 * 60)
+        self.assertGreaterEqual(
+            green_path_job["timeout-minutes"] * 60,
+            README_GREEN_PATH_TIMEOUT_SECONDS + 2 * 60,
+        )
+        green_path_steps = green_path_job["steps"]
+        self.assertEqual(
+            [step["name"] for step in green_path_steps],
+            [
+                "Checkout",
+                "Set up Python",
+                "Install pinned packaging toolchain",
+                "Verify packaging toolchain versions",
+                "Install pinned runtime dependencies",
+                "Install package without dependency resolution",
+                "Run README green path end to end",
+            ],
+        )
+        by_name = {step["name"]: step for step in green_path_steps}
+        self.assertEqual(by_name["Set up Python"]["with"]["python-version"], "3.10")
+        target = (
+            "python -m unittest -v "
+            "tests.test_public_surface_contract.ReadmeContractTest."
+            "test_readme_green_path_runs_verbatim_in_a_clean_canonical_checkout"
+        )
+        green_path_step = by_name["Run README green path end to end"]
+        self.assertEqual(green_path_step["run"], target)
+        self.assertNotIn("env", green_path_step)
+        self.assertNotIn("if", green_path_step)
+        self.assertNotIn("continue-on-error", green_path_step)
+        invocations = [
+            (job_name, step["name"])
+            for job_name, job in jobs.items()
+            for step in job["steps"]
+            if target in str(step.get("run", ""))
+        ]
+        self.assertEqual(invocations, [("readme-green-path", "Run README green path end to end")])
+
+        setup_step_names = (
+            "Checkout",
+            "Set up Python",
+            "Install pinned packaging toolchain",
+            "Verify packaging toolchain versions",
+            "Install pinned runtime dependencies",
+            "Install package without dependency resolution",
+        )
+        for step_name in setup_step_names:
+            matrix_step = matrix_steps[step_name].copy()
+            dedicated_step = by_name[step_name].copy()
+            if step_name == "Set up Python":
+                matrix_step["with"] = {"python-version": "3.10"}
+            self.assertEqual(dedicated_step, matrix_step)
+
     def test_ci_steps_cover_the_complete_offline_evidence_chain_in_order(self) -> None:
         workflow = _workflow_payload()
         steps = workflow["jobs"]["offline-verification"]["steps"]
@@ -664,7 +753,7 @@ class CiContractTest(unittest.TestCase):
         workflow = _workflow_payload()
         uses = _workflow_uses(workflow)
         self.assertGreater(len(uses), 0)
-        observed: dict[str, str] = {}
+        observed: dict[str, set[str]] = {}
         for value in uses:
             if value.startswith("./"):
                 continue
@@ -672,11 +761,11 @@ class CiContractTest(unittest.TestCase):
                 match = re.fullmatch(r"([^@\s]+)@([0-9a-f]{40})", value)
                 self.assertIsNotNone(match, "nonlocal workflow actions must use a full commit SHA")
                 if match is not None:
-                    observed[match.group(1)] = match.group(2)
+                    observed.setdefault(match.group(1), set()).add(match.group(2))
 
         self.assertEqual(
             observed,
-            {action: sha for action, (_tag, sha) in EXPECTED_ACTION_PINS.items()},
+            {action: {sha} for action, (_tag, sha) in EXPECTED_ACTION_PINS.items()},
         )
         for action, (tag, _sha) in EXPECTED_ACTION_PINS.items():
             self.assertIn(f"# {action} {tag}", workflow_text)
