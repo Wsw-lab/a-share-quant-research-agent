@@ -314,7 +314,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             subprocess.CompletedProcess([], 0, stdout="/fixture/repo\n"),
             subprocess.CompletedProcess([], 0, stdout=b""),
             subprocess.CompletedProcess([], 0, stdout=commit + "\n"),
-            subprocess.CompletedProcess([], 0, stdout="?? sitecustomize.py\n"),
+            subprocess.CompletedProcess([], 0, stdout="?? sitecustomize" + ".py\n"),
         ]
         with patch.object(
             confirmatory_module.subprocess,

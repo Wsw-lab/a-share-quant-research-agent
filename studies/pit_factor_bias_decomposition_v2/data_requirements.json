@@ -201,7 +201,7 @@
     "pandas_version": "2.3.3",
     "dependency_match_rule": "exact",
     "whole_repository_clean_required": true,
-    "gate": "The registered real-data runner must execute at the checked-out registered commit with no tracked or untracked change anywhere in the repository; an untracked root import hook such as sitecustomize.py is a blocking condition."
+    "gate": "The registered real-data runner must execute at the checked-out registered commit with no tracked or untracked change anywhere in the repository; an untracked root import hook is a blocking condition."
   },
   "outcome_blind_boundary": {
     "current_probe_spec": "coverage_probe_spec.v2.json",
