@@ -1,0 +1,15 @@
+{
+  "schema_version": "stage2_coverage_probe_rights_review_v1",
+  "status": "draft_not_verified",
+  "reviewed_at_utc": null,
+  "reviewer": null,
+  "authority_basis": null,
+  "local_storage_allowed": false,
+  "aggregate_receipt_publication_allowed": false,
+  "raw_redistribution_allowed": false,
+  "scope": [
+    "fixed_symbol_probe"
+  ],
+  "evidence_sha256": null,
+  "statement": "The reviewer must cite the source terms permitting bounded local retrieval, private storage, and publication of aggregate coverage, metadata, and hashes. Raw or normalized market rows remain non-redistributable."
+}

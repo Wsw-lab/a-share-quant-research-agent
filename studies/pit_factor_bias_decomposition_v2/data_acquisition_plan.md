@@ -90,7 +90,14 @@ decision is:
 5. **Metadata-only coverage audit.** Run the independent metadata scanner in
    `a_share_quant_agent.data_access` over the four files.  It records exact
    bytes, hashes, row counts, date ranges, key duplicates, non-null rates, and
-   ST/suspension distinct values without reading factor outcomes.  Then run the
+   ST/suspension distinct values without reading factor outcomes.  The scanner
+   canonicalizes date keys (so `YYYYMMDD` and `YYYY-MM-DD` duplicates cannot
+   hide), rejects malformed CSV row widths, requires explicit `true` and
+   `false` states (with no third/unknown value) for ST/suspension fields, and reports strict lifecycle
+   checks (recognized active/delisted status, A-share type, non-null delist
+   dates for delisted rows, no active row with a delist date, and chronology).
+   Calendar rows must be strictly increasing; actual filing dates and numeric
+   quote fields are validated by the pure provider adapters.  Then run the
    existing Stage-2 coverage audit with the human data-review attestation.
 6. **Independent spot checks.** Before registration, compare a pre-specified
    random sample of adjusted prices, listing/delisting dates, actual filing

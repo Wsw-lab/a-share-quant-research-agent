@@ -1,0 +1,13 @@
+{
+  "type": "human_verified_external_timestamp",
+  "provider": null,
+  "identifier": null,
+  "timestamped_at_utc": null,
+  "verification_uri": null,
+  "evidence_sha256": null,
+  "subject_type": "coverage_probe_spec_sha256",
+  "subject_sha256": null,
+  "verifier": null,
+  "verified_at_utc": null,
+  "trust_boundary": "The timestamp record has no offline-verifiable signature; authenticity requires independent human verification."
+}

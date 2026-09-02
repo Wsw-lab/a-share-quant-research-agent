@@ -89,7 +89,7 @@ verified rights review (the two templates above are intentionally incomplete),
 then run a no-network preflight:
 
 ```bash
-PYTHONPATH=src python3 -m a_share_quant_agent.coverage_probe preflight \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m a_share_quant_agent.coverage_probe preflight \
   --spec studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json \
   --prior-inventory studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json \
   --timestamp-proof /private/probe/timestamp-proof.json \

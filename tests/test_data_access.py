@@ -77,6 +77,88 @@ class DataAccessContractTest(unittest.TestCase):
         self.assertEqual(metadata["row_count"], 2)
         self.assertEqual(metadata["duplicate_key_count"], 1)
 
+    def test_metadata_scan_normalizes_date_keys_and_rejects_malformed_rows_at_audit(self) -> None:
+        payload = (
+            "date,symbol,close,amount,is_st,is_suspended\n"
+            "20100104,600000.SH,10,100,false,false\n"
+            "2010-01-04,600000.SH,10,100,false,false\n"
+            "2010-01-05,600001.SZ,10,100,false,false,EXTRA\n"
+        ).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "quotes.csv"
+            path.write_bytes(payload)
+            metadata = summarize_csv_metadata(path, "quotes")
+        self.assertEqual(metadata["duplicate_key_count"], 1)
+        self.assertEqual(metadata["malformed_row_count"], 1)
+        audit = audit_stage2_field_contract({role: metadata for role in STAGE2_DATASET_ROLES})
+        self.assertIn("MALFORMED_ROWS:quotes", audit["issues"])
+
+    def test_metadata_scan_records_calendar_order_violation(self) -> None:
+        payload = "date\n2010-01-05\n2010-01-04\n".encode()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "calendar.csv"
+            path.write_bytes(payload)
+            metadata = summarize_csv_metadata(path, "official_calendar")
+        self.assertEqual(metadata["date_order_violation_count"], 1)
+
+    def test_audit_rejects_forged_ranges_rates_and_unknown_boolean_states(self) -> None:
+        metadata = {
+            role: {
+                "row_count": 1,
+                "missing_required_columns": [],
+                "duplicate_key_count": 0,
+                "invalid_date_count": 0,
+                "malformed_row_count": 0,
+                "date_order_violation_count": 0,
+                "date_ranges": {"date": ["2010-01-01", "2023-01-31"]},
+                "distinct_values": {"is_st": ["unknown", "true"], "is_suspended": ["false", "true"]},
+                "non_null_rates": {
+                    field: 1.0
+                    for field in {
+                        "date", "symbol", "close", "amount", "is_st", "is_suspended",
+                        "listDate", "listStatus", "stockType", "roeDiluted", "publishDate", "reportPeriodEnd",
+                    }
+                },
+            }
+            for role in STAGE2_DATASET_ROLES
+        }
+        metadata["fundamentals"]["date_ranges"] = {
+            "publishDate": ["not-a-date", "2022-12-31"],
+            "reportPeriodEnd": ["2009-01-01", "2022-12-31"],
+        }
+        metadata["stock_master"].update(
+            {
+                "delisted_row_count": 1,
+                "delisted_missing_date_count": 0,
+                "active_with_delist_count": 0,
+                "invalid_delist_date_count": 0,
+                "unknown_list_status_count": 1,
+                "unknown_stock_type_count": 1,
+                "exchange_values": ["BJ", "SH", "SZ"],
+            }
+        )
+        metadata["quotes"]["distinct_values"] = {
+            "is_st": ["false", "true", "unknown"],
+            "is_suspended": ["false", "true"],
+        }
+        metadata["quotes"]["invalid_boolean_value_count"] = {
+            "is_st": 1,
+            "is_suspended": 0,
+        }
+        result = audit_stage2_field_contract(metadata)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("FUNDAMENTAL_PUBLICATION_RANGE_INVALID", result["issues"])
+        self.assertNotIn("DEGENERATE_FIELD:is_st", result["issues"])
+        self.assertIn("UNKNOWN_LIST_STATUS", result["issues"])
+        self.assertIn("UNKNOWN_STOCK_TYPE", result["issues"])
+        self.assertIn("STOCK_MASTER_UNEXPECTED_EXCHANGE", result["issues"])
+        self.assertIn("INVALID_BOOLEAN_VALUE:is_st", result["issues"])
+
+    def test_audit_rejects_non_object_metadata_without_throwing(self) -> None:
+        result = audit_stage2_field_contract(None)  # type: ignore[arg-type]
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("METADATA_BY_ROLE_NOT_OBJECT", result["issues"])
+
     def test_rights_template_is_fail_closed_until_human_attested(self) -> None:
         template = json.loads(
             (STUDY / "data_rights_attestation.template.json").read_text(encoding="utf-8")
@@ -109,7 +191,11 @@ class DataAccessContractTest(unittest.TestCase):
             "status": "attested",
             "attested_at": "2026-09-02T12:00:00+08:00",
             "attestor": "Test reviewer",
+            "attestor_role": "authorized data custodian",
             "contract_reference": "contract:test-123",
+            "contract_effective_at": "2026-01-01T00:00:00+08:00",
+            "contract_expiry_at": "2027-01-01T00:00:00+08:00",
+            "contract_evidence_sha256": "c" * 64,
             "datasets": datasets,
             "private_endpoint_reason_ledger": {
                 "retention_permitted": True,
@@ -122,11 +208,96 @@ class DataAccessContractTest(unittest.TestCase):
                 "aggregate_missingness_permitted": True,
                 "aggregate_reason_counts_permitted": True,
                 "cryptographic_hashes_permitted": True,
+                "exact_official_calendar_dates_permitted": True,
+                "raw_rows_permitted": False,
+            },
+            "evidence_index": [
+                {
+                    "kind": "terms",
+                    "reference": "contract:test-123",
+                    "sha256": "a" * 64,
+                }
+            ],
+            "signature": {
+                "type": "human_verified_evidence",
+                "evidence_sha256": "d" * 64,
+                "signer_identity": "Test reviewer",
+                "verification_uri": "https://example.invalid/review/123",
+                "trust_boundary": "A human reviewer must verify the contract and the exact permitted outputs.",
             },
         }
         result = validate_rights_attestation(packet)
         self.assertEqual(result["status"], "valid")
         self.assertFalse(result["authorization_granted"])
+
+    def test_rights_packet_cannot_hide_unreviewed_permissions_or_evidence(self) -> None:
+        template = json.loads(
+            (STUDY / "data_rights_attestation.template.json").read_text(encoding="utf-8")
+        )
+        # Even if a caller changes the status label, every affirmative right
+        # and every evidence hash still has to be supplied by a human.
+        template["status"] = "attested"
+        template["attested_at"] = "2026-09-02T12:00:00Z"
+        result = validate_rights_attestation(template)
+        self.assertEqual(result["status"], "invalid")
+        self.assertTrue(any("PERMISSION_NOT_GRANTED" in issue for issue in result["issues"]))
+        self.assertIn("EVIDENCE_INDEX_MISSING", result["issues"])
+
+    def test_rights_packet_rejects_contract_that_is_not_effective_at_attestation(self) -> None:
+        datasets = {
+            role: {
+                "source_name": "licensed test source",
+                "source_reference": "contract:test-123",
+                "license_or_contract_scope": "private research and aggregate reporting",
+                "terms_evidence_sha256": "a" * 64,
+                "local_storage_permitted": True,
+                "local_analysis_permitted": True,
+                "aggregate_publication_permitted": True,
+                "raw_redistribution_permitted": False,
+                "hash_publication_permitted": True,
+                "controlled_reviewer_rerun_permitted": True,
+                "calendar_dates_publication_permitted": True,
+            }
+            for role in STAGE2_DATASET_ROLES
+        }
+        packet = {
+            "schema_version": "stage2_data_rights_attestation_v1",
+            "study_id": "a-share-factor-timing-bias-decomposition-v2",
+            "status": "attested",
+            "attested_at": "2026-09-02T12:00:00Z",
+            "attestor": "Test reviewer",
+            "attestor_role": "authorized data custodian",
+            "contract_reference": "contract:test-123",
+            "contract_effective_at": "2026-09-03T00:00:00Z",
+            "contract_expiry_at": "2027-01-01T00:00:00Z",
+            "contract_evidence_sha256": "c" * 64,
+            "datasets": datasets,
+            "private_endpoint_reason_ledger": {
+                "retention_permitted": True,
+                "hash_binding_permitted": True,
+                "row_redistribution_permitted": False,
+                "terms_evidence_sha256": "b" * 64,
+            },
+            "public_outputs": {
+                "aggregate_coverage_permitted": True,
+                "aggregate_missingness_permitted": True,
+                "aggregate_reason_counts_permitted": True,
+                "cryptographic_hashes_permitted": True,
+                "exact_official_calendar_dates_permitted": True,
+                "raw_rows_permitted": False,
+            },
+            "evidence_index": [{"kind": "terms", "reference": "contract:test-123", "sha256": "a" * 64}],
+            "signature": {
+                "type": "human_verified_evidence",
+                "evidence_sha256": "d" * 64,
+                "signer_identity": "Test reviewer",
+                "verification_uri": "https://example.invalid/review/123",
+                "trust_boundary": "A human reviewer must verify the contract and the exact permitted outputs.",
+            },
+        }
+        result = validate_rights_attestation(packet)
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("CONTRACT_NOT_EFFECTIVE_AT_ATTESTATION", result["issues"])
 
     def test_audit_requires_all_four_roles_and_reports_historical_gaps(self) -> None:
         metadata = {
@@ -174,6 +345,16 @@ class TushareFrameAdapterTest(unittest.TestCase):
         with self.assertRaisesRegex(DataAccessError, "adjustment factors"):
             normalize_tushare_daily_frame(daily, factors.iloc[0:0])
 
+        bad_close = daily.copy()
+        bad_close.loc[0, "close"] = float("inf")
+        with self.assertRaisesRegex(DataAccessError, "non-finite"):
+            normalize_tushare_daily_frame(bad_close, factors)
+
+        bad_amount = daily.copy()
+        bad_amount.loc[0, "amount"] = -1
+        with self.assertRaisesRegex(DataAccessError, "negative amount"):
+            normalize_tushare_daily_frame(bad_amount, factors)
+
     def test_calendar_adapter_intersects_both_exchanges_and_rejects_disagreement(self) -> None:
         raw = pd.DataFrame(
             [
@@ -187,6 +368,10 @@ class TushareFrameAdapterTest(unittest.TestCase):
             normalize_tushare_trade_calendar_frame(raw)
         common = normalize_tushare_trade_calendar_frame(raw.iloc[:2])
         self.assertEqual(common["date"].dt.strftime("%Y-%m-%d").tolist(), ["2010-01-04"])
+
+        missing_exchange = raw.iloc[[0, 1, 2]].copy()
+        with self.assertRaisesRegex(DataAccessError, "missing an SSE or SZSE"):
+            normalize_tushare_trade_calendar_frame(missing_exchange)
 
     def test_disclosure_adapter_uses_actual_date_only(self) -> None:
         raw = pd.DataFrame(
@@ -206,6 +391,10 @@ class TushareFrameAdapterTest(unittest.TestCase):
         missing_actual.loc[0, "actual_date"] = None
         with self.assertRaisesRegex(DataAccessError, "actual_date"):
             normalize_tushare_disclosure_frame(missing_actual)
+        before_report = raw.copy()
+        before_report.loc[0, "actual_date"] = "20090101"
+        with self.assertRaisesRegex(DataAccessError, "before the report period"):
+            normalize_tushare_disclosure_frame(before_report)
 
     def test_lifecycle_adapter_requires_explicit_delist_and_status_fields(self) -> None:
         raw = pd.DataFrame(
@@ -229,8 +418,30 @@ class TushareFrameAdapterTest(unittest.TestCase):
         result = normalize_tushare_stock_master_frame(raw)
         self.assertEqual(result["symbol"].tolist(), ["000001.SZ", "600000.SH"])
         self.assertTrue(pd.isna(result.loc[1, "delistDate"]))
+
+        a_share_label = raw.copy()
+        a_share_label["stock_type"] = "A股"
+        self.assertEqual(
+            len(normalize_tushare_stock_master_frame(a_share_label)),
+            len(raw),
+        )
         with self.assertRaisesRegex(DataAccessError, "required columns"):
             normalize_tushare_stock_master_frame(raw.drop(columns=["delist_date"]))
+
+        unknown = raw.copy()
+        unknown.loc[0, "list_status"] = "NEW_STATUS"
+        with self.assertRaisesRegex(DataAccessError, "unknown list_status"):
+            normalize_tushare_stock_master_frame(unknown)
+
+        missing_delist = raw.copy()
+        missing_delist.loc[1, "delist_date"] = ""
+        with self.assertRaisesRegex(DataAccessError, "without delist_date"):
+            normalize_tushare_stock_master_frame(missing_delist)
+
+        reversed_lifecycle = raw.copy()
+        reversed_lifecycle.loc[1, "delist_date"] = "19900102"
+        with self.assertRaisesRegex(DataAccessError, "before list dates"):
+            normalize_tushare_stock_master_frame(reversed_lifecycle)
 
     def test_st_and_suspension_adapters_keep_absence_unknown(self) -> None:
         st = normalize_tushare_st_frame(

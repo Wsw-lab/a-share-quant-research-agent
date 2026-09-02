@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import io
 import json
 import argparse
+import math
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping, Sequence
@@ -52,6 +53,52 @@ STAGE2_TARGETS = {
     "minimum_symbols_per_month": 1000,
     "minimum_sessions_per_month": 15,
 }
+
+# Provider exports use short codes (for example, Tushare's ``L``/``D``/``P``),
+# while canonical intake files may use readable labels.  We keep the accepted
+# vocabulary deliberately small and fail closed on a new provider code rather
+# than silently treating it as listed or delisted.
+_ACTIVE_LIST_STATUS_VALUES = frozenset(
+    {
+        "L",
+        "LISTED",
+        "ACTIVE",
+        "A",
+        "正常上市",
+    }
+)
+_DELISTED_LIST_STATUS_VALUES = frozenset(
+    {
+        "D",
+        "DELISTED",
+        "TERMINATED",
+        "退市",
+        "终止上市",
+    }
+)
+# The Stage-2 universe has only two lifecycle states.  A provider's paused or
+# otherwise transitional code is not silently treated as active; it must be
+# mapped and reviewed upstream before this adapter is used.
+_KNOWN_LIST_STATUS_VALUES = _ACTIVE_LIST_STATUS_VALUES | _DELISTED_LIST_STATUS_VALUES
+_KNOWN_A_STOCK_TYPE_VALUES = frozenset(
+    {
+        "A",
+        "A_SHARE",
+        "A-SHARE",
+        "ASHARE",
+        "COMMON_A",
+        "COMMON STOCK",
+        "EQUITY",
+        "SHARE",
+        "STOCK",
+        "A股",
+        "A 股",
+        "普通股",
+        "人民币普通股",
+        "1",
+    }
+)
+_MISSING_TEXT_TOKENS = frozenset({"", "NONE", "NAN", "NAT", "NULL", "NA", "N/A", "<NA>"})
 
 
 @dataclass(frozen=True)
@@ -309,15 +356,32 @@ def summarize_csv_metadata(path: str | Path, role: str) -> dict[str, Any]:
         for field in ("is_st", "is_suspended", "listStatus", "stockType")
         if field in fields
     }
+    invalid_boolean_value_count: dict[str, int] = {
+        field: 0 for field in ("is_st", "is_suspended") if field in fields
+    }
     duplicate_key_count = 0
     seen_keys: set[tuple[str, ...]] = set()
     invalid_date_count = 0
     publication_before_report_count = 0
     delisted_count = 0
+    delisted_missing_date_count = 0
+    active_with_delist_count = 0
+    delist_before_list_count = 0
+    unknown_list_status_count = 0
+    unknown_stock_type_count = 0
+    invalid_delist_date_count = 0
+    malformed_row_count = 0
+    date_order_violation_count = 0
+    previous_calendar_date: date | None = None
     exchange_values: set[str] = set()
 
     for row in reader:
         rows += 1
+        # DictReader stores extra columns under ``None`` and short rows as
+        # ``None`` values.  Both indicate a malformed record; retaining the
+        # row for aggregate accounting is safer than silently dropping it.
+        if None in row or any(row.get(field) is None for field in fields):
+            malformed_row_count += 1
         symbol = str(row.get("symbol") or "").strip()
         if symbol:
             symbols.add(symbol)
@@ -328,16 +392,37 @@ def summarize_csv_metadata(path: str | Path, role: str) -> dict[str, Any]:
             if _nonblank(row.get(field)):
                 normalized = _distinct_normalized((row[field],))
                 distinct[field].update(normalized or (str(row[field]).strip().lower(),))
+                if field in invalid_boolean_value_count and normalized and normalized[0] not in {"true", "false"}:
+                    invalid_boolean_value_count[field] += 1
         if role == "quotes":
             row_date = _parse_date(row.get("date"))
-            key = (symbol, str(row.get("date") or "").strip())
+            key_date = row_date.isoformat() if row_date is not None else str(row.get("date") or "").strip()
+            key = (symbol, key_date)
             exchange_values.add(symbol.rsplit(".", 1)[-1].upper() if "." in symbol else "")
         elif role == "stock_master":
             row_date = _parse_date(row.get("listDate"))
             key = (symbol,)
             status = str(row.get("listStatus") or "").strip().lower()
-            if status in {"delisted", "terminated", "d", "退市", "终止上市"}:
+            status_upper = status.upper()
+            if status_upper in _DELISTED_LIST_STATUS_VALUES:
                 delisted_count += 1
+            elif status_upper not in _KNOWN_LIST_STATUS_VALUES:
+                unknown_list_status_count += 1
+            stock_type = str(row.get("stockType") or "").strip().upper()
+            if stock_type not in _KNOWN_A_STOCK_TYPE_VALUES:
+                unknown_stock_type_count += 1
+            delist_raw = row.get("delistDate")
+            delist_text = str(delist_raw or "").strip()
+            delist_is_null = delist_text.upper() in _MISSING_TEXT_TOKENS
+            delist_date = None if delist_is_null else _parse_date(delist_text)
+            if not delist_is_null and delist_date is None:
+                invalid_delist_date_count += 1
+            if status_upper in _DELISTED_LIST_STATUS_VALUES and delist_date is None:
+                delisted_missing_date_count += 1
+            if status_upper in _ACTIVE_LIST_STATUS_VALUES and delist_date is not None:
+                active_with_delist_count += 1
+            if delist_date is not None and row_date is not None and delist_date < row_date:
+                delist_before_list_count += 1
             exchange_values.add(symbol.rsplit(".", 1)[-1].upper() if "." in symbol else "")
         elif role == "fundamentals":
             row_date = _parse_date(row.get("reportPeriodEnd"))
@@ -349,12 +434,18 @@ def summarize_csv_metadata(path: str | Path, role: str) -> dict[str, Any]:
                 report_dates.append(report)
             if publish is not None and report is not None and publish < report:
                 publication_before_report_count += 1
-            key = (symbol, str(row.get("reportPeriodEnd") or "").strip())
+            report_key = report.isoformat() if report is not None else str(row.get("reportPeriodEnd") or "").strip()
+            key = (symbol, report_key)
         else:
             row_date = _parse_date(row.get("date"))
-            key = (str(row.get("date") or "").strip(),)
+            key_date = row_date.isoformat() if row_date is not None else str(row.get("date") or "").strip()
+            key = (key_date,)
         if row_date is not None:
             dates.append(row_date)
+            if role == "official_calendar":
+                if previous_calendar_date is not None and row_date <= previous_calendar_date:
+                    date_order_violation_count += 1
+                previous_calendar_date = row_date
         elif any(_nonblank(row.get(field)) for field in ("date", "listDate", "reportPeriodEnd")):
             invalid_date_count += 1
         if key in seen_keys:
@@ -369,8 +460,8 @@ def summarize_csv_metadata(path: str | Path, role: str) -> dict[str, Any]:
         ranges["date" if role != "stock_master" else "listDate"] = _date_range(dates)
         if role == "stock_master":
             delist_dates: list[date] = []
-            # A second pass is unnecessary for rows, but delist range is useful
-            # metadata; parse it from the already decoded text only.
+            # Parse the optional delist date a second time only to retain its
+            # aggregate range; semantic counts were collected in the main pass.
             for row in csv.DictReader(io.StringIO(text, newline="")):
                 parsed = _parse_date(row.get("delistDate"))
                 if parsed is not None:
@@ -396,10 +487,19 @@ def summarize_csv_metadata(path: str | Path, role: str) -> dict[str, Any]:
         "date_ranges": ranges,
         "non_null_rates": non_null_rates,
         "distinct_values": distinct_values,
+        "invalid_boolean_value_count": invalid_boolean_value_count,
         "duplicate_key_count": duplicate_key_count,
         "invalid_date_count": invalid_date_count,
         "publication_before_report_count": publication_before_report_count,
         "delisted_row_count": delisted_count,
+        "delisted_missing_date_count": delisted_missing_date_count,
+        "active_with_delist_count": active_with_delist_count,
+        "delist_before_list_count": delist_before_list_count,
+        "unknown_list_status_count": unknown_list_status_count,
+        "unknown_stock_type_count": unknown_stock_type_count,
+        "invalid_delist_date_count": invalid_delist_date_count,
+        "malformed_row_count": malformed_row_count,
+        "date_order_violation_count": date_order_violation_count,
         "exchange_values": sorted(value for value in exchange_values if value),
     }
 
@@ -420,6 +520,16 @@ def audit_stage2_field_contract(
     and registration chain.
     """
 
+    if not isinstance(metadata_by_role, Mapping):
+        return {
+            "schema_version": "stage2_data_access_audit_v1",
+            "status": "blocked",
+            "issues": ["METADATA_BY_ROLE_NOT_OBJECT"],
+            "roles": {},
+            "rights": validate_rights_attestation(rights_attestation),
+            "outcome_blind": True,
+            "authorization_granted": False,
+        }
     issues: list[str] = []
     role_reports: dict[str, Any] = {}
     for role in STAGE2_DATASET_ROLES:
@@ -427,48 +537,138 @@ def audit_stage2_field_contract(
         if metadata is None:
             issues.append(f"MISSING_ROLE:{role}")
             continue
+        if not isinstance(metadata, Mapping):
+            issues.append(f"INVALID_ROLE_METADATA:{role}")
+            continue
         role_reports[role] = dict(metadata)
-        if metadata.get("missing_required_columns"):
+        missing_columns = metadata.get("missing_required_columns")
+        if not isinstance(missing_columns, (list, tuple, set)):
+            issues.append(f"MISSING_FIELDS_METADATA:{role}")
+        elif missing_columns:
             issues.append(f"MISSING_FIELDS:{role}")
-        if int(metadata.get("row_count", 0)) <= 0:
+        row_count = _metadata_count(metadata, "row_count")
+        if row_count is None:
+            issues.append(f"INVALID_ROW_COUNT:{role}")
+        elif row_count <= 0:
             issues.append(f"EMPTY_INPUT:{role}")
-        if int(metadata.get("duplicate_key_count", 0)) > 0:
+        duplicate_count = _metadata_count(metadata, "duplicate_key_count")
+        if duplicate_count is None:
+            issues.append(f"INVALID_DUPLICATE_COUNT:{role}")
+        elif duplicate_count > 0:
             issues.append(f"DUPLICATE_KEYS:{role}")
-        if int(metadata.get("invalid_date_count", 0)) > 0:
+        invalid_dates = _metadata_count(metadata, "invalid_date_count")
+        if invalid_dates is None:
+            issues.append(f"INVALID_DATE_COUNT:{role}")
+        elif invalid_dates > 0:
             issues.append(f"INVALID_DATES:{role}")
+        malformed_rows = _metadata_count(metadata, "malformed_row_count")
+        if malformed_rows is None:
+            issues.append(f"INVALID_MALFORMED_ROW_COUNT:{role}")
+        elif malformed_rows > 0:
+            issues.append(f"MALFORMED_ROWS:{role}")
+        if role == "official_calendar":
+            order_violations = _metadata_count(metadata, "date_order_violation_count")
+            if order_violations is None:
+                issues.append("INVALID_CALENDAR_ORDER_COUNT")
+            elif order_violations > 0:
+                issues.append("CALENDAR_NOT_STRICTLY_INCREASING")
 
-    quotes = metadata_by_role.get("quotes", {})
+    quotes_value = metadata_by_role.get("quotes", {})
+    quotes = quotes_value if isinstance(quotes_value, Mapping) else {}
     quote_range = _metadata_range(quotes, "date")
-    if quote_range[0] is None or quote_range[0] > STAGE2_TARGETS["quote_start"]:
+    if not _range_is_valid(quote_range):
+        issues.append("QUOTE_DATE_RANGE_INVALID")
+    if _range_start_after(quote_range, STAGE2_TARGETS["quote_start"]):
         issues.append("QUOTE_WARMUP_NOT_COVERED")
-    if quote_range[1] is None or quote_range[1] < STAGE2_TARGETS["quote_end"]:
+    if _range_end_before(quote_range, STAGE2_TARGETS["quote_end"]):
         issues.append("QUOTE_ENDPOINT_NOT_COVERED")
-    fundamentals = metadata_by_role.get("fundamentals", {})
+    fundamentals_value = metadata_by_role.get("fundamentals", {})
+    fundamentals = fundamentals_value if isinstance(fundamentals_value, Mapping) else {}
     fundamental_publish_range = _metadata_range(fundamentals, "publishDate")
     fundamental_report_range = _metadata_range(fundamentals, "reportPeriodEnd")
-    if fundamental_publish_range[0] is None or fundamental_publish_range[0] > STAGE2_TARGETS["fundamental_start"]:
+    if not _range_is_valid(fundamental_publish_range):
+        issues.append("FUNDAMENTAL_PUBLICATION_RANGE_INVALID")
+    if not _range_is_valid(fundamental_report_range):
+        issues.append("FUNDAMENTAL_REPORT_RANGE_INVALID")
+    if _range_start_after(fundamental_publish_range, STAGE2_TARGETS["fundamental_start"]):
         issues.append("FUNDAMENTAL_PUBLICATION_HISTORY_NOT_COVERED")
-    if fundamental_report_range[1] is None or fundamental_report_range[1] < STAGE2_TARGETS["fundamental_end"]:
+    if _range_start_after(fundamental_report_range, STAGE2_TARGETS["fundamental_start"]):
+        issues.append("FUNDAMENTAL_REPORT_HISTORY_NOT_COVERED")
+    if _range_end_before(fundamental_report_range, STAGE2_TARGETS["fundamental_end"]):
         issues.append("FUNDAMENTAL_REPORT_INTERVAL_NOT_COVERED")
-    if int(fundamentals.get("publication_before_report_count", 0)) > 0:
+    publication_order_count = _metadata_count(fundamentals, "publication_before_report_count")
+    if publication_order_count is None:
+        issues.append("INVALID_PUBLICATION_ORDER_COUNT")
+    elif publication_order_count > 0:
         issues.append("PUBLICATION_BEFORE_REPORT_PERIOD")
-    calendar = metadata_by_role.get("official_calendar", {})
+    calendar_value = metadata_by_role.get("official_calendar", {})
+    calendar = calendar_value if isinstance(calendar_value, Mapping) else {}
     calendar_range = _metadata_range(calendar, "date")
-    if calendar_range[0] is None or calendar_range[0][:7] > STAGE2_TARGETS["calendar_start_month"]:
+    if not _range_is_valid(calendar_range):
+        issues.append("CALENDAR_DATE_RANGE_INVALID")
+    if _range_month_start_after(calendar_range, STAGE2_TARGETS["calendar_start_month"]):
         issues.append("CALENDAR_START_NOT_COVERED")
-    if calendar_range[1] is None or calendar_range[1][:7] < STAGE2_TARGETS["calendar_end_month"]:
+    if _range_month_end_before(calendar_range, STAGE2_TARGETS["calendar_end_month"]):
         issues.append("CALENDAR_END_NOT_COVERED")
     for field in ("is_st", "is_suspended"):
-        values = quotes.get("distinct_values", {}).get(field, [])
-        if len(values) < 2:
+        distinct_values = quotes.get("distinct_values", {})
+        raw_values = distinct_values.get(field, []) if isinstance(distinct_values, Mapping) else []
+        values = {str(value).strip().lower() for value in raw_values} if isinstance(raw_values, (list, tuple, set)) else set()
+        if not {"true", "false"}.issubset(values):
             issues.append(f"DEGENERATE_FIELD:{field}")
+        bool_counts = quotes.get("invalid_boolean_value_count", {})
+        invalid_bool_count = _metadata_count(bool_counts, field) if isinstance(bool_counts, Mapping) else None
+        if invalid_bool_count is None:
+            issues.append(f"INVALID_BOOLEAN_VALUE_COUNT:{field}")
+        elif invalid_bool_count > 0:
+            issues.append(f"INVALID_BOOLEAN_VALUE:{field}")
 
-    master = metadata_by_role.get("stock_master", {})
-    if int(master.get("delisted_row_count", 0)) <= 0:
+    master_value = metadata_by_role.get("stock_master", {})
+    master = master_value if isinstance(master_value, Mapping) else {}
+    delisted_rows = _metadata_count(master, "delisted_row_count")
+    if delisted_rows is None:
+        issues.append("INVALID_DELISTED_ROW_COUNT")
+    elif delisted_rows <= 0:
         issues.append("NO_DELISTED_SECURITY_ROWS")
-    exchanges = {str(value).upper() for value in master.get("exchange_values", [])}
+    raw_exchanges = master.get("exchange_values", [])
+    exchanges = {
+        str(value).upper()
+        for value in raw_exchanges
+    } if isinstance(raw_exchanges, (list, tuple, set)) else set()
     if not {"SH", "SZ"}.issubset(exchanges):
         issues.append("STOCK_MASTER_MISSING_SH_OR_SZ")
+    if exchanges - {"SH", "SZ"}:
+        issues.append("STOCK_MASTER_UNEXPECTED_EXCHANGE")
+    delisted_missing_dates = _metadata_count(master, "delisted_missing_date_count")
+    if delisted_missing_dates is None:
+        issues.append("INVALID_DELISTED_MISSING_DATE_COUNT")
+    elif delisted_missing_dates > 0:
+        issues.append("DELISTED_WITHOUT_DELIST_DATE")
+    active_with_delist = _metadata_count(master, "active_with_delist_count")
+    if active_with_delist is None:
+        issues.append("INVALID_ACTIVE_WITH_DELIST_COUNT")
+    elif active_with_delist > 0:
+        issues.append("ACTIVE_WITH_DELIST_DATE")
+    delist_before_list = _metadata_count(master, "delist_before_list_count")
+    if delist_before_list is None:
+        issues.append("INVALID_DELIST_BEFORE_LIST_COUNT")
+    elif delist_before_list > 0:
+        issues.append("DELIST_BEFORE_LIST_DATE")
+    invalid_delists = _metadata_count(master, "invalid_delist_date_count")
+    if invalid_delists is None:
+        issues.append("INVALID_DELIST_DATE_COUNT")
+    elif invalid_delists > 0:
+        issues.append("INVALID_DELIST_DATES")
+    unknown_status = _metadata_count(master, "unknown_list_status_count")
+    if unknown_status is None:
+        issues.append("INVALID_UNKNOWN_STATUS_COUNT")
+    elif unknown_status > 0:
+        issues.append("UNKNOWN_LIST_STATUS")
+    unknown_type = _metadata_count(master, "unknown_stock_type_count")
+    if unknown_type is None:
+        issues.append("INVALID_UNKNOWN_STOCK_TYPE_COUNT")
+    elif unknown_type > 0:
+        issues.append("UNKNOWN_STOCK_TYPE")
 
     # Required key fields must be populated.  ``delistDate`` is intentionally
     # nullable for active securities and is therefore excluded from this loop.
@@ -481,8 +681,18 @@ def audit_stage2_field_contract(
         metadata = metadata_by_role.get(role, {})
         rates = metadata.get("non_null_rates", {})
         for field in fields:
-            rate = rates.get(field)
-            if rate is not None and float(rate) < 1.0:
+            rate = rates.get(field) if isinstance(rates, Mapping) else None
+            if rate is None:
+                issues.append(f"MISSING_NON_NULL_RATE:{role}:{field}")
+                continue
+            try:
+                numeric_rate = float(rate)
+            except (TypeError, ValueError):
+                issues.append(f"INVALID_NON_NULL_RATE:{role}:{field}")
+                continue
+            if not math.isfinite(numeric_rate) or not 0.0 <= numeric_rate <= 1.0:
+                issues.append(f"INVALID_NON_NULL_RATE:{role}:{field}")
+            elif numeric_rate < 1.0:
                 issues.append(f"NULL_REQUIRED_FIELD:{role}:{field}")
 
     rights_result = validate_rights_attestation(rights_attestation)
@@ -511,6 +721,62 @@ def _metadata_range(metadata: Mapping[str, Any], field: str) -> list[str | None]
     return [str(value[0]) if value[0] is not None else None, str(value[1]) if value[1] is not None else None]
 
 
+def _range_is_valid(value: Sequence[str | None]) -> bool:
+    """Return whether a metadata range contains two ordered ISO dates."""
+
+    if len(value) != 2 or value[0] is None or value[1] is None:
+        return False
+    try:
+        start = date.fromisoformat(str(value[0]))
+        end = date.fromisoformat(str(value[1]))
+    except (TypeError, ValueError):
+        return False
+    return start <= end
+
+
+def _range_start_after(value: Sequence[str | None], boundary: str) -> bool:
+    """Fail closed when a range is missing or starts after ``boundary``."""
+
+    if not _range_is_valid(value):
+        return True
+    return str(value[0]) > boundary
+
+
+def _range_end_before(value: Sequence[str | None], boundary: str) -> bool:
+    """Fail closed when a range is missing or ends before ``boundary``."""
+
+    if not _range_is_valid(value):
+        return True
+    return str(value[1]) < boundary
+
+
+def _range_month_start_after(value: Sequence[str | None], boundary: str) -> bool:
+    if not _range_is_valid(value):
+        return True
+    return str(value[0])[:7] > boundary
+
+
+def _range_month_end_before(value: Sequence[str | None], boundary: str) -> bool:
+    if not _range_is_valid(value):
+        return True
+    return str(value[1])[:7] < boundary
+
+
+def _metadata_count(metadata: Mapping[str, Any], key: str) -> int | None:
+    """Read an integer metadata count without allowing malformed values through."""
+
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0 or (isinstance(value, float) and not value.is_integer()):
+        return None
+    return parsed
+
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _ISO_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:?\d{2})$")
 
@@ -527,13 +793,65 @@ def validate_rights_attestation(
         return {"schema_version": "stage2_data_rights_attestation_v1", "status": "missing", "issues": ["ATTESTATION_MISSING"]}
     if attestation.get("schema_version") != "stage2_data_rights_attestation_v1":
         issues.append("SCHEMA_VERSION")
+    if attestation.get("study_id") != "a-share-factor-timing-bias-decomposition-v2":
+        issues.append("STUDY_ID")
     if attestation.get("status") != "attested":
         issues.append("STATUS_NOT_ATTESTED")
-    for field in ("study_id", "attested_at", "attestor", "contract_reference"):
+    for field in (
+        "study_id",
+        "attested_at",
+        "attestor",
+        "attestor_role",
+        "contract_reference",
+        "contract_effective_at",
+        "contract_evidence_sha256",
+    ):
         if not str(attestation.get(field) or "").strip():
             issues.append(f"MISSING_{field.upper()}")
-    if not _ISO_TIMESTAMP_RE.match(str(attestation.get("attested_at") or "")):
+    attested_text = str(attestation.get("attested_at") or "")
+    if not _ISO_TIMESTAMP_RE.match(attested_text):
         issues.append("ATTESTED_AT_NOT_TIMEZONE_AWARE")
+    effective_value = attestation.get("contract_effective_at")
+    expiry_value = attestation.get("contract_expiry_at")
+    if not _ISO_TIMESTAMP_RE.match(str(effective_value or "")):
+        issues.append("CONTRACT_EFFECTIVE_AT_NOT_TIMEZONE_AWARE")
+    if expiry_value not in (None, "") and not _ISO_TIMESTAMP_RE.match(str(expiry_value)):
+        issues.append("CONTRACT_EXPIRY_AT_NOT_TIMEZONE_AWARE")
+    if _SHA256_RE.match(str(attestation.get("contract_evidence_sha256") or "")) is None:
+        issues.append("CONTRACT_EVIDENCE_HASH_INVALID")
+    effective_at: datetime | None = None
+    expiry_at: datetime | None = None
+    attested_at_for_order: datetime | None = None
+    if isinstance(effective_value, str) and _ISO_TIMESTAMP_RE.match(effective_value):
+        try:
+            effective_at = datetime.fromisoformat(effective_value.replace("Z", "+00:00"))
+            if effective_at.tzinfo is None or effective_at.utcoffset() is None:
+                issues.append("CONTRACT_EFFECTIVE_AT_NOT_TIMEZONE_AWARE")
+        except ValueError:
+            issues.append("CONTRACT_EFFECTIVE_AT_INVALID")
+    if expiry_value not in (None, "") and isinstance(expiry_value, str) and _ISO_TIMESTAMP_RE.match(expiry_value):
+        try:
+            expiry_at = datetime.fromisoformat(expiry_value.replace("Z", "+00:00"))
+            if expiry_at.tzinfo is None or expiry_at.utcoffset() is None:
+                issues.append("CONTRACT_EXPIRY_AT_NOT_TIMEZONE_AWARE")
+        except ValueError:
+            issues.append("CONTRACT_EXPIRY_AT_INVALID")
+    if isinstance(attestation.get("attested_at"), str) and _ISO_TIMESTAMP_RE.match(attestation["attested_at"]):
+        try:
+            attested_at_for_order = datetime.fromisoformat(
+                attestation["attested_at"].replace("Z", "+00:00")
+            )
+            if attested_at_for_order.tzinfo is None or attested_at_for_order.utcoffset() is None:
+                issues.append("ATTESTED_AT_NOT_TIMEZONE_AWARE")
+        except ValueError:
+            issues.append("ATTESTED_AT_INVALID")
+    if effective_at is not None and attested_at_for_order is not None:
+        if effective_at > attested_at_for_order:
+            issues.append("CONTRACT_NOT_EFFECTIVE_AT_ATTESTATION")
+        if expiry_at is not None and (
+            expiry_at < attested_at_for_order or expiry_at < effective_at
+        ):
+            issues.append("CONTRACT_EXPIRED_AT_ATTESTATION")
     datasets = attestation.get("datasets")
     if not isinstance(datasets, Mapping):
         issues.append("DATASETS_NOT_OBJECT")
@@ -559,9 +877,19 @@ def validate_rights_attestation(
             "aggregate_publication_permitted",
             "raw_redistribution_permitted",
             "hash_publication_permitted",
+            "controlled_reviewer_rerun_permitted",
         ):
             if not isinstance(record.get(field), bool):
                 issues.append(f"{role}:BOOLEAN_REQUIRED:{field}")
+        for field in (
+            "local_storage_permitted",
+            "local_analysis_permitted",
+            "aggregate_publication_permitted",
+            "hash_publication_permitted",
+            "controlled_reviewer_rerun_permitted",
+        ):
+            if record.get(field) is not True:
+                issues.append(f"{role}:PERMISSION_NOT_GRANTED:{field}")
         if record.get("raw_redistribution_permitted") is not False:
             issues.append(f"{role}:RAW_REDISTRIBUTION_MUST_BE_FALSE")
         if not str(record.get("source_reference") or "").startswith(("https://", "http://", "urn:", "contract:")):
@@ -591,12 +919,52 @@ def validate_rights_attestation(
             "aggregate_missingness_permitted",
             "aggregate_reason_counts_permitted",
             "cryptographic_hashes_permitted",
+            "exact_official_calendar_dates_permitted",
         ):
             if public_outputs.get(field) is not True:
                 issues.append(f"PUBLIC_OUTPUT_NOT_ATTESTED:{field}")
+        if public_outputs.get("raw_rows_permitted") is not False:
+            issues.append("PUBLIC_OUTPUT_RAW_ROWS_MUST_BE_FALSE")
+
+    signature = attestation.get("signature")
+    if not isinstance(signature, Mapping):
+        issues.append("SIGNATURE_NOT_OBJECT")
+    else:
+        if signature.get("type") != "human_verified_evidence":
+            issues.append("SIGNATURE_TYPE_INVALID")
+        if not _SHA256_RE.match(str(signature.get("evidence_sha256") or "")):
+            issues.append("SIGNATURE_EVIDENCE_HASH_INVALID")
+        if not str(signature.get("signer_identity") or "").strip():
+            issues.append("SIGNATURE_IDENTITY_MISSING")
+        verification_uri = str(signature.get("verification_uri") or "")
+        if not verification_uri.startswith("https://"):
+            issues.append("SIGNATURE_VERIFICATION_URI_INVALID")
+        if signature.get("trust_boundary") != (
+            "A human reviewer must verify the contract and the exact permitted outputs."
+        ):
+            issues.append("SIGNATURE_TRUST_BOUNDARY_INVALID")
+    evidence_index = attestation.get("evidence_index")
+    if not isinstance(evidence_index, list) or not evidence_index:
+        issues.append("EVIDENCE_INDEX_MISSING")
+    else:
+        for index, item in enumerate(evidence_index):
+            if not isinstance(item, Mapping):
+                issues.append(f"EVIDENCE_INDEX_ITEM_INVALID:{index}")
+                continue
+            if not str(item.get("kind") or "").strip():
+                issues.append(f"EVIDENCE_INDEX_KIND_MISSING:{index}")
+            reference = str(item.get("reference") or "")
+            if not reference.startswith(("https://", "http://", "urn:", "contract:")):
+                issues.append(f"EVIDENCE_INDEX_REFERENCE_INVALID:{index}")
+            if _SHA256_RE.match(str(item.get("sha256") or "")) is None:
+                issues.append(f"EVIDENCE_INDEX_HASH_INVALID:{index}")
 
     # Prevent accidental inclusion of credentials or raw secrets in the packet.
-    serialized = json.dumps(attestation, ensure_ascii=False, sort_keys=True)
+    try:
+        serialized = json.dumps(attestation, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        serialized = ""
+        issues.append("ATTESTATION_NOT_JSON_SERIALIZABLE")
     if re.search(r"(?i)(api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*['\"][^'\"]+", serialized):
         issues.append("SECRET_LIKE_VALUE_PRESENT")
     return {
@@ -608,6 +976,8 @@ def validate_rights_attestation(
 
 
 def _require_columns(frame: pd.DataFrame, columns: Iterable[str], label: str) -> None:
+    if not isinstance(frame, pd.DataFrame):
+        raise DataAccessError(f"{label} must be a pandas DataFrame")
     missing = sorted(set(columns) - set(frame.columns))
     if missing:
         raise DataAccessError(f"{label} missing required columns: {missing}")
@@ -624,6 +994,33 @@ def _date_series(frame: pd.DataFrame, column: str, label: str) -> pd.Series:
     return parsed.dt.normalize()
 
 
+def _coerce_finite_numeric(
+    frame: pd.DataFrame,
+    field: str,
+    label: str,
+    *,
+    strictly_positive: bool = False,
+    nonnegative: bool = False,
+) -> pd.Series:
+    """Coerce a numeric field and reject NaN, infinities, and bad signs."""
+
+    values = pd.to_numeric(frame[field], errors="coerce")
+    finite = values.map(
+        lambda value: (
+            False
+            if pd.isna(value)
+            else math.isfinite(float(value))
+        )
+    )
+    if not bool(finite.all()):
+        raise DataAccessError(f"{label} has non-finite or non-numeric {field}")
+    if strictly_positive and bool((values <= 0).any()):
+        raise DataAccessError(f"{label} has non-positive {field}")
+    if nonnegative and bool((values < 0).any()):
+        raise DataAccessError(f"{label} has negative {field}")
+    return values
+
+
 def normalize_tushare_daily_frame(
     raw: pd.DataFrame,
     adjustment_factors: pd.DataFrame,
@@ -637,12 +1034,20 @@ def normalize_tushare_daily_frame(
 
     _require_columns(raw, ("ts_code", "trade_date", "close", "amount"), "Tushare daily")
     _require_columns(adjustment_factors, ("ts_code", "trade_date", "adj_factor"), "Tushare adj_factor")
+    if raw.empty:
+        raise DataAccessError("Tushare daily is empty")
+    if adjustment_factors.empty:
+        raise DataAccessError("Tushare daily has missing or non-positive adjustment factors")
     daily = raw.copy()
     factors = adjustment_factors.copy()
     daily["trade_date"] = _date_series(daily, "trade_date", "Tushare daily")
     factors["trade_date"] = _date_series(factors, "trade_date", "Tushare adj_factor")
     daily["ts_code"] = daily["ts_code"].astype(str).str.strip().str.upper()
     factors["ts_code"] = factors["ts_code"].astype(str).str.strip().str.upper()
+    if daily["ts_code"].eq("").any() or daily["ts_code"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare daily contains blank symbols")
+    if factors["ts_code"].eq("").any() or factors["ts_code"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare adj_factor contains blank symbols")
     if daily.duplicated(["ts_code", "trade_date"]).any():
         raise DataAccessError("Tushare daily has duplicate symbol-date keys")
     if factors.duplicated(["ts_code", "trade_date"]).any():
@@ -653,13 +1058,33 @@ def normalize_tushare_daily_frame(
         how="left",
         validate="one_to_one",
     )
-    joined["adj_factor"] = pd.to_numeric(joined["adj_factor"], errors="coerce")
-    if joined["adj_factor"].isna().any() or (joined["adj_factor"] <= 0).any():
+    # Keep a distinct diagnostic for an unmatched exact key; this is the
+    # common failure when a provider returns a daily row without its corporate
+    # action factor and must not be confused with a numeric-quality failure.
+    raw_adj_factor = pd.to_numeric(joined["adj_factor"], errors="coerce")
+    if raw_adj_factor.isna().any():
         raise DataAccessError("Tushare daily has missing or non-positive adjustment factors")
-    for field in ("close", "amount"):
-        joined[field] = pd.to_numeric(joined[field], errors="coerce")
-        if joined[field].isna().any():
-            raise DataAccessError(f"Tushare daily has non-numeric {field}")
+    joined["adj_factor"] = _coerce_finite_numeric(
+        joined.assign(adj_factor=raw_adj_factor),
+        "adj_factor",
+        "Tushare daily",
+        strictly_positive=True,
+    )
+    joined["close"] = _coerce_finite_numeric(
+        joined, "close", "Tushare daily", strictly_positive=True
+    )
+    joined["amount"] = _coerce_finite_numeric(
+        joined, "amount", "Tushare daily", nonnegative=True
+    )
+    if "vol" in joined:
+        joined["vol"] = _coerce_finite_numeric(
+            joined, "vol", "Tushare daily", nonnegative=True
+        )
+    for field in ("open", "high", "low", "pre_close"):
+        if field in joined:
+            joined[field] = _coerce_finite_numeric(
+                joined, field, "Tushare daily", strictly_positive=True
+            )
     result = pd.DataFrame(
         {
             "date": joined["trade_date"],
@@ -671,10 +1096,12 @@ def normalize_tushare_daily_frame(
         }
     )
     if "vol" in joined:
-        result["volume"] = pd.to_numeric(joined["vol"], errors="coerce") * 100.0
+        result["volume"] = joined["vol"] * 100.0
     for field in ("open", "high", "low", "pre_close"):
         if field in joined:
-            result[field] = pd.to_numeric(joined[field], errors="coerce")
+            result[field] = joined[field]
+    if not result["close"].map(lambda value: math.isfinite(float(value)) and value > 0).all():
+        raise DataAccessError("Tushare daily adjusted close is non-finite or non-positive")
     return result.sort_values(["symbol", "date"]).reset_index(drop=True)
 
 
@@ -699,6 +1126,13 @@ def normalize_tushare_trade_calendar_frame(raw: pd.DataFrame) -> pd.DataFrame:
     pivot = frame.pivot(index="date", columns="exchange", values="is_open")
     if not {"SSE", "SZSE"}.issubset(pivot.columns):
         raise DataAccessError("Tushare trade_cal must contain both SSE and SZSE rows")
+    # A missing exchange row is not evidence that that exchange was closed.
+    # Form a common calendar only when both exchanges explicitly report a
+    # value for every supplied date; never fill a missing row implicitly.
+    if pivot[["SSE", "SZSE"]].isna().any(axis=1).any():
+        raise DataAccessError(
+            "Tushare trade_cal has dates missing an SSE or SZSE row; no implicit closed-day fill is allowed"
+        )
     disagreement = pivot["SSE"].notna() & pivot["SZSE"].notna() & (pivot["SSE"] != pivot["SZSE"])
     if disagreement.any():
         raise DataAccessError("SSE/SZSE trade-calendar disagreement requires human resolution")
@@ -711,12 +1145,20 @@ def normalize_tushare_disclosure_frame(raw: pd.DataFrame) -> pd.DataFrame:
 
     _require_columns(raw, ("ts_code", "end_date", "actual_date"), "Tushare disclosure_date")
     frame = raw.copy()
+    if frame.empty:
+        raise DataAccessError("Tushare disclosure_date is empty")
     frame["symbol"] = frame["ts_code"].astype(str).str.strip().str.upper()
+    if frame["symbol"].eq("").any() or frame["symbol"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare disclosure_date contains blank symbols")
     frame["reportPeriodEnd"] = _date_series(frame, "end_date", "Tushare disclosure_date")
     actual = frame["actual_date"].astype(str).str.strip()
-    if actual.eq("").any() or actual.isin({"NONE", "NAN", "NAT"}).any():
+    if actual.str.upper().isin(_MISSING_TEXT_TOKENS).any():
         raise DataAccessError("Tushare disclosure_date has rows without actual_date; do not substitute scheduled dates")
     frame["publishDate"] = _date_series(frame, "actual_date", "Tushare disclosure_date")
+    if (frame["publishDate"] < frame["reportPeriodEnd"]).any():
+        raise DataAccessError(
+            "Tushare disclosure_date contains publication dates before the report period end"
+        )
     if frame.duplicated(["symbol", "reportPeriodEnd"]).any():
         raise DataAccessError("Tushare disclosure_date has duplicate symbol-report periods")
     return frame[["symbol", "reportPeriodEnd", "publishDate"]].sort_values(["symbol", "reportPeriodEnd"]).reset_index(drop=True)
@@ -737,19 +1179,43 @@ def normalize_tushare_stock_master_frame(raw: pd.DataFrame) -> pd.DataFrame:
         "Tushare historical stock master",
     )
     frame = raw.copy()
+    if frame.empty:
+        raise DataAccessError("Tushare stock master is empty")
     frame["symbol"] = frame["ts_code"].astype(str).str.strip().str.upper()
-    if frame["symbol"].eq("").any() or frame["symbol"].isin({"NAN", "NONE"}).any():
+    if frame["symbol"].eq("").any() or frame["symbol"].isin(_MISSING_TEXT_TOKENS).any():
         raise DataAccessError("Tushare stock master contains blank symbols")
     frame["listDate"] = _date_series(frame, "list_date", "Tushare stock master")
     raw_delist = frame["delist_date"].astype(str).str.strip()
-    frame["delistDate"] = pd.to_datetime(raw_delist.where(~raw_delist.isin({"", "NONE", "NAN", "NAT"})), errors="coerce").dt.normalize()
-    invalid_delist = raw_delist.ne("") & ~raw_delist.isin({"NONE", "NAN", "NAT"}) & frame["delistDate"].isna()
+    parsed_delist = raw_delist.map(
+        lambda value: None if value.upper() in _MISSING_TEXT_TOKENS else _parse_date(value)
+    )
+    frame["delistDate"] = pd.to_datetime(parsed_delist, errors="coerce").dt.normalize()
+    invalid_delist = (
+        ~raw_delist.str.upper().isin(_MISSING_TEXT_TOKENS)
+        & frame["delistDate"].isna()
+    )
     if invalid_delist.any():
         raise DataAccessError("Tushare stock master contains invalid delist_date values")
     frame["listStatus"] = frame["list_status"].astype(str).str.strip().str.upper()
     frame["stockType"] = frame["stock_type"].astype(str).str.strip().str.upper()
+    if frame["listStatus"].eq("").any() or frame["listStatus"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare stock master contains blank list_status values")
+    if frame["stockType"].eq("").any() or frame["stockType"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare stock master contains blank stock_type values")
+    unknown_status = ~frame["listStatus"].isin(_KNOWN_LIST_STATUS_VALUES)
+    if unknown_status.any():
+        raise DataAccessError("Tushare stock master contains unknown list_status values")
+    unknown_type = ~frame["stockType"].isin(_KNOWN_A_STOCK_TYPE_VALUES)
+    if unknown_type.any():
+        raise DataAccessError("Tushare stock master contains unknown stock_type values")
     if frame.duplicated("symbol").any():
         raise DataAccessError("Tushare stock master has duplicate symbols")
+    delisted = frame["listStatus"].isin(_DELISTED_LIST_STATUS_VALUES)
+    if (delisted & frame["delistDate"].isna()).any():
+        raise DataAccessError("Tushare stock master has delisted rows without delist_date")
+    active = frame["listStatus"].isin(_ACTIVE_LIST_STATUS_VALUES)
+    if (active & frame["delistDate"].notna()).any():
+        raise DataAccessError("Tushare stock master has active rows with delist_date")
     if (frame["delistDate"].notna() & (frame["delistDate"] < frame["listDate"])).any():
         raise DataAccessError("Tushare stock master has delist dates before list dates")
     return frame[["symbol", "listDate", "delistDate", "listStatus", "stockType"]].sort_values("symbol").reset_index(drop=True)
@@ -761,6 +1227,8 @@ def normalize_tushare_st_frame(raw: pd.DataFrame) -> pd.DataFrame:
     _require_columns(raw, ("ts_code", "trade_date"), "Tushare stock_st")
     frame = raw.copy()
     frame["symbol"] = frame["ts_code"].astype(str).str.strip().str.upper()
+    if frame["symbol"].eq("").any() or frame["symbol"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare stock_st contains blank symbols")
     frame["date"] = _date_series(frame, "trade_date", "Tushare stock_st")
     if frame.duplicated(["symbol", "date"]).any():
         raise DataAccessError("Tushare stock_st has duplicate symbol-date keys")
@@ -773,6 +1241,8 @@ def normalize_tushare_suspend_frame(raw: pd.DataFrame) -> pd.DataFrame:
     _require_columns(raw, ("ts_code", "trade_date"), "Tushare suspend_d")
     frame = raw.copy()
     frame["symbol"] = frame["ts_code"].astype(str).str.strip().str.upper()
+    if frame["symbol"].eq("").any() or frame["symbol"].isin(_MISSING_TEXT_TOKENS).any():
+        raise DataAccessError("Tushare suspend_d contains blank symbols")
     frame["date"] = _date_series(frame, "trade_date", "Tushare suspend_d")
     if "suspend_type" in frame:
         frame["suspend_type"] = frame["suspend_type"].astype(str).str.strip().str.upper()
