@@ -4,6 +4,7 @@ import csv
 from datetime import date, timedelta
 import json
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -1147,6 +1148,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                         "date": "2020-01-02",
                         "variant": f"V{cell_index:04d}",
                         "factor": "roe",
+                        "cross_section_size": 1024,
                         "sample_audit": {
                             "candidate_count": 1024,
                             "signal_eligible_count": 1024,
@@ -1192,6 +1194,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "date": "2020-01-02",
             "variant": "I0000_pit_publication",
             "factor": "roe",
+            "cross_section_size": 0,
             "sample_audit": {
                 "candidate_count": 1,
                 "signal_eligible_count": 1,
@@ -2894,6 +2897,52 @@ def _current_git_sha() -> str:
     ).strip()
 
 
+def _make_fixture_probe_commit(spec_path: Path, inventory_path: Path) -> str:
+    """Create a sparse, unreferenced commit containing the fixture probe blobs."""
+
+    repository = Path(__file__).resolve().parents[1]
+
+    def hash_blob(path: Path) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(repository), "hash-object", "-w", str(path)],
+            text=True,
+        ).strip()
+
+    def make_tree(lines: list[str]) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(repository), "mktree"],
+            input=("\n".join(lines) + "\n").encode("utf-8"),
+        ).decode("ascii").strip()
+
+    spec_blob = hash_blob(spec_path)
+    inventory_blob = hash_blob(inventory_path)
+    leaf_tree = make_tree([
+        f"100644 blob {spec_blob}\tcoverage_probe_spec.v2.json",
+        f"100644 blob {inventory_blob}\tprior_specification_inventory.json",
+    ])
+    study_tree = make_tree([
+        f"040000 tree {leaf_tree}\tpit_factor_bias_decomposition_v2",
+    ])
+    root_tree = make_tree([f"040000 tree {study_tree}\tstudies"])
+    environment = os.environ.copy()
+    environment.update({
+        "GIT_AUTHOR_NAME": "fixture probe",
+        "GIT_AUTHOR_EMAIL": "fixture@example.test",
+        "GIT_COMMITTER_NAME": "fixture probe",
+        "GIT_COMMITTER_EMAIL": "fixture@example.test",
+        "GIT_AUTHOR_DATE": "2026-09-01T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2026-09-01T00:00:00+00:00",
+    })
+    return subprocess.check_output(
+        [
+            "git", "-C", str(repository), "commit-tree", root_tree,
+            "-p", _current_git_sha(),
+        ],
+        env=environment,
+        text=True,
+    ).strip()
+
+
 def _stage2_plan() -> dict[str, object]:
     variants: list[dict[str, object]] = [
         {
@@ -3465,6 +3514,41 @@ def _bind_stage2_gate_artifacts(
     }
     prior_specification_inventory_path.write_text(
         json.dumps(inventory, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    # The production validator binds both probe blobs to the Git commit named
+    # in the receipt.  This fixture inventory is intentionally different from
+    # the maintained (still-incomplete) repository inventory, so create an
+    # unreferenced synthetic commit containing the exact fixture bytes.  It
+    # writes only Git objects; HEAD, the index, and the worktree are unchanged.
+    fixture_probe_commit = _make_fixture_probe_commit(
+        coverage_probe_spec_path, prior_specification_inventory_path
+    )
+    coverage_probe_receipt = json.loads(
+        coverage_probe_receipt_path.read_text(encoding="utf-8")
+    )
+    coverage_probe_receipt["repository_state"]["agent_commit"] = fixture_probe_commit
+    coverage_probe_receipt.pop("receipt_id", None)
+    canonical_without_id = (
+        json.dumps(
+            coverage_probe_receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    coverage_probe_receipt["receipt_id"] = "sha256:" + hashlib.sha256(
+        canonical_without_id
+    ).hexdigest()
+    coverage_probe_receipt_path.write_text(
+        json.dumps(
+            coverage_probe_receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
         encoding="utf-8",
     )
     plan["protocol_source_sha256"] = _sha256(protocol_source_path)
