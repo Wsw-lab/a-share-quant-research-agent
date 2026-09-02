@@ -1,0 +1,57 @@
+{
+  "schema_version": "stage2_external_registration_handoff_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "prepared_no_submission_made",
+  "purpose": "Provider-neutral handoff for submitting the exact frozen design manifest after the outcome-blind coverage and rights gates pass.",
+  "submission": {
+    "provider": null,
+    "provider_options": [
+      "OSF Registries",
+      "Zenodo",
+      "journal_or_editorial_pre_registration_route",
+      "another_provider_with_a_public_verifiable_record"
+    ],
+    "account_owner": null,
+    "submitted_at": null,
+    "artifact_type": "stage2_design_manifest_v1_exact_bytes_or_sha256_digest",
+    "artifact_path": null,
+    "artifact_sha256": null,
+    "submission_notes": null
+  },
+  "verification": {
+    "identifier": null,
+    "verification_uri": null,
+    "provider_record_evidence_path": null,
+    "provider_record_evidence_sha256": null,
+    "verified_at": null,
+    "verifier": null,
+    "verification_method": null,
+    "independent_checklist": [
+      "The provider record is reachable without relying on a private session.",
+      "The record identifies the same study and provider identifier recorded here.",
+      "The recorded manifest bytes or digest exactly match submission.artifact_sha256.",
+      "The provider timestamp is explicit and timezone-aware.",
+      "The retained evidence is sufficient for an independent reviewer to repeat the check."
+    ]
+  },
+  "handoff_contract": {
+    "required_preconditions": [
+      "coverage_probe_spec.v2.json is committed and externally timestamped before probe execution",
+      "the bounded outcome-blind probe receipt passes all fixed gates",
+      "historical data, official calendar, and data-rights attestation pass review",
+      "prior-exposure attestation and design manifest are complete",
+      "the manifest is frozen and its exact hash is recorded"
+    ],
+    "forbidden_actions": [
+      "submitting a draft plan or a modified manifest",
+      "changing the manifest after submission",
+      "using a private or unverifiable timestamp as external registration",
+      "inspecting factor outcomes or forward returns to decide whether to register",
+      "creating a receipt from this template without a provider-controlled record"
+    ],
+    "next_artifact": "registration_receipt.template.json",
+    "execution_authorization_after_verification": true
+  },
+  "trust_boundary": "This template is a checklist and contains no registration, timestamp, identifier, or proof. Only a human with access to the external provider may submit and independently verify the record. Null fields cannot authorize Stage 2.",
+  "completion_gate": "Populate only after an external provider has accepted the exact manifest; retain provider evidence privately where redistribution is restricted, publish only permitted metadata and hashes, and then complete registration_receipt.v1 followed by execution_authorization.v1."
+}

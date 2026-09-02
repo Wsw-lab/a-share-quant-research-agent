@@ -24,6 +24,7 @@ The existing `pit-factor-replication-v1` receipt is disclosed pilot evidence. It
 - `execution_plan.template.json` - flat runner contract; its plan core is frozen before registration and its non-core envelope is completed only after authorization.
 - `design_manifest.template.json` - non-self-referential manifest binding the frozen plan core, code, calendar, protocol, and gate artifacts.
 - `registration_receipt.template.json` - external timestamp record binding the exact design-manifest hash.
+- `external_registration_handoff.template.json` and `external_registration_handoff.md` - provider-neutral submission and independent-verification handoff; no external record is created by repository tooling.
 - `execution_authorization.template.json` - final, non-circular authorization binding the manifest, registration receipt, frozen plan, and blind-data release boundary.
 - `official_calendar/README.md` and `official_calendar/calendar.schema.json` - required common SSE/SZSE session-calendar input contract; no calendar data are included in the repository.
 - `data_requirements.json` - minimum fields, coverage, rights, and vintage boundary.
