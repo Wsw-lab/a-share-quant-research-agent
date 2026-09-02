@@ -28,7 +28,11 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 TOOLCHAIN = ROOT / ".github" / "ci-toolchain.txt"
 RUNTIME = ROOT / ".github" / "ci-runtime.txt"
 PACKAGE = ROOT / "src" / "a_share_quant_agent"
-README_GREEN_PATH_TIMEOUT_SECONDS = 10 * 60
+# The green path intentionally reruns the complete offline suite in a clean
+# checkout.  Keep enough headroom for the slower hosted runners while staying
+# below the dedicated job's 15-minute timeout (which also leaves the required
+# two-minute teardown margin asserted below).
+README_GREEN_PATH_TIMEOUT_SECONDS = 12 * 60
 
 EXPECTED_TOOLCHAIN = {
     "packaging": "26.3",
