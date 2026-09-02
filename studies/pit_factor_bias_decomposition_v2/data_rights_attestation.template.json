@@ -1,0 +1,99 @@
+{
+  "schema_version": "stage2_data_rights_attestation_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_not_attested",
+  "attested_at": null,
+  "attestor": null,
+  "attestor_role": null,
+  "contract_reference": null,
+  "contract_effective_at": null,
+  "contract_expiry_at": null,
+  "contract_evidence_sha256": null,
+  "datasets": {
+    "quotes": {
+      "source_name": null,
+      "source_reference": null,
+      "license_or_contract_scope": null,
+      "terms_evidence_sha256": null,
+      "local_storage_permitted": null,
+      "local_analysis_permitted": null,
+      "aggregate_publication_permitted": null,
+      "raw_redistribution_permitted": false,
+      "hash_publication_permitted": null,
+      "controlled_reviewer_rerun_permitted": null,
+      "restrictions": []
+    },
+    "stock_master": {
+      "source_name": null,
+      "source_reference": null,
+      "license_or_contract_scope": null,
+      "terms_evidence_sha256": null,
+      "local_storage_permitted": null,
+      "local_analysis_permitted": null,
+      "aggregate_publication_permitted": null,
+      "raw_redistribution_permitted": false,
+      "hash_publication_permitted": null,
+      "controlled_reviewer_rerun_permitted": null,
+      "restrictions": []
+    },
+    "fundamentals": {
+      "source_name": null,
+      "source_reference": null,
+      "license_or_contract_scope": null,
+      "terms_evidence_sha256": null,
+      "local_storage_permitted": null,
+      "local_analysis_permitted": null,
+      "aggregate_publication_permitted": null,
+      "raw_redistribution_permitted": false,
+      "hash_publication_permitted": null,
+      "controlled_reviewer_rerun_permitted": null,
+      "restrictions": []
+    },
+    "official_calendar": {
+      "source_name": null,
+      "source_reference": null,
+      "license_or_contract_scope": null,
+      "terms_evidence_sha256": null,
+      "local_storage_permitted": null,
+      "local_analysis_permitted": null,
+      "aggregate_publication_permitted": null,
+      "raw_redistribution_permitted": false,
+      "hash_publication_permitted": null,
+      "calendar_dates_publication_permitted": null,
+      "controlled_reviewer_rerun_permitted": null,
+      "restrictions": []
+    }
+  },
+  "private_endpoint_reason_ledger": {
+    "retention_permitted": null,
+    "hash_binding_permitted": null,
+    "row_redistribution_permitted": false,
+    "terms_evidence_sha256": null,
+    "retention_location_class": "approved_private_storage"
+  },
+  "public_outputs": {
+    "aggregate_coverage_permitted": null,
+    "aggregate_missingness_permitted": null,
+    "aggregate_reason_counts_permitted": null,
+    "cryptographic_hashes_permitted": null,
+    "exact_official_calendar_dates_permitted": null,
+    "raw_rows_permitted": false
+  },
+  "prohibited_actions": [
+    "commit credentials, tokens, cookies, request headers, or raw licensed rows",
+    "publish a provider response or derivative table when the contract allows only personal viewing",
+    "give a reviewer raw rows without an explicit controlled-access clause",
+    "treat software-client MIT/BSD terms as a data licence",
+    "call a single-version snapshot revision/vintage history"
+  ],
+  "evidence_index": [],
+  "signature": {
+    "type": null,
+    "allowed_types": ["human_verified_evidence"],
+    "evidence_sha256": null,
+    "signer_identity": null,
+    "verification_uri": null,
+    "trust_boundary": "A human reviewer must verify the contract and the exact permitted outputs."
+  },
+  "completion_gate": "Every dataset has a traceable contract/reference and terms hash; local storage and analysis, aggregate/publication, hash, calendar-date and controlled-review permissions are explicit booleans; raw redistribution remains false; private ledger retention/hash rights are explicit; all timestamps are timezone-aware; and a human verifier changes status to attested. This artifact never grants execution authorization by itself."
+}

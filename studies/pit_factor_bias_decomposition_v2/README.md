@@ -28,6 +28,10 @@ The existing `pit-factor-replication-v1` receipt is disclosed pilot evidence. It
 - `official_calendar/README.md` and `official_calendar/calendar.schema.json` - required common SSE/SZSE session-calendar input contract; no calendar data are included in the repository.
 - `data_requirements.json` - minimum fields, coverage, rights, and vintage boundary.
 - `data_review_attestation.template.json` - fail-closed human review of execution semantics, field informativeness, and rights.
+- `data_acquisition_plan.md` - source decision matrix, exact Tushare/official-source field mapping, procurement sequence, and external blockers.
+- `source_capability_matrix.json` - machine-readable, conservative provider capabilities; it is not a licence or evidence of acquisition.
+- `data_rights_attestation.template.json` - dataset-level contract, storage, aggregate-reporting, calendar-publication, and private-ledger rights packet.
+- `a_share_quant_agent.data_access` - outcome-blind metadata scanner and pure Tushare daily/calendar/actual-disclosure frame adapters; it makes no network calls and never authorizes Stage 2.
 - `statistical_analysis_plan.md` - submission-grade research protocol and inference rules.
 - `current_bundle_coverage.json` - retained pre-calendar three-file diagnostic; not valid under the current four-input execution gate.
 - `current_bundle_gap_assessment.md` - interpretation of why that bundle is blocked for Stage 2.
@@ -57,6 +61,24 @@ PYTHONPATH=src python3 -m a_share_quant_agent.study_v2_coverage \
 ```
 
 The current bundle has zero quoted months inside the fixed 2010-2022 target, fails the 13-year/156-month design gate, and has no completed review attestation, so it is `BLOCKED_FOR_STAGE2`. Column presence alone never passes the execution, tradability, or rights gates. Because the verifiable receipt embeds the exact official-calendar session dates, the rights review must explicitly permit publication of those dates; this does not authorize publication of licensed quote or fundamental rows. After an authorized reviewer completes the attestation, pass it with `--review-attestation /private/path/review.json`; the public repository receives only its hash and non-identifying status, never the local path or licensed market rows.
+
+Before that four-input audit, the metadata-only intake can be run without
+factor or return inspection:
+
+```bash
+PYTHONPATH=src python3 -m a_share_quant_agent.data_access \
+  --quotes /authorized/path/daily_quotes.csv \
+  --stock-master /authorized/path/stock_master.csv \
+  --fundamentals /authorized/path/fundamentals.csv \
+  --official-calendar /authorized/path/official_calendar.csv \
+  --rights-attestation /private/path/data_rights_attestation.json \
+  --output /private/output/stage2_data_access_audit.json
+```
+
+This command records only file hashes, dimensions, date ranges, duplicate-key
+counts, required-field non-null rates, and ST/suspension distinct values.  A
+`pass_metadata_only` result is still not execution authorization; a human must
+complete the review, external registration, and authorization chain.
 
 Pre-lock feasibility uses only outcome-blind aggregate coverage and review evidence. The requirement that all 72 registered cells contain at least 1,000 finite signal-outcome pairs in each of 156 months is a separate post-authorization evidence-status stop; so is the stricter requirement that every signal-eligible record have all required exact official-session endpoints resolved. Neither is evaluated as a factor outcome by the coverage audit, and neither can be used to inspect outcomes before registration.
 

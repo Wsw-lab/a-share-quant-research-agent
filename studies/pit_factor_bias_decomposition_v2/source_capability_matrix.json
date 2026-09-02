@@ -1,0 +1,157 @@
+{
+  "schema_version": "stage2_source_capability_matrix_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "prospective_acquisition_plan_not_evidence",
+  "outcome_blind_boundary": {
+    "allowed_before_registration": [
+      "provider documentation and contract review",
+      "schema and field-dictionary inspection",
+      "fixed-symbol fixed-date source probes after external timestamping",
+      "aggregate row/date/symbol/non-null and field-informativeness checks",
+      "hash and rights-attestation preparation"
+    ],
+    "prohibited_before_registration": [
+      "factor values or ranks",
+      "forward returns or ICs",
+      "variant ranking or threshold changes",
+      "full-market or multi-year extraction from the bounded probe"
+    ]
+  },
+  "target_contract": {
+    "quotes": {
+      "interval": ["2009-01-01", "2023-01-31"],
+      "required_fields": ["date", "symbol", "close", "amount", "is_st", "is_suspended"],
+      "semantic_requirements": [
+        "close is an explicitly documented adjusted-close series",
+        "amount units and cutoff timing are documented",
+        "exact t, t+1, t+20, t+21 rows are available on the bound official calendar"
+      ]
+    },
+    "stock_master": {
+      "interval": ["1990-01-01", "2023-01-31"],
+      "required_fields": ["symbol", "listDate", "delistDate", "listStatus", "stockType"],
+      "semantic_requirements": [
+        "current and delisted SH/SZ A-shares are retained",
+        "list and delist dates are security lifecycle facts, not current-only status"
+      ]
+    },
+    "fundamentals": {
+      "interval": ["2009-01-01", "2022-12-31"],
+      "required_fields": ["symbol", "roeDiluted", "publishDate", "reportPeriodEnd"],
+      "semantic_requirements": [
+        "publishDate is the actual recorded disclosure date",
+        "no row has publishDate earlier than reportPeriodEnd",
+        "single-version rows are not called vintages or first-release values"
+      ]
+    },
+    "official_calendar": {
+      "interval": ["2009-01-01", "2023-01-31"],
+      "required_fields": ["date"],
+      "semantic_requirements": [
+        "each row is a common official SSE and SZSE open session",
+        "source provenance and disagreement resolution are retained",
+        "exact CSV bytes are hash-bound before registration"
+      ]
+    }
+  },
+  "providers": [
+    {
+      "provider_id": "tushare_pro",
+      "role": "candidate_primary_if_contract_is_explicit",
+      "endpoints": {
+        "quotes": ["daily", "adj_factor"],
+        "stock_master": ["stock_basic", "bak_basic"],
+        "fundamentals": ["fina_indicator", "disclosure_date"],
+        "official_calendar": ["trade_cal(exchange=SSE)", "trade_cal(exchange=SZSE)"],
+        "tradability": ["stock_st", "suspend_d"]
+      },
+      "known_constraints": [
+        "token, points, and endpoint entitlements must be verified",
+        "daily amount is reported in thousand CNY and volume in lots; conversion must be recorded",
+        "actual_date, not pre_date or ann_date, is the publication-date candidate",
+        "stock_basic alone does not prove historical point-in-time membership",
+        "the current service agreement describes a personal, non-transferable, non-commercial licence; written permission for local retention, aggregate publication, and reviewer access is required"
+      ],
+      "references": [
+        "https://tushare.pro/document/2?doc_id=27",
+        "https://tushare.pro/document/2?doc_id=28",
+        "https://tushare.pro/document/2?doc_id=162",
+        "https://tushare.pro/document/2?doc_id=183",
+        "https://tushare.pro/document/2?doc_id=214",
+        "https://tushare.pro/document/1?doc_id=405"
+      ]
+    },
+    {
+      "provider_id": "akshare",
+      "role": "bounded_probe_only",
+      "endpoints": {
+        "quotes": ["stock_zh_a_hist"],
+        "official_calendar": ["tool_trade_date_hist_sina"]
+      },
+      "known_constraints": [
+        "raw daily bars can test historical endpoint reachability only",
+        "the Sina calendar is not accepted as sole authoritative common SSE/SZSE evidence",
+        "no complete locked publication-date, ST, suspension, lifecycle, or rights contract is implied",
+        "the AKShare MIT software licence does not license upstream returned data"
+      ],
+      "references": [
+        "https://akshare.akfamily.xyz/data/stock/stock.html",
+        "https://akshare.akfamily.xyz/data/tool/tool.html",
+        "https://github.com/akfamily/akshare"
+      ]
+    },
+    {
+      "provider_id": "baostock",
+      "role": "cross_check_only",
+      "endpoints": {
+        "quotes": ["query_history_k_data_plus"],
+        "stock_master": ["query_stock_basic"],
+        "official_calendar": ["query_trade_dates"]
+      },
+      "known_constraints": [
+        "actual report publication dates and complete historical ST/suspension states are not established by the public adapter",
+        "adjustment and delisting endpoint semantics require a separate review",
+        "client-code licensing does not grant publication rights for service data"
+      ],
+      "references": ["https://pypi.org/project/baostock/"]
+    },
+    {
+      "provider_id": "official_exchange_and_cninfo",
+      "role": "calendar_and_disclosure_cross_check",
+      "endpoints": {
+        "official_calendar": ["SSE market calendar", "SZSE market calendar"],
+        "fundamentals": ["issuer disclosure documents and filing metadata"],
+        "stock_master": ["listing and delisting announcements"]
+      },
+      "known_constraints": [
+        "historical bulk extraction and machine-readable availability must be demonstrated",
+        "retain exact source documents and terms evidence",
+        "official pages do not replace a complete adjusted-close and tradability panel"
+      ],
+      "references": [
+        "https://www.sse.com.cn/disclosure/dealinstruc/calendar/index.shtml",
+        "https://english.sse.com.cn/start/trading/schedule/",
+        "https://www.szse.cn/",
+        "https://www.cninfo.com.cn/"
+      ]
+    },
+    {
+      "provider_id": "licensed_vendor_wind_csmar_choice_or_equivalent",
+      "role": "preferred_primary_if_rights_are_explicit",
+      "endpoints": {
+        "quotes": ["adjusted daily bars", "corporate-action factors", "amount"],
+        "stock_master": ["point-in-time listing/delisting master"],
+        "fundamentals": ["point-in-time ROE and actual filing publication dates"],
+        "official_calendar": ["exchange calendars"],
+        "tradability": ["historical ST and suspension states"]
+      },
+      "known_constraints": [
+        "this is a procurement option, not evidence that a contract is held",
+        "contract must allow local analysis, hash binding, controlled reviewer reruns, and aggregate reporting",
+        "a current snapshot must not be called revision history without versioned values and as-of timestamps"
+      ],
+      "references": []
+    }
+  ],
+  "decision_rule": "Select a primary source only after every required role has a documented endpoint, complete target coverage, semantic review, and written rights for local analysis plus the intended aggregate/publication and controlled-review outputs. Otherwise retain BLOCKED_FOR_STAGE2."
+}
