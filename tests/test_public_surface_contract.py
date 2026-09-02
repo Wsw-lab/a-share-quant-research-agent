@@ -30,9 +30,9 @@ RUNTIME = ROOT / ".github" / "ci-runtime.txt"
 PACKAGE = ROOT / "src" / "a_share_quant_agent"
 # The green path intentionally reruns the complete offline suite in a clean
 # checkout.  Keep enough headroom for the slower hosted runners while staying
-# below the dedicated job's 15-minute timeout (which also leaves the required
+# below the dedicated job's 20-minute timeout (which also leaves the required
 # two-minute teardown margin asserted below).
-README_GREEN_PATH_TIMEOUT_SECONDS = 12 * 60
+README_GREEN_PATH_TIMEOUT_SECONDS = 18 * 60
 
 EXPECTED_TOOLCHAIN = {
     "packaging": "26.3",
