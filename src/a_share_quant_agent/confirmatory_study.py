@@ -11,17 +11,20 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import platform
+import stat
 import subprocess
 import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlparse
+import uuid
 
 import numpy as np
 import pandas as pd
@@ -34,6 +37,17 @@ STAGE2_RECEIPT_SCHEMA_VERSION = "confirmatory_study_receipt_v2"
 STAGE2_ENDPOINT_LEDGER_SCHEMA_VERSION = "stage2_endpoint_reason_ledger_v1"
 STAGE2_ENDPOINT_LEDGER_FILENAME = "endpoint_reason_ledger.private.json"
 STAGE2_RESOLVED_ENDPOINT_CODE = "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+STAGE2_AUTHORIZATION_CONSUMPTION_SCHEMA_VERSION = (
+    "stage2_execution_authorization_consumption_v1"
+)
+STAGE2_AUTHORIZATION_CONSUMPTION_DIRNAME = ".stage2-authorization-consumption"
+STAGE2_AUTHORIZATION_CONSUMPTION_SUFFIX = ".consumed.json"
+STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT = (
+    "exclusive_create_sidecar_before_outcome_load"
+)
+STAGE2_AUTHORIZATION_CONSUMPTION_FAILURE_RULE = (
+    "A failed or interrupted claim remains consumed and requires a new authorization."
+)
 STAGE2_COMPONENTS = (
     "exclude_st",
     "exclude_suspended",
@@ -1543,6 +1557,7 @@ def run_stage2_confirmatory_study(
     design_manifest_path: str | Path,
     registration_receipt_path: str | Path,
     execution_authorization_path: str | Path,
+    authorization_consumption_dir: str | Path | None = None,
     protocol_source_path: str | Path,
     statistical_analysis_plan_path: str | Path,
     prior_specification_inventory_path: str | Path,
@@ -1647,6 +1662,17 @@ def run_stage2_confirmatory_study(
         prior_exposure_attestation_path=prior_exposure_attestation_path,
         prior_exposure_attestation=prior_exposure_attestation,
         review_attestation=attestation,
+    )
+
+    # This is the release boundary: all pre-registration, coverage, rights,
+    # and prior-exposure checks above are outcome-blind.  Consume an exclusive
+    # sidecar before loading the quote/fundamental panels or computing any
+    # factor/outcome value.  A failed or interrupted run remains consumed.
+    authorization_consumption = consume_stage2_execution_authorization(
+        execution_authorization_path,
+        plan=plan,
+        code_revision=code_revision,
+        consumption_dir=authorization_consumption_dir,
     )
 
     quotes = _load_quotes(quotes_path)
@@ -1792,6 +1818,7 @@ def run_stage2_confirmatory_study(
             "registration_receipt": registration_receipt,
             "execution_authorization": execution_authorization,
         },
+        "authorization_consumption": authorization_consumption,
         "data": {
             "classification": declaration["source_classification"],
             "source_name": declaration["source_name"],
@@ -1893,8 +1920,16 @@ def verify_stage2_study_receipt(
     path: str | Path,
     *,
     endpoint_ledger_path: str | Path | None = None,
+    authorization_consumption_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Verify a public v2 receipt, optionally auditing its private endpoint ledger."""
+    """Verify a public v2 receipt and optional private audit sidecars.
+
+    The public receipt always contains the hash-bound consumption record.  A
+    custodian/reviewer may additionally pass the private sidecar to verify that
+    the exclusive-create marker exists at the expected path and has not been
+    replaced.  Omitting either private sidecar is intentional for public
+    verification and does not grant access to licensed rows.
+    """
 
     receipt_path = _regular_file(path, "receipt")
     payload = receipt_path.read_bytes()
@@ -1996,6 +2031,13 @@ def verify_stage2_study_receipt(
         plan=plan,
         files=files,
         registration_evidence=registration_evidence,
+    )
+    _validate_stage2_receipt_authorization_consumption(
+        receipt=receipt,
+        plan=plan,
+        files=files,
+        registration_evidence=registration_evidence,
+        authorization_consumption_path=authorization_consumption_path,
     )
     _validate_stage2_receipt_coverage_probe(
         data=data,
@@ -2447,6 +2489,108 @@ def _validate_embedded_stage2_registration_chain(
         authorization.get("signature"), "execution authorization"
     )
     return manifest
+
+
+def _validate_stage2_receipt_authorization_consumption(
+    *,
+    receipt: Mapping[str, Any],
+    plan: Mapping[str, Any],
+    files: Mapping[str, Any],
+    registration_evidence: Mapping[str, Any],
+    authorization_consumption_path: str | Path | None,
+) -> None:
+    """Validate the receipt's non-circular, single-use authorization record."""
+
+    metadata = receipt.get("authorization_consumption")
+    required_keys = {
+        "schema_version",
+        "record",
+        "record_sha256",
+        "filename",
+        "single_use_enforced",
+        "enforcement",
+    }
+    if not isinstance(metadata, Mapping) or set(metadata) != required_keys:
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt authorization-consumption metadata is missing or invalid"
+        )
+    authorization = registration_evidence.get("execution_authorization")
+    authorization_file = files.get("execution_authorization")
+    if not isinstance(authorization, Mapping) or not isinstance(
+        authorization_file, Mapping
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt execution authorization evidence is missing"
+        )
+    authorization_sha256 = authorization_file.get("sha256")
+    if not _is_sha256(authorization_sha256):
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt execution authorization hash is invalid"
+        )
+    record = metadata.get("record")
+    if metadata.get("schema_version") != STAGE2_AUTHORIZATION_CONSUMPTION_SCHEMA_VERSION:
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt authorization-consumption schema is unsupported"
+        )
+    if metadata.get("single_use_enforced") is not True or metadata.get(
+        "enforcement"
+    ) != STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT:
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt does not attest exclusive authorization consumption"
+        )
+    if metadata.get("filename") != (
+        f"{authorization_sha256}{STAGE2_AUTHORIZATION_CONSUMPTION_SUFFIX}"
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt authorization-consumption filename is invalid"
+        )
+    if not isinstance(record, Mapping) or metadata.get("record_sha256") != _sha256(
+        _canonical_bytes(record)
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt authorization-consumption record hash is invalid"
+        )
+    _validate_stage2_authorization_consumption_record(
+        record,
+        authorization_sha256=authorization_sha256,
+        authorization=authorization,
+        plan=plan,
+    )
+    if record.get("authorization_sha256") != authorization_sha256:
+        raise ConfirmatoryStudyError(
+            "Stage-2 receipt authorization-consumption record is not bound to authorization"
+        )
+    if authorization_consumption_path is not None:
+        sidecar = _regular_file(
+            authorization_consumption_path,
+            "authorization consumption sidecar",
+        )
+        if sidecar.name != metadata["filename"]:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization-consumption sidecar filename differs from receipt"
+            )
+        sidecar_bytes = sidecar.read_bytes()
+        sidecar_record = _read_json_object(
+            sidecar_bytes, "authorization consumption sidecar"
+        )
+        if sidecar_bytes != _canonical_bytes(sidecar_record):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization-consumption sidecar must be canonical JSON"
+            )
+        if _sha256(sidecar_bytes) != metadata["record_sha256"]:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization-consumption sidecar hash mismatch"
+            )
+        _validate_stage2_authorization_consumption_record(
+            sidecar_record,
+            authorization_sha256=authorization_sha256,
+            authorization=authorization,
+            plan=plan,
+        )
+        if sidecar_record != record:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization-consumption sidecar differs from receipt"
+            )
 
 
 def _validate_stage2_receipt_coverage_probe(
@@ -3673,6 +3817,448 @@ def _validate_attestation_signature(value: Any, label: str) -> None:
         raise ConfirmatoryStudyError(
             f"Stage-2 {label} must disclose the human-verification trust boundary"
         )
+
+
+def _stage2_authorization_consumption_path(
+    authorization_path: Path,
+    authorization_sha256: str,
+    consumption_dir: str | Path | None = None,
+) -> Path:
+    """Return the deterministic, private sidecar path for one authorization.
+
+    The sidecar is deliberately outside the authorization JSON.  Mutating the
+    signed/hashed authorization after it has been issued would create a hash
+    cycle and would make an authorization reusable by simply rewriting a
+    counter.  An exclusive-create sidecar instead acts as a local capability
+    consumption record.  The custodian must protect the directory from
+    deletion or replacement.  The runner creates the directory with mode
+    ``0700`` and rejects group/world-readable permissions; that operational
+    trust boundary still cannot be established against a privileged operator.
+    """
+
+    if not _is_sha256(authorization_sha256):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption requires a valid authorization hash"
+        )
+    if consumption_dir is None:
+        base = authorization_path.parent / STAGE2_AUTHORIZATION_CONSUMPTION_DIRNAME
+    else:
+        base = Path(consumption_dir).expanduser()
+    # Reject an explicitly supplied symlinked directory.  A custodian can still
+    # choose a path whose parent is a symlink, but the final directory itself is
+    # never silently redirected by this helper.
+    if base.exists() and base.is_symlink():
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption directory must not be a symlink"
+        )
+    base = base.resolve(strict=False)
+    return base / f"{authorization_sha256}{STAGE2_AUTHORIZATION_CONSUMPTION_SUFFIX}"
+
+
+def _stage2_authorization_consumption_record(
+    *,
+    authorization: Mapping[str, Any],
+    authorization_sha256: str,
+    plan: Mapping[str, Any] | None,
+    code_revision: str | None,
+    consumed_at: str | None,
+    consumption_id: str | None = None,
+) -> dict[str, Any]:
+    """Build and validate the canonical one-use consumption record."""
+
+    if authorization.get("schema_version") != "stage2_execution_authorization_v1":
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption requires the v1 authorization schema"
+        )
+    if authorization.get("status") != "authorized":
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization is not authorized for consumption"
+        )
+    study_id = authorization.get("study_id")
+    if not _meaningful_text(study_id):
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization study_id is invalid"
+        )
+    authorized_at = authorization.get("authorized_at")
+    authorized_time = _finite_tz_timestamp(
+        authorized_at, "execution authorization timestamp"
+    )
+    release_scope = authorization.get("release_scope")
+    if not isinstance(release_scope, Mapping):
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization release scope is invalid"
+        )
+    if plan is not None:
+        if plan.get("study_id") != study_id:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption study_id differs from the plan"
+            )
+        plan_registration = plan.get("external_registration")
+        if not isinstance(plan_registration, Mapping):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption external registration is invalid"
+            )
+        plan_core = plan_registration.get("registered_content_sha256")
+        if not _is_sha256(plan_core) or authorization.get("plan_core_sha256") != plan_core:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption is not bound to the plan core"
+            )
+        if authorization.get("authorized_at") != plan.get("locked_at"):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption timestamp differs from plan.locked_at"
+            )
+        expected_scope = plan.get("runner_scope")
+        expected_period = plan.get("test_period")
+    else:
+        plan_core = authorization.get("plan_core_sha256")
+        expected_scope = release_scope.get("authorized_runner_scope")
+        expected_period = release_scope.get("authorized_analysis_period")
+    if not _is_sha256(plan_core):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption plan core hash is invalid"
+        )
+    if not isinstance(expected_scope, str) or not expected_scope:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption runner scope is invalid"
+        )
+    if (
+        not isinstance(expected_period, list)
+        or len(expected_period) != 2
+        or not all(isinstance(value, str) and value for value in expected_period)
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption analysis period is invalid"
+        )
+    if code_revision is None:
+        code_revision = release_scope.get("authorized_code_commit")
+    if not _is_git_sha(code_revision):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption code revision is invalid"
+        )
+    authorized_code = release_scope.get("authorized_code_commit")
+    if authorized_code != code_revision:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption code revision differs from scope"
+        )
+    if consumed_at is None:
+        consumed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    consumed_time = _finite_tz_timestamp(
+        consumed_at, "authorization consumption timestamp"
+    )
+    if consumed_time < authorized_time:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption occurred before authorization"
+        )
+    if consumption_id is None:
+        consumption_id = uuid.uuid4().hex
+    if (
+        not isinstance(consumption_id, str)
+        or len(consumption_id) != 32
+        or any(character not in "0123456789abcdef" for character in consumption_id)
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption id must be 32 lowercase hex characters"
+        )
+    record = {
+        "schema_version": STAGE2_AUTHORIZATION_CONSUMPTION_SCHEMA_VERSION,
+        "study_id": study_id,
+        "status": "consumed",
+        "authorization_sha256": authorization_sha256,
+        "consumption_id": consumption_id,
+        "authorized_at": str(authorized_at),
+        "consumed_at": str(consumed_at),
+        "plan_core_sha256": plan_core,
+        "code_commit": code_revision,
+        "runner_scope": expected_scope,
+        "analysis_period": list(expected_period),
+        "single_use_enforced": True,
+        "enforcement": STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT,
+        "outcome_data_release_boundary": (
+            "This sidecar was created exclusively before loading outcome quotes or "
+            "computing factor outcomes."
+        ),
+        "failure_rule": STAGE2_AUTHORIZATION_CONSUMPTION_FAILURE_RULE,
+    }
+    _validate_stage2_authorization_consumption_record(
+        record,
+        authorization_sha256=authorization_sha256,
+        authorization=authorization,
+        plan=plan,
+    )
+    return record
+
+
+def _validate_stage2_authorization_consumption_record(
+    record: Mapping[str, Any],
+    *,
+    authorization_sha256: str,
+    authorization: Mapping[str, Any] | None = None,
+    plan: Mapping[str, Any] | None = None,
+) -> None:
+    """Validate a sidecar record without consuming or loading market outcomes."""
+
+    required_keys = {
+        "schema_version",
+        "study_id",
+        "status",
+        "authorization_sha256",
+        "consumption_id",
+        "authorized_at",
+        "consumed_at",
+        "plan_core_sha256",
+        "code_commit",
+        "runner_scope",
+        "analysis_period",
+        "single_use_enforced",
+        "enforcement",
+        "outcome_data_release_boundary",
+        "failure_rule",
+    }
+    if not isinstance(record, Mapping) or set(record) != required_keys:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption record has an invalid schema"
+        )
+    if (
+        record.get("schema_version")
+        != STAGE2_AUTHORIZATION_CONSUMPTION_SCHEMA_VERSION
+        or record.get("status") != "consumed"
+        or record.get("authorization_sha256") != authorization_sha256
+        or not _is_sha256(record.get("authorization_sha256"))
+        or record.get("single_use_enforced") is not True
+        or record.get("enforcement") != STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT
+        or record.get("failure_rule") != STAGE2_AUTHORIZATION_CONSUMPTION_FAILURE_RULE
+        or not _meaningful_text(record.get("study_id"))
+        or not _is_sha256(record.get("plan_core_sha256"))
+        or not _is_git_sha(record.get("code_commit"))
+        or not isinstance(record.get("runner_scope"), str)
+        or not record.get("runner_scope")
+        or not isinstance(record.get("analysis_period"), list)
+        or len(record["analysis_period"]) != 2
+        or not all(
+            isinstance(value, str) and value for value in record["analysis_period"]
+        )
+        or not isinstance(record.get("consumption_id"), str)
+        or len(record["consumption_id"]) != 32
+        or any(
+            character not in "0123456789abcdef"
+            for character in record["consumption_id"]
+        )
+        or not _meaningful_text(record.get("outcome_data_release_boundary"), minimum_length=20)
+    ):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption record is invalid"
+        )
+    authorized_time = _finite_tz_timestamp(
+        record.get("authorized_at"), "consumption authorized_at"
+    )
+    consumed_time = _finite_tz_timestamp(
+        record.get("consumed_at"), "consumption consumed_at"
+    )
+    if consumed_time < authorized_time:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption chronology is invalid"
+        )
+    if authorization is not None:
+        release_scope = authorization.get("release_scope")
+        if not isinstance(release_scope, Mapping):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption release scope is invalid"
+            )
+        if (
+            authorization.get("study_id") != record.get("study_id")
+            or authorization.get("authorized_at") != record.get("authorized_at")
+            or release_scope.get("authorized_code_commit") != record.get("code_commit")
+            or authorization.get("plan_core_sha256") != record.get("plan_core_sha256")
+        ):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption record does not bind authorization"
+            )
+    if plan is not None:
+        plan_registration = plan.get("external_registration")
+        if not isinstance(plan_registration, Mapping):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption external registration is invalid"
+            )
+        if (
+            plan.get("study_id") != record.get("study_id")
+            or plan.get("locked_at") != record.get("authorized_at")
+            or plan.get("runner_scope") != record.get("runner_scope")
+            or plan.get("test_period") != record.get("analysis_period")
+            or plan_registration.get("registered_content_sha256")
+            != record.get("plan_core_sha256")
+            or plan.get("code_commit") != record.get("code_commit")
+        ):
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption record does not bind the plan"
+            )
+
+
+def consume_stage2_execution_authorization(
+    authorization_path: str | Path,
+    *,
+    plan: Mapping[str, Any] | None = None,
+    code_revision: str | None = None,
+    consumption_dir: str | Path | None = None,
+    consumed_at: str | None = None,
+) -> dict[str, Any]:
+    """Atomically consume one authorization before any Stage-2 outcome load.
+
+    The returned mapping is safe to embed in a public receipt (it contains no
+    local path or licensed row).  A second call for the same authorization and
+    consumption directory always fails, including after an interrupted run;
+    operators must issue a fresh authorization rather than retrying silently.
+    """
+
+    resolved = _regular_file(authorization_path, "execution authorization")
+    authorization_bytes = resolved.read_bytes()
+    authorization = _read_json_object(
+        authorization_bytes, "execution authorization"
+    )
+    if authorization_bytes != _canonical_bytes(authorization):
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization must be canonical JSON"
+        )
+    authorization_sha256 = _sha256(authorization_bytes)
+    record = _stage2_authorization_consumption_record(
+        authorization=authorization,
+        authorization_sha256=authorization_sha256,
+        plan=plan,
+        code_revision=code_revision,
+        consumed_at=consumed_at,
+    )
+    marker_path = _stage2_authorization_consumption_path(
+        resolved, authorization_sha256, consumption_dir
+    )
+    try:
+        marker_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption directory could not be created"
+        ) from exc
+    if marker_path.parent.is_symlink() or not marker_path.parent.is_dir():
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption directory is invalid"
+        )
+    try:
+        directory_mode = stat.S_IMODE(marker_path.parent.stat().st_mode)
+    except OSError as exc:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption directory permissions could not be checked"
+        ) from exc
+    if directory_mode & 0o077:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption directory must not be group/world accessible"
+        )
+    payload = _canonical_bytes(record)
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(marker_path), flags | no_follow, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Persist the directory entry as well as the marker bytes.  If this
+        # second fsync fails, retain the marker and require a fresh
+        # authorization rather than allowing a crash-retry to reuse it.
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(str(marker_path.parent), directory_flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except FileExistsError as exc:
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization has already been consumed; issue a new authorization"
+        ) from exc
+    except OSError as exc:
+        # Once O_EXCL has created the marker, retain even a partial marker.
+        # A failed/interrupted claim must not become silently retryable; the
+        # custodian must issue a fresh authorization after investigating it.
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization consumption sidecar could not be created"
+        ) from exc
+    return {
+        "schema_version": record["schema_version"],
+        "record": record,
+        "record_sha256": _sha256(payload),
+        "filename": marker_path.name,
+        "single_use_enforced": True,
+        "enforcement": STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT,
+    }
+
+
+def verify_stage2_execution_authorization_consumption(
+    authorization_path: str | Path,
+    consumption_path: str | Path,
+    *,
+    plan: Mapping[str, Any] | None = None,
+    expected_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Verify a private one-use sidecar and return its canonical metadata."""
+
+    resolved_authorization = _regular_file(
+        authorization_path, "execution authorization"
+    )
+    authorization_bytes = resolved_authorization.read_bytes()
+    authorization = _read_json_object(
+        authorization_bytes, "execution authorization"
+    )
+    if authorization_bytes != _canonical_bytes(authorization):
+        raise ConfirmatoryStudyError(
+            "Stage-2 execution authorization must be canonical JSON"
+        )
+    authorization_sha256 = _sha256(authorization_bytes)
+    resolved_consumption = _regular_file(
+        consumption_path, "authorization consumption sidecar"
+    )
+    try:
+        if stat.S_IMODE(resolved_consumption.parent.stat().st_mode) & 0o077:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption directory must not be group/world accessible"
+            )
+        if stat.S_IMODE(resolved_consumption.stat().st_mode) & 0o077:
+            raise ConfirmatoryStudyError(
+                "Stage-2 authorization consumption sidecar must not be group/world accessible"
+            )
+    except ConfirmatoryStudyError:
+        raise
+    except OSError as exc:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption permissions could not be checked"
+        ) from exc
+    expected_filename = (
+        f"{authorization_sha256}{STAGE2_AUTHORIZATION_CONSUMPTION_SUFFIX}"
+    )
+    if resolved_consumption.name != expected_filename:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption sidecar filename is invalid"
+        )
+    payload = resolved_consumption.read_bytes()
+    record = _read_json_object(payload, "authorization consumption sidecar")
+    if payload != _canonical_bytes(record):
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption sidecar must be canonical JSON"
+        )
+    _validate_stage2_authorization_consumption_record(
+        record,
+        authorization_sha256=authorization_sha256,
+        authorization=authorization,
+        plan=plan,
+    )
+    metadata = {
+        "schema_version": record["schema_version"],
+        "record": record,
+        "record_sha256": _sha256(payload),
+        "filename": resolved_consumption.name,
+        "single_use_enforced": True,
+        "enforcement": STAGE2_AUTHORIZATION_CONSUMPTION_ENFORCEMENT,
+    }
+    if expected_metadata is not None and dict(expected_metadata) != metadata:
+        raise ConfirmatoryStudyError(
+            "Stage-2 authorization consumption sidecar differs from receipt metadata"
+        )
+    return metadata
 
 
 def _validate_registration_proof(value: Any) -> None:
@@ -5126,7 +5712,13 @@ def _file_evidence(path: Path) -> dict[str, Any]:
 
 
 def _regular_file(path: str | Path, label: str) -> Path:
-    resolved = Path(path).expanduser().resolve(strict=False)
+    candidate = Path(path).expanduser()
+    # Check the user-supplied path before resolving it.  Calling ``resolve``
+    # first erases the symlink bit and would let a mutable link redirect a
+    # hash-bound artifact between validation and read.
+    if candidate.is_symlink():
+        raise ConfirmatoryStudyError(f"{label} is not a regular file: {candidate}")
+    resolved = candidate.resolve(strict=False)
     if not resolved.is_file() or resolved.is_symlink():
         raise ConfirmatoryStudyError(f"{label} is not a regular file: {resolved}")
     return resolved
@@ -5218,6 +5810,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "code-revision", "output-dir",
     ):
         run_stage2.add_argument(f"--{option}", required=True)
+    run_stage2.add_argument(
+        "--authorization-consumption-dir",
+        required=False,
+        help=(
+            "private directory for the exclusive authorization-consumption sidecar; "
+            "defaults beside the authorization file"
+        ),
+    )
     verify = subparsers.add_parser("verify")
     verify.add_argument("--receipt", required=True)
     verify_stage2 = subparsers.add_parser("verify-stage2")
@@ -5227,6 +5827,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "optional private endpoint-reason ledger; when supplied, verify its hash, "
             "canonical ordering, uniqueness, cardinality, and reason counts"
+        ),
+    )
+    verify_stage2.add_argument(
+        "--authorization-consumption",
+        help=(
+            "optional private authorization-consumption sidecar; when supplied, "
+            "verify its canonical bytes, filename, hash, and binding to the receipt"
         ),
     )
     status_parser = subparsers.add_parser("status")
@@ -5259,6 +5866,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             design_manifest_path=args.design_manifest,
             registration_receipt_path=args.registration_receipt,
             execution_authorization_path=args.execution_authorization,
+            authorization_consumption_dir=args.authorization_consumption_dir,
             protocol_source_path=args.protocol_source,
             statistical_analysis_plan_path=args.statistical_analysis_plan,
             prior_specification_inventory_path=args.prior_specification_inventory,
@@ -5273,7 +5881,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"verified {receipt['study_id']}: {receipt['status']['code']}")
     elif args.command == "verify-stage2":
         receipt = verify_stage2_study_receipt(
-            args.receipt, endpoint_ledger_path=args.endpoint_ledger
+            args.receipt,
+            endpoint_ledger_path=args.endpoint_ledger,
+            authorization_consumption_path=args.authorization_consumption,
         )
         print(f"verified {receipt['study_id']}: {receipt['status']['code']}")
     else:

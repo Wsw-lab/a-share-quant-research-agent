@@ -91,7 +91,17 @@
     "verification_uri": null,
     "trust_boundary": "Identity and evidence authenticity require independent human verification."
   },
-  "authorization_semantics": "This artifact records an authorized scope and chronology. It is not a consumable nonce, single-use token, run counter, or technical guarantee that only one execution can occur; repeated authorized executions require separate disclosure and receipt comparison.",
+  "authorization_semantics": "This artifact records an externally reviewed authorized scope and chronology. It is immutable once hashed and is not itself a cryptographic nonce or revocation service. Before any outcome load, the local runner must atomically create the exclusive consumption sidecar specified below; a second claim for the same authorization and protected sidecar directory fails closed. This local marker does not prove external identity, prevent a custodian from deleting storage, or replace human registration and authorization.",
+  "consumption_contract": {
+    "schema_version": "stage2_execution_authorization_consumption_v1",
+    "sidecar_directory": ".stage2-authorization-consumption/ (private custodian-controlled directory, mode 0700)",
+    "filename_rule": "<sha256(canonical execution_authorization bytes)>.consumed.json",
+    "atomic_creation": "exclusive create (O_CREAT|O_EXCL, mode 0600) before loading quotes, fundamentals, or computing outcomes",
+    "single_use_scope": "one authorization hash per protected sidecar directory",
+    "failure_rule": "A failed or interrupted claim remains consumed and requires a new authorization.",
+    "release_boundary": "No outcome-data load or factor/outcome computation may occur before the sidecar is durably created.",
+    "operational_boundary": "The custodian must protect the sidecar directory from deletion, replacement, and concurrent writers; this implementation cannot prove that boundary against a privileged operator."
+  },
   "final_envelope_rule": "Only after this authorization is completed and hashed may its SHA-256 and authorized_at be copied into the final execution-plan envelope as execution_authorization_sha256 and locked_at. This authorization binds the frozen plan core, not the later envelope, so no hash cycle is created.",
   "completion_gate": "Every assertion must be true, every required hash and timestamp must be populated and independently verified, status must become authorized, outcome_data_release_permitted_after_authorized_at must become true, and outcome-data release must still not have occurred when this authorization is signed."
 }

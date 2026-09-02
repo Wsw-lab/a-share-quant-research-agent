@@ -53,6 +53,17 @@ the repository tooling.
    `execution_authorization.v1`. Only then may the blind 2010–2022 outcome
    data be released to the runner.
 
+At the runner release boundary, the completed authorization is consumed once
+in a private custodian-controlled directory. The runner atomically creates
+`<sha256(canonical execution_authorization bytes)>.consumed.json` (directory
+mode `0700`, marker mode `0600`) before loading any quote or fundamental
+outcome rows. A second claim for the same authorization hash fails closed, and
+a failed or interrupted claim requires a newly signed authorization. This is a
+local exclusive-create control, not an external registry, cryptographic
+signature, revocation service, or substitute for the human/provider trust
+boundaries above; the custodian must preserve the sidecar and protect it from
+deletion or replacement.
+
 ## Stop conditions
 
 Stop and leave the receipt/authorization templates null if the provider record

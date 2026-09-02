@@ -41,7 +41,9 @@ The existing `pit-factor-replication-v1` receipt is disclosed pilot evidence. It
 - `prior_exposure_attestation.template.json` - owner/authorized-role declaration binding the clean 2010-2022 outcome boundary to the protocol and inventory hashes.
 - `coverage_probe_spec.v1.json` - immutable historical probe design retained byte-for-byte and superseded prospectively; it must not be edited in place.
 - `coverage_probe_spec.v2.json` - current outcome-blind probe design and claim boundary; publishing it does not authorize or imply execution.
+- `coverage_probe_timestamp_proof.template.json` and `coverage_probe_rights_review.template.json` - explicit human evidence templates; null/draft values are deliberately rejected.
 - `coverage_probe_receipt.v2.json` - required future canonical public receipt for the executed v2 probe; it must bind the exact spec hash and pre-execution external timestamp proof and report every fixed gate as passed. It does not yet exist in this repository.
+- `a_share_quant_agent.coverage_probe` - fail-closed preflight, exact 24-cell provider probe, and public/private receipt verifier. It never reads factors or returns.
 - `pbfj_phase1_eoi_draft.md` and `pbfj_phase2_pitch.md` - journal-pathway drafts; neither has been sent.
 - `author_identity_package.private.template.json` - private completion checklist for names, affiliations, ORCID, correspondence, CRediT roles, funding, and conflicts; do not commit a populated copy without every author's approval.
 
@@ -81,6 +83,34 @@ counts, required-field non-null rates, and ST/suspension distinct values.  A
 `pass_metadata_only` result is still not execution authorization; a human must
 complete the review, external registration, and authorization chain.
 
+The bounded coverage probe has its own three-command lifecycle. First obtain a
+provider-controlled timestamp for the exact committed v2 specification and a
+verified rights review (the two templates above are intentionally incomplete),
+then run a no-network preflight:
+
+```bash
+PYTHONPATH=src python3 -m a_share_quant_agent.coverage_probe preflight \
+  --spec studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json \
+  --prior-inventory studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json \
+  --timestamp-proof /private/probe/timestamp-proof.json \
+  --rights-review /private/probe/rights-review.json \
+  --qdata-checkout /authorized/qdata-free-source-quant-research-db \
+  --output-dir /private/probe/run-YYYYMMDD \
+  --agent-commit <40-hex-commit> \
+  --report /private/probe/preflight.json
+```
+
+Only a `READY` report permits `coverage_probe run`; it requests exactly the
+12 registered symbols on the two registered dates (24 cells), in raw mode,
+and publishes only aggregate counts and hashes. Provider failures produce a
+redacted `BLOCKED` receipt; no output directory is reused. Verify a receipt
+with `coverage_probe verify --receipt ... --artifact-root ... --spec ...` before
+using it in the design manifest. A malformed or missing timestamp/rights file
+causes the CLI to write an auditable `BLOCKED` preflight report and exit
+nonzero; it can never be interpreted as authorization. This probe establishes
+neither historical fundamentals nor any factor, return, IC, portfolio,
+revision, or vintage result.
+
 Pre-lock feasibility uses only outcome-blind aggregate coverage and review evidence. The requirement that all 72 registered cells contain at least 1,000 finite signal-outcome pairs in each of 156 months is a separate post-authorization evidence-status stop; so is the stricter requirement that every signal-eligible record have all required exact official-session endpoints resolved. Neither is evaluated as a factor outcome by the coverage audit, and neither can be used to inspect outcomes before registration.
 
 `plan.draft.json` is a protocol source, not a runner input. It must not be made executable by changing only its `status`. The registration contract is deliberately non-circular:
@@ -92,12 +122,12 @@ Pre-lock feasibility uses only outcome-blind aggregate coverage and review evide
 5. Only after independently verifying that receipt may an authorized person create `execution_authorization`, which binds the manifest, receipt, plan core, calendar, and gate artifacts and permits release of the blind 2010-2022 outcome data.
 6. Finally populate the non-core `external_registration` envelope with the three backward-pointing hashes and set `locked_at = execution_authorization.authorized_at`. Because the plan-core digest excludes only that later envelope and `locked_at`, this final packaging does not alter the registered design.
 
-The `run-stage2` command therefore requires the actual prior-exposure log as `--prior-exposure-log`, in addition to its signed attestation, the externally timestamped v2 probe specification as `--coverage-probe-spec`, and its canonical passed public receipt as `--coverage-probe-receipt`. The runner recomputes all file hashes, validates the fixed probe scope and timestamp chronology, and requires the design manifest, registration receipt, execution authorization, and final result receipt to bind the same digests.
+The `run-stage2` command therefore requires the actual prior-exposure log as `--prior-exposure-log`, in addition to its signed attestation, the externally timestamped v2 probe specification as `--coverage-probe-spec`, and its canonical passed public receipt as `--coverage-probe-receipt`. The runner recomputes all file hashes, validates the fixed probe scope and timestamp chronology, and requires the design manifest, registration receipt, execution authorization, and final result receipt to bind the same digests. Operators should also pass `--authorization-consumption-dir /private/custodian-controlled/store`; after every outcome-blind gate passes and before either quote or fundamental outcomes are loaded, the runner atomically creates `<authorization-sha256>.consumed.json` there. An existing marker fails closed, and a failed or interrupted claim remains consumed and requires a newly signed authorization.
 
-Public verification is deliberately self-contained: `verify-stage2 --receipt receipt.json` checks the published receipt, its aggregate endpoint metadata, and every public structural and statistical invariant without requiring the private per-security ledger. A custodian or reviewer with authorized private access can additionally pass `--endpoint-ledger endpoint_reason_ledger.private.json`; that explicit audit fails closed on a missing file, hash mismatch, non-canonical bytes or ordering, duplicate keys, wrong cardinality, or inconsistent reason counts. The `status` command uses public verification only.
+Public verification is deliberately self-contained: `verify-stage2 --receipt receipt.json` checks the published receipt, its embedded hash-bound authorization-consumption record, aggregate endpoint metadata, and every public structural and statistical invariant without requiring either private sidecar. A custodian or reviewer with authorized private access can additionally pass `--authorization-consumption /private/store/<authorization-sha256>.consumed.json` and `--endpoint-ledger endpoint_reason_ledger.private.json`. The former checks the actual canonical marker, filename, hash, authorization, plan, scope, code, and chronology bindings; the latter checks ledger hash, canonical ordering, uniqueness, cardinality, and reason counts. The `status` command uses public verification only and therefore cannot prove that a private marker has not later been deleted.
 
 The current runner accepts only the explicit human-verification evidence types in the maintained templates; it does not validate cryptographic signatures or registry inclusion proofs, and a cryptographic label alone cannot pass. Hashes establish artifact identity and integrity, but the authenticity of the provider timestamp rests on the retained provider record and a named human verifier. That human verification is an explicit trust boundary, not a cryptographic claim. A future cryptographic path requires a separately implemented and tested protocol. No external registration, execution authorization, or Stage-2 outcome run has been performed by these templates.
 
 Real-data Stage-2 execution is additionally bound to Python 3.12.12, NumPy 2.0.2, and pandas 2.3.3 and requires a clean checked-out registered commit across the whole repository, including untracked files. The Python 3.10/3.11 fixture runs are portability checks only; they do not authorize a different registered runtime.
 
-`execution_authorization` records the permitted study scope and verifies the registration chronology. The current implementation does not issue a consumable nonce, revoke an authorization after use, or technically enforce exactly one run; repeated authorized executions must therefore be disclosed and compared by receipt identity rather than described as impossible.
+`execution_authorization` records the permitted study scope and verifies the registration chronology. The local runner now enforces one claim per authorization hash in one protected sidecar directory by exclusive file creation before outcome load; it does not provide a global nonce, external revocation service, cryptographic signature, or protection against a privileged custodian deleting/replacing that directory. The custodian must retain the private sidecar durably and reviewers should compare it with the receipt. External registration, independent provider-record review, human authorization, and lawful data access remain separate mandatory trust boundaries.

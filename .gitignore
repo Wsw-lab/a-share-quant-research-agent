@@ -32,3 +32,4 @@ __pycache__/
 # Private study records. Public placeholder templates remain tracked.
 author_identity_package.private.json
 endpoint_reason_ledger.private.json
+**/.stage2-authorization-consumption/
