@@ -54,6 +54,10 @@ QUOTE_REQUIRED = {
 MASTER_REQUIRED = {"symbol", "listDate", "delistDate", "listStatus", "stockType"}
 FUNDAMENTAL_REQUIRED = {"symbol", "roeDiluted", "publishDate", "reportPeriodEnd"}
 CALENDAR_REQUIRED = {"date"}
+ACTIVE_LIST_STATUSES = frozenset({"ACTIVE", "LISTED", "L", "上市", "正常上市"})
+DELISTED_LIST_STATUSES = frozenset(
+    {"DELISTED", "TERMINATED", "D", "退市", "终止上市"}
+)
 VINTAGE_TIME_COLUMNS = {
     "asofdate", "as_of_date", "vintagedate", "vintage_date", "revisiondate",
     "revision_date", "as_of_or_vintage_timestamp",
@@ -179,20 +183,38 @@ def recompute_coverage_report(
     strict_a_share_master_symbols = _strict_a_share_master_symbols(
         raw_inputs["stock_master"]
     )
+    strict_a_share_master_lifecycles = _strict_a_share_master_lifecycles(
+        raw_inputs["stock_master"]
+    )
     eligible_a_share_symbols = quote_symbols & strict_a_share_master_symbols
     master["strict_a_share_symbol_count"] = len(strict_a_share_master_symbols)
     quotes["eligible_symbol_count"] = len(eligible_a_share_symbols)
-    quotes["eligible_symbol_count_basis"] = "first_official_session_of_month"
+    quotes["eligible_symbol_count_basis"] = (
+        "first official session per target month intersected with the closed "
+        "listDate-to-delistDate strict A-share lifecycle"
+    )
     for row in quotes["monthly_coverage"]:
-        row["eligible_symbol_count"] = len(
-            monthly_rebalance_quote_symbols.get(row["month"], set())
-            & strict_a_share_master_symbols
+        signal_date = rebalance_date_by_month.get(row["month"])
+        active_symbols = _active_strict_a_share_symbols(
+            strict_a_share_master_lifecycles, signal_date
         )
+        row["active_strict_a_share_symbol_count"] = len(active_symbols)
+        row["eligible_symbol_count"] = len(
+            monthly_rebalance_quote_symbols.get(row["month"], set()) & active_symbols
+        )
+    expected_input_identity = _expected_review_input_identity(
+        identities=identities,
+        quotes=quotes,
+        master=master,
+        fundamentals=fundamentals,
+        official_calendar=official_calendar,
+    )
     attestation = _validate_review_attestation(
         review_attestation,
         expected_file_sha256={
             role: identities[role]["sha256"] for role in INPUT_ROLES
         },
+        expected_input_identity=expected_input_identity,
     )
     parameters = dict(FIXED_DESIGN_PARAMETERS)
     analysis_start_date = _required_date(parameters["analysis_start"], "analysis_start")
@@ -237,6 +259,24 @@ def recompute_coverage_report(
         raise StudyV2CoverageError(
             "fixed design contract month count does not match the analysis interval"
         )
+    quote_contract_coverage = _quote_contract_monthly_coverage(
+        dated_quote_symbols=dated_quote_symbols,
+        official_sessions=tuple(official_session_dates),
+        expected_months=expected_months,
+        eligible_master_symbols=strict_a_share_master_symbols,
+        master_lifecycles=strict_a_share_master_lifecycles,
+        minimum_symbols=parameters["minimum_symbols_per_month"],
+    )
+    quotes["per_symbol_quote_contract_monthly_coverage"] = (
+        quote_contract_coverage["monthly_coverage"]
+    )
+    quotes["per_symbol_quote_contract_basis"] = (
+        "active strict A-share identifiers (closed listDate-to-delistDate interval) "
+        "with identifier/date presence on the exact official sessions required for "
+        "the contiguous t-60 through t momentum history, 20-session volatility "
+        "and amount histories, and "
+        "t/t+1/t+20/t+21 endpoints; no prices, returns, signals, or ranks inspected"
+    )
 
     market_start = _parse_date(quotes["market_start"])
     market_end = _parse_date(quotes["market_end"])
@@ -274,15 +314,50 @@ def recompute_coverage_report(
     quote_dates = set(_date_column_values(raw_inputs["quotes"], "date"))
     non_calendar_quote_dates = quote_dates - calendar_dates
     quote_dates_are_official_sessions = not non_calendar_quote_dates
+    official_quote_dates = quote_dates & calendar_dates
+    official_quote_session_count_by_month: dict[str, int] = {}
+    for quote_date in official_quote_dates:
+        month = quote_date.strftime("%Y-%m")
+        official_quote_session_count_by_month[month] = (
+            official_quote_session_count_by_month.get(month, 0) + 1
+        )
+    for row in quotes["monthly_coverage"]:
+        row["official_session_count"] = official_quote_session_count_by_month.get(
+            row["month"], 0
+        )
+    quotes["minimum_official_sessions_per_observed_month"] = min(
+        (row["official_session_count"] for row in quotes["monthly_coverage"]),
+        default=0,
+    )
+    quotes["official_session_count_basis"] = (
+        "distinct quote dates intersected with the bound official calendar"
+    )
     monthly_by_id = {
         row["month"]: row for row in official_calendar["monthly_coverage"]
     }
     target_months = [monthly_by_id[month] for month in expected_months if month in monthly_by_id]
     missing_analysis_months = [month for month in expected_months if month not in monthly_by_id]
+    insufficient_official_quote_session_months = [
+        {
+            "month": month,
+            "official_quote_session_count": official_quote_session_count_by_month.get(
+                month, 0
+            ),
+        }
+        for month in expected_months
+        if official_quote_session_count_by_month.get(month, 0)
+        < parameters["minimum_sessions_per_month"]
+    ]
+    full_month_ids = {
+        month
+        for month in expected_months
+        if official_quote_session_count_by_month.get(month, 0)
+        >= parameters["minimum_sessions_per_month"]
+    }
     full_months = [
         row
         for row in target_months
-        if row["session_count"] >= parameters["minimum_sessions_per_month"]
+        if row["month"] in full_month_ids
     ]
     quote_monthly_by_id = {row["month"]: row for row in quotes["monthly_coverage"]}
     symbol_eligible_month_ids = [
@@ -291,15 +366,21 @@ def recompute_coverage_report(
         if quote_monthly_by_id.get(month, {}).get("eligible_symbol_count", 0)
         >= parameters["minimum_symbols_per_month"]
     ]
+    complete_quote_contract_month_ids = {
+        row["month"]
+        for row in quote_contract_coverage["monthly_coverage"]
+        if row["complete_quote_contract_symbol_count"]
+        >= parameters["minimum_symbols_per_month"]
+    }
     eligible_months = [
         row
         for row in full_months
-        if row["month"] in symbol_eligible_month_ids
+        if row["month"] in complete_quote_contract_month_ids
     ]
     minimum_monthly_observations_met = len(target_months) == len(expected_months)
-    minimum_sessions_per_month_met = len(full_months) == len(expected_months)
-    minimum_symbols_per_month_met = (
-        len(symbol_eligible_month_ids) == len(expected_months)
+    minimum_sessions_per_month_met = len(full_month_ids) == len(expected_months)
+    minimum_symbols_per_month_met = bool(
+        quote_contract_coverage["complete_quote_contract_coverage_met"]
     )
     fundamental_coverage = _fundamental_monthly_coverage(
         raw_csv=raw_inputs["fundamentals"],
@@ -308,6 +389,7 @@ def recompute_coverage_report(
         monthly_quote_symbols=monthly_rebalance_quote_symbols,
         eligible_master_symbols=strict_a_share_master_symbols,
         eligible_universe_symbols=eligible_a_share_symbols,
+        master_lifecycles=strict_a_share_master_lifecycles,
         required_start=required_fundamental_start_date,
         required_end=required_fundamental_end_date,
         maximum_staleness_months=parameters[
@@ -318,6 +400,9 @@ def recompute_coverage_report(
     publication_coverage_met = (
         fundamentals["eligible_interval_publish_date_non_null_rate"]
         >= parameters["minimum_publish_date_rate"]
+    )
+    fundamental_publication_order_integrity_met = (
+        fundamentals["invalid_publication_order_row_count"] == 0
     )
     fundamental_target_month_continuity_met = (
         fundamentals["covered_target_month_count"] == len(expected_months)
@@ -338,18 +423,22 @@ def recompute_coverage_report(
         and fundamental_target_month_continuity_met
         and fundamental_eligible_symbol_intersection_met
         and fundamental_staleness_coverage_met
+        and fundamental_publication_order_integrity_met
     )
-    membership_available = (
-        master["required_columns_present"]
-        and master["non_null_list_date_rate"] >= 0.95
-        and master["delisted_symbol_count"] > 0
-    )
+    membership_available = bool(master["membership_integrity_verified"])
     execution_columns_present = quotes["required_columns_present"]
     execution_semantics_verified = bool(
         execution_columns_present and attestation["execution_semantics_verified"]
     )
     tradability_fields_verified = bool(
         execution_columns_present and attestation["tradability_fields_verified"]
+    )
+    exact_endpoint_resolution_semantics_verified = bool(
+        execution_columns_present
+        and attestation["exact_endpoint_resolution_semantics_verified"]
+    )
+    endpoint_reason_ledger_rights_verified = bool(
+        attestation["endpoint_reason_ledger_rights_verified"]
     )
     data_rights_verified = bool(attestation["data_rights_verified"])
     official_calendar_review_verified = bool(
@@ -370,11 +459,20 @@ def recompute_coverage_report(
             minimum_monthly_observations_met,
             minimum_sessions_per_month_met,
             minimum_symbols_per_month_met,
+            quote_contract_coverage["required_session_geometry_coverage_met"],
+            quote_contract_coverage["momentum_60d_history_coverage_met"],
+            quote_contract_coverage["low_volatility_20d_history_coverage_met"],
+            quote_contract_coverage["amount_20d_history_coverage_met"],
+            quote_contract_coverage["exact_endpoint_coverage_met"],
+            quote_contract_coverage["complete_quote_contract_coverage_met"],
             publication_coverage_met,
+            fundamental_publication_order_integrity_met,
             membership_available,
             execution_columns_present,
             execution_semantics_verified,
             tradability_fields_verified,
+            exact_endpoint_resolution_semantics_verified,
+            endpoint_reason_ledger_rights_verified,
             data_rights_verified,
             official_calendar_review_verified,
             fundamentals["required_columns_present"],
@@ -402,12 +500,26 @@ def recompute_coverage_report(
         reasons.append("INSUFFICIENT_FUNDAMENTAL_ELIGIBLE_SYMBOL_COVERAGE")
     if not fundamental_staleness_coverage_met:
         reasons.append("INSUFFICIENT_NONSTALE_FUNDAMENTAL_COVERAGE")
+    if not fundamental_publication_order_integrity_met:
+        reasons.append("FUNDAMENTAL_PUBLICATION_BEFORE_REPORT_PERIOD_END")
     if not minimum_monthly_observations_met:
         reasons.append("INSUFFICIENT_MONTHLY_COVERAGE")
     if not minimum_sessions_per_month_met:
         reasons.append("INSUFFICIENT_MONTHLY_SESSION_COVERAGE")
     if not minimum_symbols_per_month_met:
         reasons.append("INSUFFICIENT_MONTHLY_SYMBOL_COVERAGE")
+    if not quote_contract_coverage["required_session_geometry_coverage_met"]:
+        reasons.append("REQUIRED_QUOTE_SESSION_GEOMETRY_UNAVAILABLE")
+    if not quote_contract_coverage["momentum_60d_history_coverage_met"]:
+        reasons.append("INSUFFICIENT_MOMENTUM_60D_HISTORY_COVERAGE")
+    if not quote_contract_coverage["low_volatility_20d_history_coverage_met"]:
+        reasons.append("INSUFFICIENT_LOW_VOLATILITY_20D_HISTORY_COVERAGE")
+    if not quote_contract_coverage["amount_20d_history_coverage_met"]:
+        reasons.append("INSUFFICIENT_AMOUNT_20D_HISTORY_COVERAGE")
+    if not quote_contract_coverage["exact_endpoint_coverage_met"]:
+        reasons.append("INSUFFICIENT_EXACT_ENDPOINT_QUOTE_COVERAGE")
+    if not quote_contract_coverage["complete_quote_contract_coverage_met"]:
+        reasons.append("INSUFFICIENT_COMPLETE_PER_SYMBOL_QUOTE_COVERAGE")
     if not publication_coverage_met:
         reasons.append("INSUFFICIENT_PUBLICATION_DATE_COVERAGE")
     if not membership_available:
@@ -418,6 +530,10 @@ def recompute_coverage_report(
         reasons.append("EXECUTION_SEMANTICS_NOT_VERIFIED")
     if not tradability_fields_verified:
         reasons.append("TRADABILITY_FIELDS_NOT_VERIFIED")
+    if not exact_endpoint_resolution_semantics_verified:
+        reasons.append("EXACT_ENDPOINT_SEMANTICS_NOT_VERIFIED")
+    if not endpoint_reason_ledger_rights_verified:
+        reasons.append("ENDPOINT_LEDGER_RIGHTS_NOT_VERIFIED")
     if not data_rights_verified:
         reasons.append("DATA_RIGHTS_NOT_VERIFIED")
     if not official_calendar_review_verified:
@@ -467,8 +583,10 @@ def recompute_coverage_report(
             "target_fundamental_interval_available": target_fundamental_interval_available,
             "fundamental_interval_basis": (
                 "first official session per target month; publishDate strictly before "
-                "that session; quote/master eligible intersection; reportPeriodEnd no "
-                "more than 18 calendar months stale"
+                "that session; quote/master intersection restricted to the closed "
+                "listDate-to-delistDate interval (delistDate inclusive); "
+                "reportPeriodEnd no more than 18 calendar months stale; publication "
+                "dates before reportPeriodEnd block readiness"
             ),
             "fundamental_target_month_continuity_met": (
                 fundamental_target_month_continuity_met
@@ -479,21 +597,90 @@ def recompute_coverage_report(
             "fundamental_staleness_coverage_met": (
                 fundamental_staleness_coverage_met
             ),
+            "fundamental_publication_order_integrity_met": (
+                fundamental_publication_order_integrity_met
+            ),
             "expected_analysis_month_count": len(expected_months),
             "target_observed_month_count": len(target_months),
             "missing_analysis_months": missing_analysis_months,
             "full_month_count": len(full_months),
+            "minimum_official_quote_sessions_per_target_month": min(
+                (
+                    official_quote_session_count_by_month.get(month, 0)
+                    for month in expected_months
+                ),
+                default=0,
+            ),
+            "insufficient_official_quote_session_months": (
+                insufficient_official_quote_session_months
+            ),
+            "monthly_session_coverage_basis": (
+                "distinct quote dates that are members of the bound official calendar"
+            ),
             "eligible_a_share_symbol_count": len(eligible_a_share_symbols),
-            "symbol_eligible_month_count": len(symbol_eligible_month_ids),
+            "rebalance_symbol_eligible_month_count": len(symbol_eligible_month_ids),
+            "symbol_eligible_month_count": len(complete_quote_contract_month_ids),
             "eligible_month_count": len(eligible_months),
             "minimum_monthly_observations_met": minimum_monthly_observations_met,
             "minimum_sessions_per_month_met": minimum_sessions_per_month_met,
             "minimum_symbols_per_month_met": minimum_symbols_per_month_met,
+            "minimum_symbols_per_month_basis": (
+                "same strict A-share identifiers satisfy the complete exact-session "
+                "quote contract in each target month"
+            ),
+            "required_session_geometry_coverage_met": quote_contract_coverage[
+                "required_session_geometry_coverage_met"
+            ],
+            "momentum_60d_history_coverage_met": quote_contract_coverage[
+                "momentum_60d_history_coverage_met"
+            ],
+            "low_volatility_20d_history_coverage_met": quote_contract_coverage[
+                "low_volatility_20d_history_coverage_met"
+            ],
+            "amount_20d_history_coverage_met": quote_contract_coverage[
+                "amount_20d_history_coverage_met"
+            ],
+            "exact_endpoint_coverage_met": quote_contract_coverage[
+                "exact_endpoint_coverage_met"
+            ],
+            "complete_quote_contract_coverage_met": quote_contract_coverage[
+                "complete_quote_contract_coverage_met"
+            ],
+            "minimum_momentum_60d_history_symbol_count": quote_contract_coverage[
+                "minimum_momentum_60d_history_symbol_count"
+            ],
+            "minimum_low_volatility_20d_history_symbol_count": (
+                quote_contract_coverage[
+                    "minimum_low_volatility_20d_history_symbol_count"
+                ]
+            ),
+            "minimum_amount_20d_history_symbol_count": quote_contract_coverage[
+                "minimum_amount_20d_history_symbol_count"
+            ],
+            "minimum_exact_endpoint_symbol_count": quote_contract_coverage[
+                "minimum_exact_endpoint_symbol_count"
+            ],
+            "minimum_complete_quote_contract_symbol_count": (
+                quote_contract_coverage[
+                    "minimum_complete_quote_contract_symbol_count"
+                ]
+            ),
+            "insufficient_complete_quote_contract_months": (
+                quote_contract_coverage[
+                    "insufficient_complete_quote_contract_months"
+                ]
+            ),
             "publication_date_coverage_met": publication_coverage_met,
             "point_in_time_membership_available": membership_available,
             "execution_columns_present": execution_columns_present,
             "execution_semantics_verified": execution_semantics_verified,
             "tradability_fields_verified": tradability_fields_verified,
+            "exact_endpoint_resolution_semantics_verified": (
+                exact_endpoint_resolution_semantics_verified
+            ),
+            "endpoint_reason_ledger_rights_verified": (
+                endpoint_reason_ledger_rights_verified
+            ),
             "data_rights_verified": data_rights_verified,
             "official_calendar_review_verified": official_calendar_review_verified,
             "complete_revision_vintage_available": vintage_available,
@@ -516,14 +703,35 @@ def recompute_coverage_report(
                 "field informativeness, or publication rights"
             ),
             "symbol_eligibility_boundary": (
-                "each monthly cell uses quotes on that month's first official session, "
-                "intersected with stock-master rows whose stockType is exactly A股 and "
-                "whose symbol matches six digits plus .SH or .SZ"
+                "each target month constructs its strict SH/SZ A-share universe from "
+                "listDate <= signal_date <= delistDate (delistDate inclusive), then "
+                "requires at least 1,000 identifiers with quote rows on every exact "
+                "official session needed "
+                "from t-60 through t for momentum, for the 20-session volatility "
+                "and amount histories, "
+                "and t/t+1/t+20/t+21 endpoints; a dense rebalance date or file-level "
+                "minimum/maximum date cannot substitute for per-symbol coverage"
             ),
         },
         "review_attestation": {
             "present": review_attestation is not None,
             "schema_version": attestation["schema_version"],
+            "coverage_probe_spec_path": attestation["coverage_probe_spec_path"],
+            "coverage_probe_spec_sha256": attestation[
+                "coverage_probe_spec_sha256"
+            ],
+            "coverage_probe_receipt_path": attestation[
+                "coverage_probe_receipt_path"
+            ],
+            "coverage_probe_receipt_sha256": attestation[
+                "coverage_probe_receipt_sha256"
+            ],
+            "exact_endpoint_resolution_semantics_verified": attestation[
+                "exact_endpoint_resolution_semantics_verified"
+            ],
+            "endpoint_reason_ledger_rights_verified": attestation[
+                "endpoint_reason_ledger_rights_verified"
+            ],
             "reviewed_at": attestation["reviewed_at"],
             "reviewer_recorded": attestation["reviewer_recorded"],
             "sha256": attestation["sha256"],
@@ -605,22 +813,118 @@ def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
         raw_csv,
         source_name=str(identity["file_name"]),
         required=MASTER_REQUIRED,
-        date_columns=("listDate", "delistDate"),
-        non_null_columns=("symbol", "listDate"),
+        date_columns=(),
+        non_null_columns=("symbol",),
         collect_columns=("listStatus",),
     )
-    delisted = sum(
-        count for value, count in scan["collected_values"]["listStatus"].items()
-        if value.strip().lower() == "delisted"
-    )
+    scoped_rows = 0
+    scoped_symbols: set[str] = set()
+    nonblank_list_dates = 0
+    valid_list_dates: list[date] = []
+    valid_delist_dates: list[date] = []
+    missing_or_invalid_list_dates = 0
+    invalid_delist_dates = 0
+    delisted_missing_delist_dates = 0
+    delist_before_list_dates = 0
+    active_with_delist_dates = 0
+    unrecognized_statuses = 0
+    delisted_symbols: set[str] = set()
+    with io.TextIOWrapper(
+        io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            if not _is_strict_a_share_master_row(row):
+                continue
+            scoped_rows += 1
+            symbol = (row.get("symbol") or "").strip()
+            scoped_symbols.add(symbol)
+            if (row.get("listDate") or "").strip():
+                nonblank_list_dates += 1
+            list_date, _ = _optional_master_date(row.get("listDate"))
+            delist_date, delist_date_invalid = _optional_master_date(
+                row.get("delistDate")
+            )
+            if list_date is None:
+                missing_or_invalid_list_dates += 1
+            else:
+                valid_list_dates.append(list_date)
+            if delist_date_invalid:
+                invalid_delist_dates += 1
+            if delist_date is not None:
+                valid_delist_dates.append(delist_date)
+
+            status = (row.get("listStatus") or "").strip().upper()
+            if status in DELISTED_LIST_STATUSES:
+                delisted_symbols.add(symbol)
+                if delist_date is None:
+                    delisted_missing_delist_dates += 1
+            elif status in ACTIVE_LIST_STATUSES:
+                if (row.get("delistDate") or "").strip():
+                    active_with_delist_dates += 1
+            else:
+                unrecognized_statuses += 1
+
+            if (
+                list_date is not None
+                and delist_date is not None
+                and delist_date < list_date
+            ):
+                delist_before_list_dates += 1
+
+    membership_reasons: list[str] = []
+    if scoped_rows == 0:
+        membership_reasons.append("NO_SCOPED_A_SHARE_ROWS")
+    if missing_or_invalid_list_dates:
+        membership_reasons.append("MISSING_OR_INVALID_SCOPED_LIST_DATE")
+    if not delisted_symbols:
+        membership_reasons.append("NO_DELISTED_SCOPED_A_SHARE_ROWS")
+    if delisted_missing_delist_dates:
+        membership_reasons.append("DELISTED_ROW_MISSING_DELIST_DATE")
+    if invalid_delist_dates:
+        membership_reasons.append("INVALID_SCOPED_DELIST_DATE")
+    if delist_before_list_dates:
+        membership_reasons.append("DELIST_DATE_BEFORE_LIST_DATE")
+    if active_with_delist_dates:
+        membership_reasons.append("ACTIVE_ROW_HAS_DELIST_DATE")
+    if unrecognized_statuses:
+        membership_reasons.append("UNRECOGNIZED_LIST_STATUS")
+    if not scan["required_columns_present"]:
+        membership_reasons.append("MISSING_STOCK_MASTER_FIELDS")
+
     return {
         **identity,
         "row_count": scan["row_count"],
         "symbol_count": scan["symbol_count"],
-        "earliest_list_date": scan["date_ranges"]["listDate"][0],
-        "latest_delist_date": scan["date_ranges"]["delistDate"][1],
-        "delisted_symbol_count": delisted,
-        "non_null_list_date_rate": scan["non_null_rates"].get("listDate", 0.0),
+        "scoped_row_count": scoped_rows,
+        "scoped_symbol_count": len(scoped_symbols),
+        "earliest_list_date": min(valid_list_dates).isoformat()
+        if valid_list_dates
+        else None,
+        "latest_delist_date": max(valid_delist_dates).isoformat()
+        if valid_delist_dates
+        else None,
+        "delisted_symbol_count": len(delisted_symbols),
+        "non_null_list_date_rate": round(
+            nonblank_list_dates / scoped_rows, 10
+        )
+        if scoped_rows
+        else 0.0,
+        "valid_list_date_rate": round(len(valid_list_dates) / scoped_rows, 10)
+        if scoped_rows
+        else 0.0,
+        "valid_scoped_list_date_count": len(valid_list_dates),
+        "missing_or_invalid_scoped_list_date_count": (
+            missing_or_invalid_list_dates
+        ),
+        "invalid_scoped_delist_date_count": invalid_delist_dates,
+        "delisted_row_missing_delist_date_count": (
+            delisted_missing_delist_dates
+        ),
+        "delist_date_before_list_date_count": delist_before_list_dates,
+        "active_row_with_delist_date_count": active_with_delist_dates,
+        "unrecognized_list_status_count": unrecognized_statuses,
+        "membership_integrity_verified": not membership_reasons,
+        "membership_blocking_reason_codes": membership_reasons,
         "required_columns_present": scan["required_columns_present"],
         "missing_required_columns": scan["missing_required_columns"],
     }
@@ -808,17 +1112,244 @@ def _quote_symbol_index(
     return symbols, dated_symbols
 
 
+def _quote_contract_monthly_coverage(
+    *,
+    dated_quote_symbols: Mapping[date, set[str]],
+    official_sessions: Sequence[date],
+    expected_months: Sequence[str],
+    eligible_master_symbols: set[str],
+    minimum_symbols: int,
+    master_lifecycles: Mapping[str, tuple[date, date | None]] | None = None,
+) -> dict[str, Any]:
+    """Count per-symbol quote availability for every fixed signal session.
+
+    This check uses only identifier/date presence.  It never reads a price,
+    return, signal value, cross-sectional rank, or implementation outcome.
+    """
+
+    ordered_sessions = sorted(set(official_sessions))
+    session_index = {
+        session: index for index, session in enumerate(ordered_sessions)
+    }
+    sessions_by_month: dict[str, list[date]] = {}
+    for session in ordered_sessions:
+        sessions_by_month.setdefault(session.strftime("%Y-%m"), []).append(session)
+
+    def symbols_present_on(
+        required_sessions: Sequence[date], universe: set[str]
+    ) -> set[str]:
+        present = set(universe)
+        for required_session in required_sessions:
+            present.intersection_update(
+                dated_quote_symbols.get(required_session, set())
+            )
+            if not present:
+                break
+        return present
+
+    rows: list[dict[str, Any]] = []
+    for month in expected_months:
+        month_sessions = sessions_by_month.get(month, [])
+        rebalance = min(month_sessions) if month_sessions else None
+        active_symbols = (
+            _active_strict_a_share_symbols(master_lifecycles, rebalance)
+            if master_lifecycles is not None
+            else set(eligible_master_symbols)
+        )
+        position = session_index.get(rebalance) if rebalance is not None else None
+        geometry_available = bool(
+            position is not None
+            and position >= 60
+            and position + 21 < len(ordered_sessions)
+        )
+        if geometry_available:
+            assert position is not None
+            momentum_start = ordered_sessions[position - 60]
+            volatility_start = ordered_sessions[position - 20]
+            amount_start = ordered_sessions[position - 19]
+            lag_entry = ordered_sessions[position + 1]
+            no_lag_exit = ordered_sessions[position + 20]
+            lag_exit = ordered_sessions[position + 21]
+            momentum_sessions = tuple(
+                ordered_sessions[position - 60 : position + 1]
+            )
+            volatility_sessions = tuple(
+                ordered_sessions[position - 20 : position + 1]
+            )
+            amount_sessions = tuple(
+                ordered_sessions[position - 19 : position + 1]
+            )
+            endpoint_sessions = (
+                rebalance,
+                lag_entry,
+                no_lag_exit,
+                lag_exit,
+            )
+            complete_sessions = tuple(
+                sorted(
+                    set(momentum_sessions)
+                    | set(volatility_sessions)
+                    | set(amount_sessions)
+                    | set(endpoint_sessions)
+                )
+            )
+            rebalance_symbols = symbols_present_on((rebalance,), active_symbols)
+            momentum_symbols = symbols_present_on(momentum_sessions, active_symbols)
+            volatility_symbols = symbols_present_on(
+                volatility_sessions, active_symbols
+            )
+            amount_symbols = symbols_present_on(amount_sessions, active_symbols)
+            endpoint_symbols = symbols_present_on(endpoint_sessions, active_symbols)
+            complete_symbols = symbols_present_on(complete_sessions, active_symbols)
+        else:
+            momentum_start = None
+            volatility_start = None
+            amount_start = None
+            lag_entry = None
+            no_lag_exit = None
+            lag_exit = None
+            rebalance_symbols = set()
+            momentum_symbols = set()
+            volatility_symbols = set()
+            amount_symbols = set()
+            endpoint_symbols = set()
+            complete_symbols = set()
+        rows.append(
+            {
+                "month": month,
+                "rebalance_date": rebalance.isoformat() if rebalance else None,
+                "momentum_start_date": (
+                    momentum_start.isoformat() if momentum_start else None
+                ),
+                "volatility_start_date": (
+                    volatility_start.isoformat() if volatility_start else None
+                ),
+                "amount_start_date": amount_start.isoformat() if amount_start else None,
+                "lag_entry_date": lag_entry.isoformat() if lag_entry else None,
+                "no_lag_exit_date": (
+                    no_lag_exit.isoformat() if no_lag_exit else None
+                ),
+                "lag_exit_date": lag_exit.isoformat() if lag_exit else None,
+                "required_session_geometry_available": geometry_available,
+                "active_strict_a_share_symbol_count": len(active_symbols),
+                "rebalance_symbol_count": len(rebalance_symbols),
+                "momentum_60d_symbol_count": len(momentum_symbols),
+                "low_volatility_20d_symbol_count": len(volatility_symbols),
+                "amount_20d_symbol_count": len(amount_symbols),
+                "exact_endpoint_symbol_count": len(endpoint_symbols),
+                "complete_quote_contract_symbol_count": len(complete_symbols),
+            }
+        )
+
+    component_keys = {
+        "momentum_60d_history": "momentum_60d_symbol_count",
+        "low_volatility_20d_history": "low_volatility_20d_symbol_count",
+        "amount_20d_history": "amount_20d_symbol_count",
+        "exact_endpoint": "exact_endpoint_symbol_count",
+        "complete_quote_contract": "complete_quote_contract_symbol_count",
+    }
+    result: dict[str, Any] = {"monthly_coverage": rows}
+    for label, count_key in component_keys.items():
+        insufficient = [
+            {"month": row["month"], count_key: row[count_key]}
+            for row in rows
+            if row[count_key] < minimum_symbols
+        ]
+        result[f"{label}_coverage_met"] = not insufficient
+        result[f"insufficient_{label}_months"] = insufficient
+        result[f"minimum_{label}_symbol_count"] = min(
+            (row[count_key] for row in rows), default=0
+        )
+    result["required_session_geometry_coverage_met"] = all(
+        row["required_session_geometry_available"] for row in rows
+    )
+    return result
+
+
 def _strict_a_share_master_symbols(raw_csv: bytes) -> set[str]:
     symbols: set[str] = set()
     with io.TextIOWrapper(
         io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
     ) as handle:
         for row in csv.DictReader(handle):
-            symbol = (row.get("symbol") or "").strip()
-            stock_type = (row.get("stockType") or "").strip()
-            if stock_type == "A股" and re.fullmatch(r"[0-9]{6}\.(?:SH|SZ)", symbol):
-                symbols.add(symbol)
+            if _is_strict_a_share_master_row(row):
+                symbols.add((row.get("symbol") or "").strip())
     return symbols
+
+
+def _strict_a_share_master_lifecycles(
+    raw_csv: bytes,
+) -> dict[str, tuple[date, date | None]]:
+    """Return valid strict SH/SZ A-share listing intervals by identifier.
+
+    The interval is closed on both ends: a security contributes to a target
+    rebalance only when ``listDate <= signal_date <= delistDate`` (or when no
+    delist date is recorded). Rows with malformed or contradictory dates are
+    omitted here and remain a blocking membership-integrity finding in the
+    master scan.
+    """
+
+    lifecycles: dict[str, tuple[date, date | None]] = {}
+    invalid_symbols: set[str] = set()
+    with io.TextIOWrapper(
+        io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            if not _is_strict_a_share_master_row(row):
+                continue
+            symbol = (row.get("symbol") or "").strip()
+            list_date, list_date_invalid = _optional_master_date(row.get("listDate"))
+            delist_date, delist_date_invalid = _optional_master_date(
+                row.get("delistDate")
+            )
+            if (
+                list_date_invalid
+                or delist_date_invalid
+                or list_date is None
+                or (delist_date is not None and delist_date < list_date)
+                or symbol in lifecycles
+                or symbol in invalid_symbols
+            ):
+                # Fail closed for malformed or duplicate lifecycle records.
+                lifecycles.pop(symbol, None)
+                invalid_symbols.add(symbol)
+                continue
+            lifecycles[symbol] = (list_date, delist_date)
+    return lifecycles
+
+
+def _active_strict_a_share_symbols(
+    lifecycles: Mapping[str, tuple[date, date | None]],
+    signal_date: date | None,
+) -> set[str]:
+    """Construct the point-in-time strict A-share universe for a signal day."""
+
+    if signal_date is None:
+        return set()
+    return {
+        symbol
+        for symbol, (list_date, delist_date) in lifecycles.items()
+        if list_date <= signal_date
+        and (delist_date is None or signal_date <= delist_date)
+    }
+
+
+def _is_strict_a_share_master_row(row: Mapping[str, Any]) -> bool:
+    symbol = (row.get("symbol") or "").strip()
+    stock_type = (row.get("stockType") or "").strip()
+    return bool(
+        stock_type == "A股"
+        and re.fullmatch(r"[0-9]{6}\.(?:SH|SZ)", symbol)
+    )
+
+
+def _optional_master_date(value: Any) -> tuple[date | None, bool]:
+    if not str(value or "").strip():
+        return None, False
+    try:
+        return _parse_date(value), False
+    except StudyV2CoverageError:
+        return None, True
 
 
 def _fundamental_monthly_coverage(
@@ -832,10 +1363,25 @@ def _fundamental_monthly_coverage(
     required_start: date,
     required_end: date,
     maximum_staleness_months: int,
+    master_lifecycles: Mapping[str, tuple[date, date | None]] | None = None,
 ) -> dict[str, Any]:
     sessions_by_month: dict[str, list[date]] = {}
     for session in official_sessions:
         sessions_by_month.setdefault(session.strftime("%Y-%m"), []).append(session)
+    active_quote_symbols_by_month: dict[str, set[str]] = {}
+    for month in expected_months:
+        sessions = sessions_by_month.get(month, [])
+        signal_date = min(sessions) if sessions else None
+        active_symbols = (
+            _active_strict_a_share_symbols(master_lifecycles, signal_date)
+            if master_lifecycles is not None
+            else set(eligible_master_symbols)
+        )
+        active_quote_symbols_by_month[month] = (
+            monthly_quote_symbols.get(month, set()) & active_symbols
+        )
+    scoped_signal_symbols = set().union(*active_quote_symbols_by_month.values())
+    scoped_signal_symbols.intersection_update(eligible_universe_symbols)
     histories: dict[str, list[tuple[date, date, bool]]] = {}
     eligible_interval_rows = 0
     eligible_interval_publish_dates = 0
@@ -845,7 +1391,7 @@ def _fundamental_monthly_coverage(
     ) as handle:
         for row in csv.DictReader(handle):
             symbol = (row.get("symbol") or "").strip()
-            if symbol not in eligible_universe_symbols:
+            if symbol not in scoped_signal_symbols:
                 continue
             report_end = _parse_date(row.get("reportPeriodEnd"))
             publish_date = _parse_date(row.get("publishDate"))
@@ -857,7 +1403,11 @@ def _fundamental_monthly_coverage(
             if report_end is None or publish_date is None:
                 continue
             if publish_date < report_end:
-                invalid_publication_order_rows += 1
+                if (
+                    roe_present
+                    and required_start <= report_end <= required_end
+                ):
+                    invalid_publication_order_rows += 1
                 continue
             histories.setdefault(symbol, []).append(
                 (report_end, publish_date, roe_present)
@@ -869,9 +1419,7 @@ def _fundamental_monthly_coverage(
     for month in expected_months:
         sessions = sessions_by_month.get(month, [])
         signal_date = min(sessions) if sessions else None
-        eligible_quote_symbols = (
-            monthly_quote_symbols.get(month, set()) & eligible_master_symbols
-        )
+        eligible_quote_symbols = active_quote_symbols_by_month.get(month, set())
         available = 0
         nonstale = 0
         stale = 0
@@ -900,6 +1448,11 @@ def _fundamental_monthly_coverage(
                 "month": month,
                 "rebalance_date": signal_date.isoformat() if signal_date else None,
                 "eligible_quote_symbol_count": len(eligible_quote_symbols),
+                "active_strict_a_share_symbol_count": len(
+                    _active_strict_a_share_symbols(master_lifecycles, signal_date)
+                    if master_lifecycles is not None
+                    else eligible_master_symbols
+                ),
                 "available_fundamental_symbol_count": available,
                 "nonstale_fundamental_symbol_count": nonstale,
                 "stale_fundamental_symbol_count": stale,
@@ -913,6 +1466,11 @@ def _fundamental_monthly_coverage(
         if eligible_interval_rows
         else 0.0,
         "invalid_publication_order_row_count": invalid_publication_order_rows,
+        "publication_order_check_scope": (
+            "strict SH/SZ A-share symbols quoted on at least one target rebalance; "
+            "roeDiluted present; reportPeriodEnd within the required fundamental "
+            "interval"
+        ),
         "maximum_staleness_months": maximum_staleness_months,
         "target_month_count": len(rows),
         "covered_target_month_count": sum(
@@ -957,16 +1515,77 @@ def _required_month(value: Any, label: str) -> str:
     return text
 
 
+def _expected_review_input_identity(
+    *,
+    identities: Mapping[str, Mapping[str, Any]],
+    quotes: Mapping[str, Any],
+    master: Mapping[str, Any],
+    fundamentals: Mapping[str, Any],
+    official_calendar: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Return the identity fields a human review must have checked.
+
+    The attestation template intentionally keeps the four raw-file hashes in
+    ``input_file_sha256`` and puts independently recomputed dimensions in
+    ``input_identity``.  Keeping this projection in one place prevents a
+    reviewer from attesting to a hash while silently changing the row/date
+    ranges used by the coverage report.
+    """
+
+    return {
+        "quotes": {
+            "byte_size": identities["quotes"]["size_bytes"],
+            "row_count": quotes["row_count"],
+            "minimum_date": quotes["market_start"],
+            "maximum_date": quotes["market_end"],
+        },
+        "stock_master": {
+            "byte_size": identities["stock_master"]["size_bytes"],
+            "row_count": master["row_count"],
+            "symbol_count": master["symbol_count"],
+        },
+        "fundamentals": {
+            "byte_size": identities["fundamentals"]["size_bytes"],
+            "row_count": fundamentals["row_count"],
+            "minimum_publish_date": fundamentals["publication_start"],
+            "maximum_publish_date": fundamentals["publication_end"],
+        },
+        "official_calendar": {
+            "byte_size": identities["official_calendar"]["size_bytes"],
+            "row_count": official_calendar["row_count"],
+            "minimum_date": official_calendar["calendar_start"],
+            "maximum_date": official_calendar["calendar_end"],
+        },
+    }
+
+
+def _attestation_meaningful_text(value: Any, *, minimum_length: int = 4) -> bool:
+    if not isinstance(value, str) or len(value.strip()) < minimum_length:
+        return False
+    lowered = value.strip().lower()
+    return not any(
+        token in lowered
+        for token in ("todo", "tbd", "pending", "placeholder", "unknown")
+    )
+
+
 def _validate_review_attestation(
     value: Mapping[str, Any] | None,
     *,
     expected_file_sha256: Mapping[str, str],
+    expected_input_identity: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
     if value is None:
         return {
             "schema_version": None,
+            "coverage_probe_spec_path": None,
+            "coverage_probe_spec_sha256": None,
+            "coverage_probe_receipt_path": None,
+            "coverage_probe_receipt_sha256": None,
             "execution_semantics_verified": False,
             "tradability_fields_verified": False,
+            "exact_endpoint_resolution_semantics_verified": False,
+            "endpoint_reason_ledger_rights_verified": False,
             "data_rights_verified": False,
             "official_calendar_verified": False,
             "reviewed_at": None,
@@ -987,11 +1606,29 @@ def _validate_review_attestation(
     for key in (
         "execution_semantics_verified",
         "tradability_fields_verified",
+        "exact_endpoint_resolution_semantics_verified",
+        "endpoint_reason_ledger_rights_verified",
         "data_rights_verified",
         "official_calendar_verified",
     ):
         if value.get(key) is not True:
             raise StudyV2CoverageError(f"review attestation {key} must be true")
+    if value.get("coverage_probe_spec_path") != "coverage_probe_spec.v2.json":
+        raise StudyV2CoverageError(
+            "review attestation coverage probe specification path is invalid"
+        )
+    if not _is_sha256(value.get("coverage_probe_spec_sha256")):
+        raise StudyV2CoverageError(
+            "review attestation coverage probe specification hash is invalid"
+        )
+    if value.get("coverage_probe_receipt_path") != "coverage_probe_receipt.v2.json":
+        raise StudyV2CoverageError(
+            "review attestation coverage probe receipt path is invalid"
+        )
+    if not _is_sha256(value.get("coverage_probe_receipt_sha256")):
+        raise StudyV2CoverageError(
+            "review attestation coverage probe receipt hash is invalid"
+        )
     review_scope_cutoff_at = value.get("review_scope_cutoff_at")
     reviewed_at = value.get("reviewed_at")
     cutoff_time = _required_timezone_aware_datetime(
@@ -1006,13 +1643,118 @@ def _validate_review_attestation(
         if not isinstance(value.get(key), str) or len(value[key].strip()) < 4:
             raise StudyV2CoverageError(f"review attestation {key} is required")
     input_hashes = value.get("input_file_sha256")
-    if not isinstance(input_hashes, Mapping) or dict(input_hashes) != dict(expected_file_sha256):
-        raise StudyV2CoverageError("review attestation is not bound to the audited input files")
+    if (
+        not isinstance(input_hashes, Mapping)
+        or set(input_hashes) != set(INPUT_ROLES)
+        or any(not _is_sha256(input_hashes.get(role)) for role in INPUT_ROLES)
+        or dict(input_hashes) != dict(expected_file_sha256)
+    ):
+        raise StudyV2CoverageError(
+            "review attestation is not bound to the audited input files"
+        )
+    input_identity = value.get("input_identity")
+    if (
+        not isinstance(input_identity, Mapping)
+        or set(input_identity) != set(INPUT_ROLES)
+    ):
+        raise StudyV2CoverageError(
+            "review attestation input identity is missing or has the wrong roles"
+        )
+    expected_identity_keys = {
+        "quotes": {
+            "byte_size", "row_count", "minimum_date", "maximum_date"
+        },
+        "stock_master": {"byte_size", "row_count", "symbol_count"},
+        "fundamentals": {
+            "byte_size", "row_count", "minimum_publish_date", "maximum_publish_date"
+        },
+        "official_calendar": {
+            "byte_size", "row_count", "minimum_date", "maximum_date",
+            "source_name", "source_reference", "source_generated_at", "timezone",
+        },
+    }
+    for role in INPUT_ROLES:
+        identity = input_identity.get(role)
+        if not isinstance(identity, Mapping):
+            raise StudyV2CoverageError(
+                f"review attestation input identity for {role} is invalid"
+            )
+        if set(identity) != expected_identity_keys[role]:
+            raise StudyV2CoverageError(
+                f"review attestation input identity for {role} is incomplete"
+            )
+        for key, expected in expected_input_identity[role].items():
+            if identity.get(key) != expected:
+                descriptor = (
+                    "row count"
+                    if key == "row_count"
+                    else "date range"
+                    if key in {
+                        "minimum_date",
+                        "maximum_date",
+                        "minimum_publish_date",
+                        "maximum_publish_date",
+                    }
+                    else key
+                )
+                raise StudyV2CoverageError(
+                    f"review attestation input identity {role} {descriptor} differs "
+                    "from recomputed raw input"
+                )
+        for key in ("byte_size", "row_count"):
+            item = identity.get(key)
+            if (
+                isinstance(item, bool)
+                or not isinstance(item, int)
+                or item < 0
+            ):
+                raise StudyV2CoverageError(
+                    f"review attestation input identity {role} {key} is invalid"
+                )
+        if role == "stock_master":
+            item = identity.get("symbol_count")
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                raise StudyV2CoverageError(
+                    "review attestation input identity stock_master symbol_count is invalid"
+                )
+        else:
+            for key in (
+                "minimum_date"
+                if role in {"quotes", "official_calendar"}
+                else "minimum_publish_date",
+                "maximum_date"
+                if role in {"quotes", "official_calendar"}
+                else "maximum_publish_date",
+            ):
+                _required_date(identity.get(key), f"review attestation {role} {key}")
+    calendar_identity = input_identity["official_calendar"]
+    if calendar_identity.get("timezone") != "Asia/Shanghai":
+        raise StudyV2CoverageError(
+            "review attestation official calendar provenance timezone is invalid"
+        )
+    for key in ("source_name", "source_reference"):
+        if not _attestation_meaningful_text(calendar_identity.get(key)):
+            raise StudyV2CoverageError(
+                "review attestation official calendar provenance is incomplete"
+            )
+    generated_at = _required_timezone_aware_datetime(
+        calendar_identity.get("source_generated_at"),
+        "review attestation official calendar provenance generated_at",
+    )
+    if generated_at > reviewed_time:
+        raise StudyV2CoverageError(
+            "review attestation official calendar provenance chronology is invalid"
+        )
     evidence_hashes = value.get("evidence_sha256")
     if not isinstance(evidence_hashes, Mapping):
         raise StudyV2CoverageError("review attestation evidence hashes are required")
     for key in (
-        "execution_semantics", "tradability_fields", "data_rights", "official_calendar"
+        "execution_semantics",
+        "tradability_fields",
+        "exact_endpoint_resolution",
+        "endpoint_reason_ledger_rights",
+        "data_rights",
+        "official_calendar",
     ):
         if not _is_sha256(evidence_hashes.get(key)):
             raise StudyV2CoverageError(f"review attestation {key} evidence hash is invalid")
@@ -1021,6 +1763,11 @@ def _validate_review_attestation(
         "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core",
         "amount_units_and_cutoff_timing_are_documented",
         "st_and_suspension_fields_are_non_degenerate_and_historically_effective",
+        "signal_eligible_denominator_is_fixed_before_outcome_lookup",
+        "current_ic_core_resolves_only_exact_adjusted_close_quotes_on_required_official_sessions",
+        "unresolved_endpoints_cannot_be_dropped_shifted_carried_forward_or_assigned_default_recovery",
+        "suspension_valuation_and_delisting_terminal_wealth_adapters_are_not_claimed_by_the_current_ic_core",
+        "private_endpoint_reason_ledger_hash_and_public_aggregate_counts_are_permitted",
         "licensed_local_analysis_is_permitted",
         "public_aggregate_outputs_metadata_and_hashes_are_permitted",
         "public_official_calendar_session_dates_are_permitted",
@@ -1041,11 +1788,7 @@ def _validate_review_attestation(
     signature = value.get("signature")
     if (
         not isinstance(signature, Mapping)
-        or signature.get("type") not in {
-            "detached_digital_signature",
-            "external_registry_attestation",
-            "human_verified_evidence",
-        }
+        or signature.get("type") != "human_verified_evidence"
         or not _is_sha256(signature.get("evidence_sha256"))
         or not isinstance(signature.get("signer_identity"), str)
         or len(signature["signer_identity"].strip()) < 4
@@ -1055,7 +1798,7 @@ def _validate_review_attestation(
     parsed_uri = urlparse(verification_uri)
     if parsed_uri.scheme != "https" or not parsed_uri.netloc:
         raise StudyV2CoverageError("review attestation verification URI is invalid")
-    if signature["type"] == "human_verified_evidence" and signature.get(
+    if signature.get(
         "trust_boundary"
     ) != "Identity and evidence authenticity require independent human verification.":
         raise StudyV2CoverageError(
@@ -1066,8 +1809,18 @@ def _validate_review_attestation(
     ).encode("utf-8")
     return {
         "schema_version": "stage2_data_review_attestation_v1",
+        "coverage_probe_spec_path": value["coverage_probe_spec_path"],
+        "coverage_probe_spec_sha256": value["coverage_probe_spec_sha256"],
+        "coverage_probe_receipt_path": value["coverage_probe_receipt_path"],
+        "coverage_probe_receipt_sha256": value["coverage_probe_receipt_sha256"],
         "execution_semantics_verified": value["execution_semantics_verified"],
         "tradability_fields_verified": value["tradability_fields_verified"],
+        "exact_endpoint_resolution_semantics_verified": value[
+            "exact_endpoint_resolution_semantics_verified"
+        ],
+        "endpoint_reason_ledger_rights_verified": value[
+            "endpoint_reason_ledger_rights_verified"
+        ],
         "data_rights_verified": value["data_rights_verified"],
         "official_calendar_verified": value["official_calendar_verified"],
         "reviewed_at": reviewed_at,
@@ -1131,7 +1884,7 @@ def _audit_vintage_rows(raw_csv: bytes, fieldnames: Sequence[str]) -> dict[str, 
 
 
 def _is_sha256(value: Any) -> bool:
-    return isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value) is not None
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _raw_csv_bytes(value: Any, label: str) -> bytes:

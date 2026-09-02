@@ -82,18 +82,18 @@ test -z "$(git status --short --untracked-files=all)"
 
 ## Stage-2 期刊研究（尚未运行）
 
-[Stage-2 研究包](studies/pit_factor_bias_decomposition_v2/)把论文问题改写为“信息时点与实现约束分别造成多少测量位移”，并明确披露上面的短样本 pilot 已经被观察。拟定的 2010-2022 主历史再平衡区间与 2025-2026 pilot 评估期不重叠，但最后一个 20-session horizon 延伸到 2023 年 1 月，与 pilot 行情文件的原始日期边界重叠；这一点已单独披露，并在放数前要求 prior-exposure 声明。方案固定 final-survivor/report-end、PIT/report-end、PIT/publication 三段基线，再完整枚举 ST、停牌、20 日成交额门槛和一会话滞后的 `2^4` 组合，共 18 个变体、72 个 factor cells。ROE publication-timing mean contrast 是唯一 primary，固定 pilot-informed 的负向预测，同时采用双侧零均值检验；25 项 secondary IC family 使用 BH，另有两项确定性的 timing-isolation checks。72 个 cell 的均值、t 统计量和 top-minus-universe spread 只作全量描述，不构成 72 次发现检验；精确 Shapley 只对四组件 implementation block 作条件归因和顺序无关主张，因此不存在“挑最好结果”的接口。
+[Stage-2 研究包](studies/pit_factor_bias_decomposition_v2/)把论文问题收窄为“按记录的财报发布日期约束信息后，A 股 ROE—后续收益关系还剩多少”，并明确披露上面的短样本 pilot 已经被观察。拟定的 2010-2022 主历史再平衡区间与 2025-2026 pilot 评估期不重叠，但最后一个 20-session horizon 延伸到 2023 年 1 月，与 pilot 行情文件的原始日期边界重叠；这一点已单独披露，并在放数前要求 prior-exposure 声明。方案固定 final-survivor/report-end、PIT/report-end、PIT/publication 三段基线，再完整枚举 ST、停牌、20 日成交额门槛和一会话滞后的 `2^4` 组合，共 18 个变体、72 个 factor cells。ROE publication-timing mean contrast 是唯一 primary，固定 pilot-informed 的负向预测，同时采用双侧零均值检验；28 项 secondary IC family 使用 BH，其中新增三项 ROE 共同支持恒等分解，另有两项确定性的 timing-isolation checks。72 个 cell 的均值、t 统计量和 top-minus-universe spread 只作全量描述，不构成 72 次发现检验；精确 Shapley 只对四组件 implementation block 作条件归因和顺序无关主张，因此不存在“挑最好结果”的接口。
 
-面向期刊 Stage-1 评审的[13 页匿名完整英文稿（DOCX）](docs/working-paper/A_Share_Factor_Specification_Effects_Stage1_Manuscript.docx)已经形成，并保留[可审阅 Markdown 源稿](studies/pit_factor_bias_decomposition_v2/stage1_manuscript.md)和[文档构建脚本](studies/pit_factor_bias_decomposition_v2/build_stage1_manuscript.py)。它完整呈现 observed pilot、研究问题、文献定位、数据门槛、唯一 primary、固定 secondary family、72-cell 报告合同、结果分支、局限和声明，但没有虚构任何尚未执行的 confirmatory result。较早的[13 页 Registered Report protocol（DOCX）](docs/working-paper/A_Share_Stage2_Registered_Report_Protocol.docx)继续作为更细的执行协议保留。
+面向期刊 Stage-1 评审的[14 页匿名完整英文稿（DOCX）](docs/working-paper/A_Share_Factor_Specification_Effects_Stage1_Manuscript.docx)已经形成，并保留[可审阅 Markdown 源稿](studies/pit_factor_bias_decomposition_v2/stage1_manuscript.md)和[文档构建脚本](studies/pit_factor_bias_decomposition_v2/build_stage1_manuscript.py)。它完整呈现 observed pilot、研究问题、文献定位、数据门槛、唯一 primary、固定 secondary family、72-cell 报告合同、结果分支、局限和声明，但没有虚构任何尚未执行的 confirmatory result。当前详细执行协议以[统计分析计划](studies/pit_factor_bias_decomposition_v2/statistical_analysis_plan.md)和机器可读模板为准；较早的[13 页 Registered Report protocol（DOCX）](docs/working-paper/A_Share_Stage2_Registered_Report_Protocol.docx)仅作为已被取代的版式模板与设计历史归档，其科学内容不再具有权威性，也不得用于执行。
 
-这不是已完成的国际期刊实证。当前授权 bundle 的[旧版三文件覆盖诊断](studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json)没有 2009 warm-up 或 2010-2022 报价，也没有当前 runner 强制要求的独立官方交易日历与原始 `roeDiluted` 输入；调整后收盘收益语义、ST/停牌字段有效性和汇总发布权利同样尚未独立确认，因此状态是 `BLOCKED_FOR_STAGE2`。未复权 `open`、`volume`、价格限制和 nonfill 语义只属于 planned portfolio extension，不是当前 IC-core 的输入门槛。现有 runner 只实现 complete IC matrix、配对 HAC 和 IC Shapley；next-open portfolios、成本、nonfills、bootstrap、interactions 和结构化 deviation reporting 都明确标为 planned/unimplemented。[统计分析计划](studies/pit_factor_bias_decomposition_v2/statistical_analysis_plan.md)、[数据缺口](studies/pit_factor_bias_decomposition_v2/current_bundle_gap_assessment.md)、[prior-exposure log](studies/pit_factor_bias_decomposition_v2/prior_exposure_log.md)、机器可读 specification inventory 和 PBFJ EOI/pitch 草案已公开；只有在完整数据、审阅声明、prior-exposure 声明和外部时间戳全部到位后，才会按 plan core → design manifest → registration receipt → execution authorization → final envelope 的顺序授权规定范围内的 IC-core 执行。当前 execution authorization 记录范围与时间链，但不是可消费 nonce，也不在技术上强制“一次性运行”。
+这不是已完成的国际期刊实证。当前授权 bundle 的[旧版三文件覆盖诊断](studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json)没有 2009 warm-up 或 2010-2022 报价，也没有当前 runner 强制要求的独立官方交易日历与原始 `roeDiluted` 输入；调整后收盘收益语义、ST/停牌字段有效性和汇总发布权利同样尚未独立确认，因此状态是 `BLOCKED_FOR_STAGE2`。未复权 `open`、`volume`、价格限制和 nonfill 语义只属于 planned portfolio extension，不是当前 IC-core 的输入门槛。现有 runner 实现 complete IC matrix、配对 HAC、IC Shapley、ROE 共同支持恒等分解、无收益 publication-exposure diagnostics，以及覆盖全部 signal-eligible 记录并由哈希绑定的私有端点 reason ledger；任何缺失的精确收益端点都会使相应 cell 不可估计并触发全局 `INSUFFICIENT_EVIDENCE`。next-open portfolios、成本、nonfills、bootstrap、interactions、退市终值适配器和结构化 deviation reporting 都明确标为 planned/unimplemented。[统计分析计划](studies/pit_factor_bias_decomposition_v2/statistical_analysis_plan.md)、[数据缺口](studies/pit_factor_bias_decomposition_v2/current_bundle_gap_assessment.md)、[prior-exposure log](studies/pit_factor_bias_decomposition_v2/prior_exposure_log.md)、机器可读 specification inventory 和 PBFJ EOI/pitch 草案已公开；只有在完整数据、审阅声明、prior-exposure 声明和外部时间戳全部到位后，才会按 plan core → design manifest → registration receipt → execution authorization → final envelope 的顺序授权规定范围内的 IC-core 执行。当前 execution authorization 记录范围与时间链，但不是可消费 nonce，也不在技术上强制“一次性运行”。
 
 ## 证据等级
 
 - `implemented`：代码存在且当前可导入，不等于行为已充分验证。
 - `unit-tested`：离线确定性单元或合同测试覆盖所述行为。
 - `local-integration-tested`：维护者在本地跨模块或跨 checkout 跑通过有界测试；不代表托管服务或生产运行。
-- `receipt-verified`：公开验证器接受规范化 receipt；证明 receipt schema 内的哈希、登记 lattice/cell/estimand 身份与数量及 claim gates 自洽，不证明未公开原始数据本身正确，也不能检测任意逐证券 silent drop。
+- `receipt-verified`：公开验证器接受规范化 receipt；证明 receipt schema 内的哈希、登记 lattice/cell/estimand 身份与数量及 claim gates 自洽。只有受控审阅模式取得私有 Stage-2 端点账本后，才能核验账本哈希、唯一性、逐 cell 基数及 signal eligibility 确定后在收益查询阶段发生的逐证券静默丢弃；公开 receipt 本身不能证明未公开原始数据正确，也不能检测进入 signal-eligible denominator 之前的任意上游遗漏。
 - `open`：尚未建立可复验证据，不能对外作肯定结论。
 
 仓库内 `.github/workflows/ci.yml` 定义了只读、离线研究验证 GitHub Actions 工作流，矩阵与 Python 3.10–3.12 元数据一致。这里仅声称工作流文件和命令在本地接受检查，不声称远端工作流已经运行；应以 GitHub 上真实的 run 记录为准。
@@ -111,7 +111,7 @@ test -z "$(git status --short --untracked-files=all)"
 - `examples/run_demo.py`；
 - `examples/strategy_specs/quality_value_momentum.json`；
 - `a_share_quant_agent.reproducible_experiment` 的 `run` / `verify` 命令；
-- `a_share_quant_agent.confirmatory_study` 的 `run` / `verify` / `run-stage2` / `verify-stage2` / `status` 命令；其中 Stage-2 命令只覆盖已实现的 IC core，并在缺少完整注册链或授权输入时 fail closed；
+- `a_share_quant_agent.confirmatory_study` 的 `run` / `verify` / `run-stage2` / `verify-stage2` / `status` 命令；其中 Stage-2 命令只覆盖已实现的 IC core，并在缺少完整注册链或授权输入时 fail closed。`verify-stage2 --receipt ...` 可独立验证公开 receipt；只有显式传入 `--endpoint-ledger ...` 时才审计不公开的逐证券 endpoint ledger；
 - `studies/pit_factor_replication_v1/` 的锁定方案与数据声明模板；
 - `evidence/pit_factor_replication_v1/receipt.json` 与由其派生的 `evidence/PUBLIC_EVIDENCE_STATUS.json`；
 - `tests/fixtures/qdata_research_snapshot_v1/` 合成快照；
@@ -133,4 +133,4 @@ test -z "$(git status --short --untracked-files=all)"
 - 没有生产部署、服务等级、容量、性能、容灾或安全认证；
 - 没有可从当前 checkout 精确复建的历史策略绩效，因此主叙事不发布历史指标。
 
-本仓库未添加许可证；代码使用权仍需仓库所有者明确决定。
+本仓库原创源代码和原创文档按根目录 [MIT License](LICENSE) 授权，文件另有说明的除外。该许可不授予任何供应商数据、第三方材料、商标或未公开授权数据的权利。

@@ -1,6 +1,6 @@
-# How Much Do Information Timing and Implementation Choices Shift A-Share Factor Evidence?
+# Report Dates, Publication Dates, and the A-Share ROE Signal
 
-## A Pre-Specified Bias Decomposition
+## A Pre-Specified Historical Confirmation
 
 **Protocol status:** Draft for data-feasibility review; not locked and not yet externally registered<br>
 **Intended route:** Pacific-Basin Finance Journal hybrid pre-registration pathway<br>
@@ -17,13 +17,14 @@ The intended publication route follows the Pacific-Basin Finance Journal's respo
 
 The study asks:
 
-> How much do final-survivor sampling, report-period rather than publication-date availability, tradability screens, liquidity requirements, and a one-session implementation lag shift measured A-share factor evidence?
+> In a single-version provider snapshot, how much of the measured A-share ROE–return relation remains when the accounting signal is withheld until the first common official signal session strictly after its recorded publication date?
 
-The scientific contribution is a quantitative decomposition of research-design bias, not a search for a new profitable anomaly. The study uses familiar signals so that differences across variants can be attributed to the historical information set and implementation clock rather than to a novel model. The contribution has three layers:
+The scientific contribution is a paired measurement of the recorded-publication-date specification effect for A-share ROE, not a search for a new profitable anomaly. Historical membership and the implementation lattice are supporting design features used to establish whether that central estimate depends on sample support or trading-state conventions. The contribution has four layers:
 
-1. **Information-set bias.** Measure the paired effect of historical listing membership and accounting publication timing on the same monthly cross-sections.
-2. **Implementation decomposition.** Replace the pilot's bundled stress variant with the complete factorial of four implementation controls, permitting exact Shapley attribution while preserving interactions in the allocation. Formal interaction tests are a planned, unimplemented module and are excluded from the current IC core.
-3. **Research governance.** Bind the data declaration, plan, code, registered IC lattice, implemented core outputs, and claim gates in a canonical receipt. A structured deviation-log and receipt-reporting module is planned but unimplemented, so the current receipt cannot claim to contain deviations.
+1. **Accounting-clock effect.** Measure the paired ROE IC change when the same historical listing universe moves from report-period eligibility to recorded-publication-date eligibility.
+2. **Support and record-replacement decomposition.** Split the total ROE timing contrast by an ordered three-part identity that remains exact for non-nested report-side and publication-side signal supports.
+3. **Implementation decomposition.** Replace the pilot's bundled stress variant with the complete factorial of four implementation controls, permitting exact Shapley attribution while preserving interactions in the allocation. Formal interaction tests are a planned, unimplemented module and are excluded from the current IC core.
+4. **Research-governance safeguard.** Bind the data declaration, plan, code, proposed-for-registration IC lattice, implemented core outputs, endpoint-reason ledger, and claim gates in a canonical receipt. This supports the economic claim but is not presented as a separate financial contribution. A structured deviation-log module remains planned and unimplemented.
 
 The paper will not claim that any factor is new. Gharghori and Nguyen (2026) already provide the direct pre-registered China factor-model benchmark, and Liu, Stambaugh, and Yuan (2019) already use actual release dates in careful China factor construction. The proposed contribution is a specification-effect design intended for prospective registration, with exact attribution within a complete implementation block. It will not select the best factor or implementation variant, and it will not treat statistical significance as sufficient evidence of an investable strategy.
 
@@ -53,12 +54,13 @@ Secondary estimands are:
 - the paired effect of replacing final survivors with point-in-time listing membership;
 - the paired effect of the full implementation bundle relative to the PIT-publication baseline;
 - exact Shapley contributions of ST exclusion, suspension exclusion, the liquidity floor, and the one-session lag;
+- the three non-directional ROE components of the ordered common-support identity: report-side support restriction, within-common-support record replacement, and publication-side support extension;
 - momentum and low-volatility publication-timing differences as deterministic isolation checks, not inferential hypotheses;
-- eligible-universe loss, percentage-attenuation output, and signal-missingness diagnostics only after their dedicated reporting code is implemented, tested, and separately frozen.
+- aggregate signal-missingness and common-support counts plus publication-exposure diagnostics that use no forward returns, reported descriptively outside the inferential family.
 
 Secondary estimates are diagnostic and will be labeled as such even when their statistics appear stronger than the primary results.
 
-The current executable runner is deliberately limited to the IC core. Dedicated signal-missingness tables, machine-readable exclusion reason codes, eligible-universe-loss and percentage-attenuation outputs, raw-ratio regressions, robustness analyses, pre-specified two-way interactions, stationary bootstrap intervals, next-open portfolios, transaction costs, turnover, and nonfills are planned modules. They are excluded from the current executable evidence and enter no registered claim until their code, tests, data gates, complete numerical settings, and multiplicity treatment are finished and externally frozen before Stage-2 outcome access.
+The current IC-core contract includes aggregate signal-missingness/common-support counts, the three-part ROE identity, no-return publication-exposure diagnostics, and a machine-readable endpoint-reason code for every signal-eligible record. The complete per-security endpoint ledger remains private but is hash-bound in the result receipt, which publishes aggregate reason counts. Full per-security signal-missingness and non-endpoint exclusion attribution, eligible-universe attribution beyond the registered support counts, percentage attenuation, raw-ratio regressions, robustness analyses, pre-specified two-way interactions, stationary bootstrap intervals, next-open portfolios, transaction costs, turnover, nonfills, and announcement-event or return-timing studies remain excluded until their code, tests, data gates, numerical settings, and multiplicity treatment are finished and externally frozen before Stage-2 outcome access.
 
 ## 5. Data-feasibility gates
 
@@ -67,19 +69,20 @@ Only outcome-blind metadata and field coverage may be examined before registrati
 The plan may advance from `draft_data_feasibility_pending` to `locked` only when all of the following outcome-blind, pre-lock feasibility conditions hold:
 
 1. The fixed January 2010 through December 2022 interval supplies all 156 intended rebalances, with quote warm-up from January 2009 and forward outcomes through January 2023.
-2. The quote audit shows at least 15 official sessions and 1,000 quoted symbols in all 156 target months.
+2. The quote audit shows at least 15 distinct quote dates that belong to the bound official calendar in every target month; repeated security rows cannot inflate the session count. The monthly scoped universe is constructed from strict SH/SZ A-shares satisfying `listDate <= signal date <= delistDate`, with a missing `delistDate` treated as open-ended. Separately, for every one of the 156 first-session rebalances, at least 1,000 such identifiers must jointly have quote rows at every official session from `t-60` through `t` for the implemented momentum history, at every official session from `t-20` through `t` for 20 daily returns, at every session from `t-19` through `t` for the 20-session amount mean, and at `t`, `t+1`, `t+20`, and `t+21` for the two exact outcome clocks. This pre-lock check uses only identifier/date presence: a dense rebalance date, an aggregate monthly symbol count, or file-level minimum and maximum dates cannot establish per-security warm-up and endpoint availability.
 3. At least 95% of otherwise usable fundamental records contain a valid publication date.
-4. Historical list and delist dates are present, and the master contains delisted securities.
+4. Every scoped SH/SZ A-share has a valid historical list date; every row identified as delisted has a valid delist date on or after its list date; active/delisted status and delist-date presence are consistent; the master contains delisted securities; and a usable fundamental row cannot have `publishDate < reportPeriodEnd`.
 5. Adjusted close return semantics and corporate-action handling are documented and hash-bound. Unadjusted open and nonfill semantics are required only if the planned portfolio module is later implemented and frozen; the IC core makes no execution-price claim.
 6. Daily amount, ST status, and suspension status are available under documented units and timing semantics.
 7. Data rights permit the intended local analysis, the public release of aggregate results, field definitions, and file hashes, and publication of the exact official-calendar session dates embedded in the receipt.
 8. The analysis code passes its complete offline test suite and the plan enumerates every result cell.
 9. The owner signs a prior-exposure attestation that no 2010-2022 Stage-2 factor outcomes have been inspected; repository specifications are separately inventoried whether or not their execution history is known.
 10. An official common SSE/SZSE session calendar includes every common session from January 2009 through the end of January 2023, passes its schema and semantic checks, and is bound by path, byte size, row count, date range, source provenance, and SHA-256 hash before the plan core is frozen.
+11. Exact per-symbol endpoint semantics are reviewed. The current IC adapter supports only an adjusted-close quote on the required official session; suspension valuation, last-price carry-forward, and delisting or terminal-wealth adapters are not implemented. Rights permit a private per-security endpoint-reason ledger to be retained and hash-bound and aggregate endpoint reason counts to be published.
 
 Column names do not satisfy gates 5-7. An authorized reviewer must complete a hash-bound attestation that separately verifies adjusted-return and amount semantics, non-degenerate tradability fields, rights to publish aggregate outputs, and rights to embed the exact official-calendar session dates in a receipt. Without that attestation, the coverage tool reports `BLOCKED` even when every required column is present.
 
-A distinct post-authorization evidence-eligibility stop is evaluated only after the registered runner executes: every one of the 156 months must contain all 72 registered cells, and every cell must contain at least 1,000 finite signal-outcome pairs. This is not a pre-lock coverage test and does not authorize the analysis team to inspect Stage-2 outcomes before registration. Failure produces `INSUFFICIENT_EVIDENCE`; it cannot be repaired by shortening the interval, dropping a cell, or changing the threshold.
+A distinct post-authorization evidence-eligibility stop is evaluated only after the registered runner executes: every one of the 156 months must contain all 72 registered cells, every cell must contain at least 1,000 finite signal-outcome pairs, and every member of the signal-eligible denominator must have all required endpoints resolved. This is not a pre-lock coverage test and does not authorize the analysis team to inspect Stage-2 outcomes before registration. Any unresolved endpoint makes its cell non-estimable and produces `INSUFFICIENT_EVIDENCE`; failure cannot be repaired by silently dropping a security, shortening the interval, dropping a cell, or changing the threshold. When this global stop fires, every estimand-level claim-eligibility and rejection flag must be false even if an individual contrast retains at least 120 paired months.
 
 If a gate fails, the study stops and reports the failed condition. The team will not replace 2010-2022 with a later feasible interval, shorten the sample, lower the publication-date threshold, remove an inconvenient board, or relax the minimum universe after viewing factor outcomes. A materially different feasible design must become a separately timestamped protocol and may not inherit the primary status of this design.
 
@@ -87,7 +90,7 @@ If a gate fails, the study stops and reports the failed condition. The team will
 
 The target population is ordinary China A-shares listed on the Shanghai or Shenzhen exchanges. B-shares, funds, bonds, preferred shares, and non-equity instruments are excluded using the historically valid security type. A security enters the point-in-time universe on or after its listing date and exits after its delisting date. A final-survivor variant is retained only as a deliberately biased comparator.
 
-The intended previously uninspected primary historical interval is 1 January 2010 through 31 December 2022, subject to the prior-exposure attestation and fixed coverage gates. It ends before the observed 2023-2026 pilot. The first eligible common SSE/SZSE session of each month in the hash-bound official calendar is the rebalance date. Rolling signals may use observations from the fixed warm-up beginning 1 January 2009, but no pre-2010 observation contributes an outcome. The forward horizon is 20 official exchange sessions.
+The intended previously uninspected primary historical interval is 1 January 2010 through 31 December 2022, subject to the prior-exposure attestation and fixed coverage gates. It ends before the observed January 2025-June 2026 pilot evaluation; the pilot's source quote file begins in 2023. The first eligible common SSE/SZSE session of each month in the hash-bound official calendar is the rebalance date. Rolling signals may use observations from the fixed warm-up beginning 1 January 2009, but no pre-2010 observation contributes an outcome. The forward horizon is 20 official exchange sessions.
 
 At least 12 months collected after the external registration or journal in-principle acceptance will be reported as a separate prospective extension. Its estimates will not be pooled silently with either the 2010-2022 historical panel or the disclosed pilot. If the journal-approved protocol specifies a different prospective duration, that approved duration controls and will be recorded before the new outcomes are observed.
 
@@ -110,9 +113,11 @@ The report-period comparator treats ROE as available on `reportPeriodEnd`. This 
 
 The publication-date variants require `publishDate < signal date` when only a calendar date is known: a same-day release is never used in that session's close signal. If a verified timestamp and timezone prove release before a preregistered market-decision cutoff, a timestamp rule may replace this date-only convention only if it is frozen before outcomes are computed.
 
-Publication-date alignment is not equivalent to vintage reconstruction. The current runner has no validated revision-vintage adapter, so revision-history claims are unconditionally prohibited. Historical as-of timestamps, revision identifiers, and value-at-vintage records would all be necessary for a future adapter but are not sufficient by themselves to open the current claim gate. Later vendor corrections cannot be presented as information available to historical investors.
+Publication-date alignment in a single-version provider export is not equivalent to vintage reconstruction. It withholds the stored snapshot record until its recorded `publishDate` and therefore identifies only a recorded-publication-date specification effect. The current runner has no validated revision-vintage adapter and cannot establish the numerical value investors observed at first release. Revision, restatement, vintage-value, historical-investor-information, announcement-reaction, and return-timing claims are unconditionally prohibited. Historical as-of timestamps, revision identifiers, first-release values, and value-at-vintage records would be necessary for a future adapter but would still require a separately frozen design. Later vendor corrections cannot be presented as information available to historical investors.
 
-The IC clock is diagnostic, not a simulated execution claim. The no-lag outcome is adjusted close at session `t+20` divided by adjusted close at signal session `t`, minus one. The lag outcome is adjusted close at `t+21` divided by adjusted close at `t+1`, minus one. These endpoints are defined on the common official exchange-session calendar; a missing symbol row makes the outcome missing and never silently advances the endpoint to that symbol's next observed row. The exact calendar bytes, schema version, source provenance, timezone, date range, and SHA-256 hash are design inputs and must be bound by the frozen plan core and design manifest.
+The IC clock is diagnostic, not a simulated execution claim. The no-lag outcome is adjusted close at session `t+20` divided by adjusted close at signal session `t`, minus one. The lag outcome is adjusted close at `t+21` divided by adjusted close at `t+1`, minus one. The signal-eligible denominator is fixed before outcome lookup. Under the current adapter, each required start and end must have an exact adjusted-close quote on the corresponding common official session. A missing required symbol endpoint makes the entire factor-variant-month cell non-estimable and the study `INSUFFICIENT_EVIDENCE`; the security may not be dropped, advanced to its next observed quote or reopening date, valued using an unattested last price, or assigned zero or any other default recovery. Calendarized suspension valuation and verified delisting or terminal-wealth adapters are not implemented and cannot be improvised after outcome access. The exact calendar bytes, schema version, source provenance, timezone, date range, and SHA-256 hash are design inputs and must be bound by the frozen plan core and design manifest, but calendar position alone does not prove that a per-security endpoint price exists.
+
+The registered no-return publication-exposure diagnostics report, by month, report-side, publication-side, common, report-only, and publication-only signal-support counts; the share of report-side selected records whose recorded `publishDate` is on or after the signal date; the share of common-support securities whose selected report period changes under publication eligibility; and the calendar-day distribution from report-period end to recorded publication date. They use no forward return, receive no p-value, sit outside the BH family, and cannot support an announcement mechanism or event-study interpretation.
 
 ## 9. Variant architecture
 
@@ -131,11 +136,29 @@ Implementation analysis starts from I0000 and crosses four binary components:
 3. require 20-session mean amount of at least CNY 5 million;
 4. shift the IC return clock by one official exchange session.
 
-All 16 combinations are registered. With four factors, the primary variant matrix contains 72 factor-variant cells: eight cells for A0 and A1 plus 64 cells in the 2^4 implementation factorial. The study reports every cell and never promotes the maximum result.
+All 16 combinations are pre-specified for proposed external registration. With four factors, the primary variant matrix contains 72 factor-variant cells: eight cells for A0 and A1 plus 64 cells in the 2^4 implementation factorial. The study reports every cell and never promotes the maximum result.
+
+### 9.1 Ordered ROE common-support decomposition
+
+The 18 variants and 72 factor-variant cells remain unchanged. The following bridge statistics are derived only for the ROE `I0000 − A1` contrast and are not additional variants.
+
+For month `t`, let `R_t` be the finite report-period ROE signal support under A1 and `P_t` the finite recorded-publication-date ROE signal support under I0000, after all non-outcome eligibility rules. Required endpoints must be resolved for every member before either set is used. Let `C_t = R_t ∩ P_t`; neither support is assumed to contain the other. Let `IC_R(S)` and `IC_P(S)` denote rank ICs after both the relevant ROE signal and the common outcome are re-ranked inside set `S`.
+
+The primary monthly contrast has the exact ordered decomposition:
+
+`IC_P(P_t) - IC_R(R_t)`
+
+`= [IC_R(C_t) - IC_R(R_t)]`
+
+`+ [IC_P(C_t) - IC_R(C_t)]`
+
+`+ [IC_P(P_t) - IC_P(C_t)]`.
+
+The three terms are named, in order, the **report-side support-restriction component**, **within-common-support record-replacement component**, and **publication-side support-extension component**. Each is a non-directional, two-sided secondary estimand with Newey-West lag-three inference and membership in the fixed BH family. The identity must hold separately in every estimable month to absolute tolerance `1e-12`; a non-finite bridge IC or larger residual invalidates the run. No support nesting, bridge imputation, or outcome-conditioned deletion may be imposed to make the identity hold. The decomposition is arithmetic and path ordered. It is not causal, and record replacement is not a revision or vintage effect.
 
 ## 10. Exact implementation decomposition
 
-Let `v(S)` be a registered statistic under implementation-component subset `S`, using the PIT-publication information set. For component `i`, the exact Shapley contribution is:
+Let `v(S)` be a pre-specified statistic under implementation-component subset `S`, using the PIT-publication information set. For component `i`, the exact Shapley contribution is:
 
 `phi_i = sum over S not containing i of [|S|! (K-|S|-1)! / K!] × [v(S union {i}) - v(S)]`,
 
@@ -147,7 +170,7 @@ Two-way factorial interactions are a planned module. If implemented before outco
 
 This section is a design requirement for a future portfolio module, not a description of code that currently exists. No portfolio, cost, turnover, or nonfill claim may be made from the IC-core runner. If completed and externally frozen before outcome access, each month eligible securities will be sorted into deciles using cross-sectional ranks. The headline portfolio contrast will be top decile minus bottom decile. Equal-weight results will be primary for comparability; lagged float-market-cap weights will be secondary.
 
-Signals are formed after close `t`. Baseline entry is the unadjusted open at `t+1` and exit is the unadjusted open at `t+21`; the lag component shifts those endpoints to `t+2` and `t+22`. A price-limit lock, suspension, or missing-open entry is not chased and its intended weight remains cash until the next rebalance. An exit nonfill is attempted at the first executable unadjusted open for up to 20 subsequent official sessions. If neither a trade nor an independently verified cash settlement occurs, the conservative terminal recovery is zero, with a last-observed-price sensitivity reported. Delistings use verified exchange or depository cash settlement when available and otherwise follow the same terminal rule.
+Signals would be formed after close `t`. Baseline entry would use the unadjusted open at `t+1` and exit the unadjusted open at `t+21`; a lag component would shift those endpoints to `t+2` and `t+22`. No nonfill, suspension-valuation, delisting, terminal-wealth, last-price, or default-recovery rule is authorized by the present IC protocol. Any future portfolio module must acquire the required execution and terminal-event data, implement and test a complete fail-closed rule, and freeze it under a separate registration before viewing its outcomes.
 
 The planned cost model uses a date-indexed schedule for statutory taxes and documented baseline commission and slippage assumptions. In addition, every portfolio would be stressed at 10, 25, and 50 basis points of round-trip non-tax cost. One-way turnover, round-trip turnover, gross return, each cost component, net return, and nonfill rate would all be reported. The study does not label a factor implementable merely because its gross IC is positive.
 
@@ -159,27 +182,27 @@ For every month, variant, and factor, the current IC core records:
 - equal-weight top-quintile minus universe mean return for continuity with the pilot;
 - the eligible cross-sectional count attached to that cell.
 
-The corresponding 72-cell aggregate means, Newey-West t-statistics, and top-quintile-minus-universe spreads are reported in full as descriptive completeness outputs. No cell-specific hypothesis is registered, and no unadjusted cell t-statistic or spread may support a discovery claim. Confirmatory inference is restricted to the sole primary and the fixed 25-member secondary family described below.
+The corresponding 72-cell aggregate means, Newey-West t-statistics, and top-quintile-minus-universe spreads are reported in full as descriptive completeness outputs. No cell-specific hypothesis is registered, and no unadjusted cell t-statistic or spread may support a discovery claim. Confirmatory inference is restricted to the sole primary and the fixed 28-member secondary family described below.
 
-The current runner does not produce a dedicated signal-missingness table, per-security exclusion reason codes, an eligible-universe-loss decomposition, or percentage-attenuation output. Those reports are planned, unimplemented, and excluded from current evidentiary claims. A later implementation must be tested and frozen before Stage-2 outcome access; it may not be reconstructed selectively after results are seen.
+The current IC-core output includes aggregate signal-missingness counts, the five report/publication/common-support counts, the no-return publication-exposure diagnostics, and a machine-readable endpoint-resolution code for every signal-eligible record. The result receipt reports aggregate endpoint-code counts, binds the complete private per-security ledger by SHA-256, and verifies that the ledger covers the signal-eligible denominator exactly. A full per-security signal-missingness and non-endpoint exclusion audit, eligible-universe attribution beyond the registered support counts, and percentage attenuation remain unimplemented and excluded; they may not be reconstructed selectively after results are seen.
 
 The pilot's top-quintile-minus-universe statistic is not self-financing and is not treated as a portfolio return. Decile long-short returns, costs, turnover, and nonfills are unavailable until the planned module is implemented, tested, and separately locked; any later long-short outcome must retain explicit financing and short-leg caveats, including the practical limits on shorting A-shares.
 
 ## 13. Statistical inference and multiplicity
 
-The unit of time-series inference is the monthly observation. The registered inferential set contains exactly 26 estimands: one primary plus 25 secondary family members. Two deterministic timing-isolation checks are reported separately and are not inferential hypotheses. Primary tests use the paired monthly difference between variants rather than comparing two independently estimated t-statistics. The mean paired difference receives a Newey-West HAC standard error with lag three and a two-sided 95% confidence interval. Directional expectations organize interpretation but do not convert the reported test to a one-sided p-value.
+The unit of time-series inference is the monthly observation. The pre-specified inferential set proposed for external registration contains exactly 29 estimands: one primary plus 28 secondary family members. Two deterministic timing-isolation checks and the common-support efficiency identity are reported separately and are not inferential hypotheses. Primary tests use the paired monthly difference between variants rather than comparing two independently estimated t-statistics. The mean paired difference receives a Newey-West HAC standard error with lag three and a two-sided 95% confidence interval. Directional expectations organize interpretation but do not convert the reported test to a one-sided p-value.
 
-Because H1 is the sole primary estimand, it receives no multiplicity adjustment. The fixed secondary IC family contains exactly 25 members: one downstream composite publication-timing contrast, eight paired contrasts (membership and full-implementation effects for each of four factors), and sixteen component-factor Shapley estimates. Its p-values use the Benjamini-Hochberg procedure at false-discovery rate 0.10. A missing or non-estimable registered member remains in the family denominator and is a non-rejection. The momentum and low-volatility publication-timing contrasts are deterministic isolation checks outside the inferential family; either must be zero to absolute tolerance `1e-12` or the run fails closed. Portfolio, interaction, and stationary-bootstrap families do not yet exist and require a separate locked plan. Unadjusted and adjusted values are both reported.
+Because H1 is the sole primary estimand, it receives no multiplicity adjustment. The fixed secondary IC family contains exactly 28 members: one downstream composite publication-timing contrast, eight paired contrasts (membership and full-implementation effects for each of four factors), sixteen component-factor Shapley estimates, and the three non-directional ROE common-support components. Its p-values use the Benjamini-Hochberg procedure at false-discovery rate 0.10. A missing or non-estimable registered member remains in the family denominator and is a non-rejection. The momentum and low-volatility publication-timing contrasts are deterministic isolation checks outside the inferential family; either must be zero to absolute tolerance `1e-12` or the run fails closed. The three common-support components must add to the primary monthly contrast to absolute tolerance `1e-12`; a larger residual also fails closed. Portfolio, event-study, interaction, and stationary-bootstrap families do not exist and require a separate locked plan. Unadjusted and adjusted values are both reported.
 
 If fewer than 120 paired monthly observations remain for an estimand, the paper reports the estimate and interval but makes no statistical-significance or generalization claim for that estimand. The evidentiary gate remains all 156 registered rebalances with complete factor-variant cells; falling below it cannot be repaired by selecting a shorter interval.
 
-The 156-month design has a precision rationale. Under a normal-approximation 80% power sensitivity, a monthly paired-difference standard deviation of 0.08-0.12 and HAC variance inflation of 1.0-1.5 imply an absolute IC minimum detectable effect of approximately 0.018-0.033. These conservative scenarios may be supplemented by simulations based only on the already disclosed pilot before registration; no Stage-2 outcome may revise the threshold. The current IC core reports signed and absolute IC change. Eligible-universe-loss and percentage-attenuation outputs are planned but unimplemented and excluded from current claims. A percentage attenuation statistic may be reported only if that module is later implemented and frozen and only when the comparator IC is positive, its absolute value is at least 0.005, and the signed difference is negative. This restriction does not alter Section 4's narrower qualitative sign-based wording rule; otherwise the paper uses the neutral term timing displacement.
+The 156-month design has a precision rationale. Under a normal-approximation 80% power sensitivity, a monthly paired-difference standard deviation of 0.08-0.12 and HAC variance inflation of 1.0-1.5 imply an absolute IC minimum detectable effect of approximately 0.018-0.033. These conservative scenarios may be supplemented by simulations based only on the already disclosed pilot before registration; no Stage-2 outcome may revise the threshold. The current IC core reports signed and absolute IC change plus the three ordered common-support components. Percentage attenuation remains unimplemented and excluded. It may be reported only if a later module is implemented and frozen and only when the comparator IC is positive, its absolute value is at least 0.005, and the signed difference is negative. This restriction does not alter Section 4's narrower qualitative sign-based wording rule; otherwise the paper uses the neutral term timing displacement.
 
 ## 14. Missing data and exclusions
 
-Missing signals are not filled with cross-sectional means. A security with a missing required field is excluded from that factor's monthly cross-section. The composite requires all three primary component ranks. The current runner records the resulting cell-level cross-sectional count but does not yet create a dedicated missingness table.
+Missing signals are not filled with cross-sectional means. A security with a missing required signal field is excluded from that factor's signal-eligible cross-section, and aggregate factor-specific missing counts are reported. The current runner does not attribute those signal omissions to a more granular reason taxonomy. The composite requires all three primary component ranks. The signal-eligible denominator is finalized before outcome lookup, and outcome availability cannot remove a security from it.
 
-Machine-readable per-security reason codes for every exclusion category are planned but unimplemented and excluded from the current IC core. Until that module is implemented, tested, and frozen, the study may not claim a reason-code audit or publish selectively reconstructed exclusion counts. The current verifier checks the registered variant/factor lattice, required cell identities and counts, and exposed cross-sectional sizes; it cannot detect every arbitrary per-security omission or explain why a security is absent. A discovered exclusion outside the registered rules invalidates the affected result, but absence of such a finding is not proof that no silent drop occurred. Security identifiers must be stable across symbol changes or linked through a documented permanent identifier. Duplicate date-symbol quote keys and duplicate effective security-master records fail closed.
+Every signal-eligible record receives a machine-readable endpoint-resolution code. Under the current exact-quote adapter, only `EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE` is resolved; the fixed unresolved codes are `MISSING_EXACT_FORWARD_EXIT`, `MISSING_EXACT_LAG_ENTRY`, and `MISSING_EXACT_LAG_EXIT`. The current adapter records which required quote is absent but does not infer whether suspension, delisting, or another economic cause produced that absence. Any non-finite return after exact endpoints resolve is a separate cell-integrity failure, not an endpoint reason code. The result receipt exposes aggregate code counts and a SHA-256 for the complete private ledger, and its verifier requires the ledger-key set to equal the signal-eligible key set. This endpoint audit does not claim a full per-security explanation of all signal or universe exclusions. Security identifiers must be stable across symbol changes or linked through a documented permanent identifier. Duplicate date-symbol quote keys and duplicate effective security-master records fail closed.
 
 ## 15. Planned robustness analyses (currently excluded)
 
@@ -193,6 +216,7 @@ The current runner does not implement the robustness program. Every item below i
 - reconstructed versus vendor-supplied ROE;
 - equal-weight versus lagged float-market-cap weight;
 - baseline versus stressed transaction costs;
+- announcement-event or return-timing windows, which additionally require a separately validated first-release/vintage and timestamp contract;
 - a pre-specified second-vendor audit sample when data rights permit.
 
 No subgroup created after observing a large or surprising return may enter the confirmatory tables. Such findings may appear only in a labeled exploratory appendix. A structured machine-readable deviation log and its receipt integration are planned but unimplemented; until they exist, any deviation must be disclosed manually and the receipt must not be described as containing it. Listing an item in this planned section does not make it registered or executable.
@@ -211,24 +235,26 @@ The public reproducibility package will contain:
 - a machine-readable prior-specification inventory and signed owner exposure attestation;
 - the complete registered result matrix;
 - monthly aggregate statistics when licensing permits;
-- a canonical receipt binding the plan core, code revision, declared input-file hashes, registered IC lattice, implemented core output tables, and claim gates.
+- a canonical result receipt binding the plan core, code revision, declared input-file hashes, registered IC lattice, all 29 inferential estimands, common-support efficiency, implemented aggregate missingness/support and exposure diagnostics, aggregate endpoint reason counts, the SHA-256 and key-count integrity of the complete private per-security endpoint-reason ledger, and claim gates.
 
-The current receipt exposes structural and integrity evidence only for the implemented IC core. It does not contain a machine-readable deviation log, prove that every per-security exclusion was justified, or detect arbitrary silent row drops. Deviation logging and receipt reporting remain planned, unimplemented modules.
+The result receipt exposes structural and integrity evidence for the IC core and binds the private endpoint ledger by hash. The runner constructs one endpoint-resolution record for every signal-eligible key. Public-only verification checks the canonical receipt, registered identities, aggregate counts, and ledger metadata, but cannot inspect the withheld ledger. An explicit controlled-audit mode, when supplied with the private ledger, additionally checks its hash, canonical ordering, uniqueness, per-cell cardinality, reason counts, and agreement with the published signal-eligible denominators. Without licensed raw inputs, neither mode can independently authenticate the underlying security identities. The receipt does not contain a machine-readable deviation log or provide a complete per-security audit of non-endpoint signal and universe exclusions. Structured deviation logging remains planned and unimplemented.
 
 The nested draft protocol is not accepted directly by the runner. The evidence chain is non-circular and must occur in this order:
 
-1. Freeze the outcome-blind coverage report, rights/semantics review, official calendar, prior-specification inventory, and prior-exposure attestation.
+1. Retain `coverage_probe_spec.v1.json` byte-for-byte, externally timestamp `coverage_probe_spec.v2.json` before its bounded probe is run, and then freeze the v2 probe receipt, outcome-blind coverage report, rights/semantics review, official calendar, prior-specification inventory, and prior-exposure attestation.
 2. Materialize every core field in the flat execution-plan template. Merely changing the draft's `status` is prohibited. Set `design_frozen_at` and compute the canonical plan-core digest after excluding only the not-yet-populated `external_registration` envelope and `locked_at`. The frozen core binds the analysis dates, warm-up interval, protocol/SAP/inventory/attestation/calendar hashes, code commit, all 18 variants, all four factors, IC clocks, current missingness rules, and every implemented inference setting.
 3. Create `design_manifest_v1` to bind that exact plan-core digest, code, protocol, SAP, coverage and review artifacts, inventory, the actual prior-exposure log and its attestation, data declaration, raw-input identities, and official calendar. The manifest contains neither its own digest nor any later receipt or authorization.
 4. Submit the exact manifest bytes or their SHA-256 digest to the external provider and record the response as `registration_receipt_v1`, which points backward to the manifest digest.
 5. Independently verify the receipt and create `execution_authorization`, which points backward to the manifest, receipt, frozen plan core, calendar, and gate artifacts and authorizes blind-data release. No Stage-2 outcome file may be released or inspected before that authorization.
 6. Complete the final execution-plan envelope by recording the plan-core digest, manifest hash, receipt hash, authorization hash, provider record, and `locked_at = authorized_at`. The envelope and `locked_at` are excluded from the previously registered plan-core digest, so this packaging is non-circular and cannot change the frozen design.
 
-The current runner accepts only `runner_scope = ic_core_only`. If the registration provider supplies a verifiable digital signature, its algorithm, key identifier, signed payload, and signature are retained. If it does not, hashes establish the identity and integrity of local artifacts but do not authenticate the provider's timestamp by themselves; a named authorized human must verify the retained provider page, email, or journal record and hash that evidence. This is the explicit human trust boundary.
+The current runner accepts only `runner_scope = ic_core_only` and only the explicit human-verification evidence types in the maintained templates. It does not implement cryptographic signature or registry-inclusion-proof validation, so a cryptographic label alone cannot pass. Hashes establish the identity and integrity of retained local artifacts but do not authenticate the provider's timestamp by themselves; a named authorized human must verify the retained provider page, email, or journal record and hash that evidence. This is the explicit human trust boundary. A future cryptographic path requires a separately implemented, tested, and frozen protocol.
+
+The registered real-data execution environment is exact rather than ranged: Python 3.12.12, NumPy 2.0.2, and pandas 2.3.3. The runner verifies those three versions and requires the entire repository—not only the package source directory—to be clean at the checked-out registered commit. Any tracked modification or untracked file, including a repository-root Python import hook, blocks execution. Cross-version fixture tests remain compatibility checks and do not change this real-data runtime contract.
 
 Licensed raw rows will not be published without explicit permission. Hashes establish file identity, not vendor correctness. An independent authorized rerun is strongly preferred and will be recorded separately from the authors' execution.
 
-The repository currently has no software license. No document may call it open source, and no JOSS submission may be attempted, until the owner makes an explicit license decision and the selected license is added. That legal choice is outside the statistical protocol.
+Original repository code and documentation are released under the MIT License. That license does not grant rights to proprietary market data, third-party materials, trademarks, or any licensed rows withheld from the repository; data access and reviewer inspection remain separately governed by the documented rights gate.
 
 ## 17. Deviations and stopping rules
 
@@ -240,6 +266,8 @@ The study stops without primary conclusions if:
 - prior exposure to the intended 2010-2022 outcomes cannot be ruled out and documented before data release;
 - the frozen plan, `design_manifest_v1`, `registration_receipt_v1`, and `execution_authorization` hashes or required timestamps are missing, inconsistent, circular, or out of order;
 - a required variant or factor cell is missing;
+- any signal-eligible security lacks an exact required official-session endpoint under the current adapter, or the endpoint-reason ledger is missing, duplicated, unhashed, or does not cover the signal-eligible denominator exactly;
+- the three common-support components fail to add to the primary monthly timing contrast within absolute tolerance `1e-12`;
 - publication dates cannot be distinguished from report-period dates;
 - adjusted-close return semantics or corporate-action handling cannot be documented; a later portfolio claim additionally stops if unadjusted execution prices cannot be distinguished from adjusted research prices;
 - the code revision cannot reproduce its receipt on the authorized data.
@@ -260,7 +288,14 @@ Until all corresponding evidence gates pass, the receipt fields remain:
 - `performance_claim = false`;
 - `generalization_claim = false`;
 - `usable_for_trading_decisions = false`;
-- `revision_history_claim = false`.
+- `revision_history_claim = false`;
+- `vintage_value_claim = false`;
+- `historical_investor_observed_value_claim = false`;
+- `announcement_reaction_claim = false`;
+- `return_timing_claim = false`;
+- `portfolio_or_trading_claim = false`.
+
+Even after a valid IC execution, the single-version accounting claim remains bounded to a recorded-publication-date specification effect. A result may not be described as a reconstructed historical information set, revision effect, restatement effect, or announcement reaction.
 
 The final paper will include an AI-assistance disclosure describing tools used for code scaffolding, document drafting, and editing; human authors must review, validate, and take responsibility for every technical and interpretive decision.
 

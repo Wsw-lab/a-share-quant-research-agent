@@ -11,8 +11,8 @@
   "outcome_blind_inventory": true,
   "contains_outcome_values": false,
   "purpose": "Record specifications and plans present at the documented repository snapshot, outcome-blindly and without reporting factor returns, rankings, test statistics, or inferred execution histories. Any separately named unexecuted probe retains its own narrower execution-status assertion.",
-  "entry_count": 13,
-  "entries_sha256": "0b6f41afb062cdc930a68b90dba5dc11f464ecd665013a63f2302cf4805f0e45",
+  "entry_count": 14,
+  "entries_sha256": "952040c483d486dc8a334e4036a8491cfbdfaa65b79d64ed4d27bf51df42ee77",
   "chronology_contract": {
     "required_order": "repository_snapshot.inspected_at <= inventory_cutoff_at <= generated_at <= prior_exposure_attestation.attested_at <= execution_plan.design_frozen_at",
     "timestamp_rule": "inspected_at, inventory_cutoff_at, generated_at, and every downstream attestation time must be finite ISO-8601 with an explicit UTC offset",
@@ -392,6 +392,27 @@
       ],
       "outcome_exposure_known": "no",
       "outcome_exposure_basis": "Contemporaneous authoring assertion: the probe was not executed while these two outcome-blind files were prepared, and the specification forbids execution before their first externally timestamped commit.",
+      "execution_history_claim": "not_executed_during_inventory_preparation"
+    },
+    {
+      "inventory_id": "stage2-akshare-raw-coverage-2016-2018-v2",
+      "artifact_type": "specified_not_executed_outcome_blind_coverage_probe",
+      "primary_path": "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json",
+      "related_paths": [
+        "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v1.json",
+        "studies/pit_factor_bias_decomposition_v2/data_requirements.json",
+        "studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json"
+      ],
+      "present_in_repository": true,
+      "repository_state": "working_tree_uncommitted",
+      "introduced_in_commit": null,
+      "commit_semantics": "The v2 specification and this inventory must first be committed together and the exact v2 bytes externally timestamped before execution is permitted.",
+      "content_sha256_at_inventory": "32203cd7db274b81f544667bf6ff4c8453cbcb7835fb952930773b3aaf0143da",
+      "specification_ids": [
+        "stage2-akshare-raw-coverage-2016-2018-v2"
+      ],
+      "outcome_exposure_known": "no",
+      "outcome_exposure_basis": "Contemporaneous authoring assertion: the v2 probe was not executed while this specification and inventory were prepared; execution is prohibited until a commit containing these exact bytes has been externally timestamped.",
       "execution_history_claim": "not_executed_during_inventory_preparation"
     }
   ],

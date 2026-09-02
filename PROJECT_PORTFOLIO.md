@@ -14,7 +14,7 @@
 
 严格实验固定为合成的 2 个标的和 3 个交易会话，结论必须是 `INSUFFICIENT_EVIDENCE`。它证明的是时序与审计合同，不是策略收益，也不能用于交易决策。
 
-独立的真实市场 pilot 把 4 个因子和 4 个偏差控制变体视为一组完整的敏感性分析，不挑最佳结果。当前最有力的结论是 publication-time 对齐和一会话滞后会实质改变 ROE/composite 统计；这是一项方法学审计发现，不是策略晋级。其唯一状态来自[验证后的 receipt](evidence/PUBLIC_EVIDENCE_STATUS.json)，旧 registry/readiness 不参与当前结论。Stage-2 的 2010—2022 期刊研究尚未运行，缺少官方日历、完整历史输入、签署审阅与外部登记，因此保持 `BLOCKED_FOR_STAGE2`。
+独立的真实市场 pilot 把 4 个因子和 4 个偏差控制变体视为一组完整的敏感性分析，不挑最佳结果。当前最有力的结论是 recorded-publication 对齐会明显改变短样本中的 ROE/composite 统计；这是一项方法学审计发现，不是策略晋级。其唯一状态来自[验证后的 receipt](evidence/PUBLIC_EVIDENCE_STATUS.json)，旧 registry/readiness 不参与当前结论。Stage-2 的 2010—2022 期刊研究尚未运行，缺少官方日历、完整历史输入、签署审阅与外部登记，因此保持 `BLOCKED_FOR_STAGE2`。其执行器已把唯一 primary、固定 BH-28 family、三段共同支持分解、无收益 publication-exposure diagnostics 和逐证券端点 reason ledger 固化为 fail-closed 合同，但这些实现不替代尚未获得的历史数据与外部注册。
 
 ## 可审阅的工程判断
 

@@ -7,20 +7,25 @@ import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
+import tracemalloc
 import unittest
 from unittest.mock import patch
 
 import pandas as pd
 
+import a_share_quant_agent.confirmatory_study as confirmatory_module
 from a_share_quant_agent.confirmatory_study import (
     ConfirmatoryStudyError,
     STAGE2_COMPONENTS,
     STAGE2_SCHEMA_VERSION,
     STAGE2_VARIANT_MASK_ORDER,
     _aggregate_results,
+    _load_quotes,
     _load_stage2_fundamentals,
     _stage2_evidence_status,
     _validate_prior_specification_inventory,
+    _validate_stage2_coverage_probe_spec,
+    _validate_stage2_coverage_probe_receipt,
     _validate_stage2_plan,
     _verify_repository_commit,
     _prepare_quotes,
@@ -34,7 +39,11 @@ from a_share_quant_agent.confirmatory_study import (
     verify_study_receipt,
     write_public_evidence_status,
 )
-from a_share_quant_agent.stage2_estimands import build_registered_estimands
+from a_share_quant_agent.stage2_estimands import (
+    Stage2EstimandError,
+    build_registered_estimands,
+    verify_registered_estimands,
+)
 
 
 class ConfirmatoryStudyTest(unittest.TestCase):
@@ -253,6 +262,18 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             ("deviation_reporting_module", lambda plan: plan[
                 "deviation_reporting_module"
             ].__setitem__("status", "implemented")),
+            ("claim_boundaries", lambda plan: plan[
+                "claim_boundaries"
+            ].__setitem__("revision_or_vintage_claim", True)),
+            ("endpoint_resolution", lambda plan: plan[
+                "endpoint_resolution"
+            ].__setitem__("unresolved_rule", "silently_drop_security")),
+            ("publication_exposure_diagnostics", lambda plan: plan[
+                "publication_exposure_diagnostics"
+            ].__setitem__("uses_forward_returns", True)),
+            ("runtime_contract", lambda plan: plan[
+                "runtime_contract"
+            ].__setitem__("pandas_version", "0.0.0")),
         )
         for label, mutate in mutations:
             with self.subTest(label=label):
@@ -271,6 +292,494 @@ class ConfirmatoryStudyTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ConfirmatoryStudyError, "Git commit object"):
             _verify_repository_commit("1" * 40, require_clean=False)
+
+    def test_stage2_plan_accepts_canonical_protocol_contract(self) -> None:
+        self.assertEqual(len(_validate_stage2_plan(_stage2_plan())), 18)
+
+    def test_stage2_real_data_runtime_and_repository_gates_fail_closed(self) -> None:
+        contract = dict(confirmatory_module.STAGE2_RUNTIME_CONTRACT)
+        with patch.object(
+            confirmatory_module.platform,
+            "python_version",
+            return_value="0.0.0",
+        ):
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "runtime dependency versions"
+            ):
+                confirmatory_module._verify_stage2_runtime_contract(contract)
+
+        commit = "a" * 40
+        responses = [
+            subprocess.CompletedProcess([], 0, stdout="/fixture/repo\n"),
+            subprocess.CompletedProcess([], 0, stdout=b""),
+            subprocess.CompletedProcess([], 0, stdout=commit + "\n"),
+            subprocess.CompletedProcess([], 0, stdout="?? sitecustomize.py\n"),
+        ]
+        with patch.object(
+            confirmatory_module.subprocess,
+            "run",
+            side_effect=responses,
+        ) as mocked_run:
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "clean registered repository"
+            ):
+                _verify_repository_commit(commit, require_clean=True)
+        status_command = mocked_run.call_args_list[-1].args[0]
+        self.assertNotIn("--", status_command)
+        self.assertNotIn("src/a_share_quant_agent", status_command)
+
+    def test_stage2_repository_gate_rejects_untracked_files_hidden_by_git_excludes(self) -> None:
+        cases = (
+            ("worktree gitignore", "sitecustomize.pyc", "*.py[cod]\n"),
+            ("git info exclude", "info-hidden.bin", "info-hidden.bin\n"),
+            ("global excludes file", "global-hidden.bin", "global-hidden.bin\n"),
+        )
+        for label, hidden_name, ignore_pattern in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                repository = base / "repository"
+                subprocess.run(
+                    ["git", "init", "--quiet", str(repository)],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(repository), "config", "user.name", "Fixture Author"],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [
+                        "git", "-C", str(repository), "config", "user.email",
+                        "fixture@example.test",
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(repository), "config", "commit.gpgSign", "false"],
+                    check=True,
+                    capture_output=True,
+                )
+                (repository / ".gitignore").write_text(
+                    ignore_pattern if label == "worktree gitignore" else "*.py[cod]\n",
+                    encoding="utf-8",
+                )
+                (repository / "tracked.txt").write_text("fixture\n", encoding="utf-8")
+                subprocess.run(
+                    ["git", "-C", str(repository), "add", ".gitignore", "tracked.txt"],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", str(repository), "commit", "--quiet", "-m", "fixture"],
+                    check=True,
+                    capture_output=True,
+                )
+                if label == "git info exclude":
+                    (repository / ".git" / "info" / "exclude").write_text(
+                        ignore_pattern,
+                        encoding="utf-8",
+                    )
+                elif label == "global excludes file":
+                    global_excludes = base / "global-excludes"
+                    global_excludes.write_text(ignore_pattern, encoding="utf-8")
+                    subprocess.run(
+                        [
+                            "git", "-C", str(repository), "config", "core.excludesFile",
+                            str(global_excludes),
+                        ],
+                        check=True,
+                        capture_output=True,
+                    )
+                commit = subprocess.run(
+                    ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+
+                with patch.object(
+                    confirmatory_module,
+                    "_verify_git_commit_object",
+                    return_value=repository,
+                ):
+                    # Repository-internal Git metadata must not count as study files.
+                    _verify_repository_commit(commit, require_clean=True)
+                    (repository / hidden_name).write_bytes(b"hidden fixture\n")
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError, "clean registered repository"
+                    ):
+                        _verify_repository_commit(commit, require_clean=True)
+
+    def test_stage2_evidence_validators_accept_only_explicit_human_verification(self) -> None:
+        attestation = {
+            "type": "human_verified_evidence",
+            "evidence_sha256": "1" * 64,
+            "signer_identity": "independent fixture reviewer",
+            "verification_uri": "https://example.test/attestation",
+            "trust_boundary": (
+                "Identity and evidence authenticity require independent human verification."
+            ),
+        }
+        confirmatory_module._validate_attestation_signature(
+            attestation, "fixture attestation"
+        )
+        for proof_type in (None, "detached_digital_signature", "external_registry_attestation"):
+            with self.subTest(attestation_type=proof_type):
+                changed = dict(attestation, type=proof_type)
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "only explicit human-verified evidence"
+                ):
+                    confirmatory_module._validate_attestation_signature(
+                        changed, "fixture attestation"
+                    )
+
+        registration = {
+            "type": "human_verified_registry_record",
+            "evidence_sha256": "2" * 64,
+            "verifier": "independent fixture reviewer",
+            "trust_boundary": (
+                "The registry record has no offline-verifiable signature; authenticity "
+                "requires independent human verification."
+            ),
+        }
+        confirmatory_module._validate_registration_proof(registration)
+        for proof_type in (None, "detached_digital_signature", "registry_inclusion_proof"):
+            with self.subTest(registration_type=proof_type):
+                changed = dict(registration, type=proof_type)
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "only an explicit human-verified registry"
+                ):
+                    confirmatory_module._validate_registration_proof(changed)
+
+    def test_stage2_publication_variant_filters_availability_before_selecting_latest_report_period(self) -> None:
+        day = pd.Timestamp("2025-06-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 7)]
+        base = pd.DataFrame({
+            "date": [day] * len(symbols),
+            "symbol": symbols,
+            "is_st": [False] * len(symbols),
+            "is_suspended": [False] * len(symbols),
+            "amount_20d": [10_000_000.0] * len(symbols),
+            "momentum_60d": list(range(1, 7)),
+            "low_vol_20d": list(range(6, 0, -1)),
+            "future_return_same": [value / 100 for value in range(1, 7)],
+            "future_return_lagged": [value / 100 for value in range(1, 7)],
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = []
+        for index, symbol in enumerate(symbols, start=1):
+            fundamentals.extend([
+                {
+                    # This older accounting period has the later recorded publishDate.
+                    # It must not override the newer already-published accounting period.
+                    "symbol": symbol,
+                    "roe": float(7 - index),
+                    "publishDate": pd.Timestamp("2025-05-30"),
+                    "reportPeriodEnd": pd.Timestamp("2023-12-31"),
+                },
+                {
+                    "symbol": symbol,
+                    "roe": float(index),
+                    "publishDate": pd.Timestamp("2025-04-30"),
+                    "reportPeriodEnd": pd.Timestamp("2024-12-31"),
+                },
+                {
+                    # Date-only same-day publication remains unavailable at day t.
+                    "symbol": symbol,
+                    "roe": float(7 - index),
+                    "publishDate": day,
+                    "reportPeriodEnd": pd.Timestamp("2025-03-31"),
+                },
+            ])
+
+        observations = run_stage2_registered_cells(
+            prepared=base,
+            stock_master=stock_master,
+            fundamentals=pd.DataFrame(fundamentals),
+            rebalance_dates=[day],
+            plan=_stage2_plan(),
+        )
+
+        publication_roe = next(
+            row for row in observations
+            if row["variant"] == "I0000_pit_publication" and row["factor"] == "roe"
+        )
+        self.assertAlmostEqual(publication_roe["ic"], 1.0)
+
+    def test_stage2_rejects_master_eligible_symbol_without_signal_day_quote(self) -> None:
+        day = pd.Timestamp("2025-06-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 7)]
+        quoted_symbols = symbols[:-1]
+        base = pd.DataFrame({
+            "date": [day] * len(quoted_symbols),
+            "symbol": quoted_symbols,
+            "is_st": [False] * len(quoted_symbols),
+            "is_suspended": [False] * len(quoted_symbols),
+            "amount_20d": [10_000_000.0] * len(quoted_symbols),
+            "momentum_60d": list(range(1, len(quoted_symbols) + 1)),
+            "low_vol_20d": list(range(len(quoted_symbols), 0, -1)),
+            "future_return_same": [0.01, 0.02, 0.03, 0.04, 0.05],
+            "future_return_lagged": [0.01, 0.02, 0.03, 0.04, 0.05],
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = pd.DataFrame({
+            "symbol": symbols,
+            "roe": [value / 100 for value in range(1, len(symbols) + 1)],
+            "publishDate": [pd.Timestamp("2024-04-30")] * len(symbols),
+            "reportPeriodEnd": [pd.Timestamp("2023-12-31")] * len(symbols),
+        })
+
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError,
+            "master-eligible.*signal-day quote",
+        ):
+            run_stage2_registered_cells(
+                prepared=base,
+                stock_master=stock_master,
+                fundamentals=fundamentals,
+                rebalance_dates=[day],
+                plan=_stage2_plan(),
+            )
+
+    def test_stage2_final_survivor_universe_still_begins_at_listing_date(self) -> None:
+        day = pd.Timestamp("2025-06-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 7)]
+        quoted_symbols = symbols[:-1]
+        base = pd.DataFrame({
+            "date": [day] * len(quoted_symbols),
+            "symbol": quoted_symbols,
+            "is_st": [False] * len(quoted_symbols),
+            "is_suspended": [False] * len(quoted_symbols),
+            "amount_20d": [10_000_000.0] * len(quoted_symbols),
+            "momentum_60d": list(range(1, len(quoted_symbols) + 1)),
+            "low_vol_20d": list(range(len(quoted_symbols), 0, -1)),
+            "future_return_same": [0.01, 0.02, 0.03, 0.04, 0.05],
+            "future_return_lagged": [0.01, 0.02, 0.03, 0.04, 0.05],
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(quoted_symbols)
+            + [pd.Timestamp("2026-01-01")],
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = pd.DataFrame({
+            "symbol": symbols,
+            "roe": [value / 100 for value in range(1, len(symbols) + 1)],
+            "publishDate": [pd.Timestamp("2024-04-30")] * len(symbols),
+            "reportPeriodEnd": [pd.Timestamp("2023-12-31")] * len(symbols),
+        })
+
+        try:
+            observations = run_stage2_registered_cells(
+                prepared=base,
+                stock_master=stock_master,
+                fundamentals=fundamentals,
+                rebalance_dates=[day],
+                plan=_stage2_plan(),
+            )
+        except ConfirmatoryStudyError as exc:
+            self.fail(f"future-listed survivor entered the historical universe: {exc}")
+
+        final_survivor_roe = next(
+            row for row in observations
+            if row["variant"] == "A0_final_report_end" and row["factor"] == "roe"
+        )
+        self.assertEqual(
+            final_survivor_roe["sample_audit"]["candidate_count"],
+            len(quoted_symbols),
+        )
+
+    def test_stage2_monthly_timing_diagnostics_close_three_part_common_support_identity(self) -> None:
+        day = pd.Timestamp("2025-06-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 8)]
+        base = pd.DataFrame({
+            "date": [day] * len(symbols),
+            "symbol": symbols,
+            "is_st": [False] * len(symbols),
+            "is_suspended": [False] * len(symbols),
+            "amount_20d": [10_000_000.0] * len(symbols),
+            "momentum_60d": list(range(1, 8)),
+            "low_vol_20d": list(range(7, 0, -1)),
+            "future_return_same": [value / 100 for value in range(1, 8)],
+            "future_return_lagged": [value / 100 for value in range(1, 8)],
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = []
+        for index, symbol in enumerate(symbols, start=1):
+            # The report-side selector sees a newer but not-yet-published record.
+            fundamentals.append({
+                "symbol": symbol,
+                "roe": float(8 - index),
+                "publishDate": pd.Timestamp("2025-06-30"),
+                "reportPeriodEnd": pd.Timestamp("2024-12-31"),
+            })
+            if index < len(symbols):
+                fundamentals.append({
+                    "symbol": symbol,
+                    "roe": float(index),
+                    "publishDate": pd.Timestamp("2024-04-30"),
+                    "reportPeriodEnd": pd.Timestamp("2023-12-31"),
+                })
+
+        observations = run_stage2_registered_cells(
+            prepared=base,
+            stock_master=stock_master,
+            fundamentals=pd.DataFrame(fundamentals),
+            rebalance_dates=[day],
+            plan=_stage2_plan(),
+        )
+        report_roe = next(
+            row for row in observations
+            if row["variant"] == "A1_pit_report_end" and row["factor"] == "roe"
+        )
+        publication_roe = next(
+            row for row in observations
+            if row["variant"] == "I0000_pit_publication" and row["factor"] == "roe"
+        )
+        diagnostic = publication_roe["timing_decomposition"]
+
+        self.assertEqual(diagnostic["u_r_count"], 7)
+        self.assertEqual(diagnostic["u_p_count"], 6)
+        self.assertEqual(diagnostic["intersection_count"], 6)
+        exposure = publication_roe["publication_exposure"]
+        self.assertEqual(exposure["changed_report_period_count"], 6)
+        self.assertEqual(exposure["premature_report_record_count"], 7)
+        components = (
+            diagnostic["report_support_restriction"]
+            + diagnostic["common_support_record_replacement"]
+            + diagnostic["publication_support_extension"]
+        )
+        self.assertAlmostEqual(diagnostic["total_timing_difference"], components)
+        self.assertAlmostEqual(
+            diagnostic["total_timing_difference"],
+            publication_roe["ic"] - report_roe["ic"],
+        )
+        self.assertAlmostEqual(diagnostic["efficiency_residual"], 0.0, places=12)
+
+    def test_publication_exposure_diagnostics_are_outcome_free_and_complete(self) -> None:
+        day = pd.Timestamp("2025-06-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 4)]
+        base = pd.DataFrame({
+            "date": [day] * len(symbols),
+            "symbol": symbols,
+            "is_st": [False] * len(symbols),
+            "is_suspended": [False] * len(symbols),
+            "amount_20d": [10_000_000.0] * len(symbols),
+            "momentum_60d": [1.0, 2.0, 3.0],
+            "low_vol_20d": [3.0, 2.0, 1.0],
+            # Every outcome is deliberately unresolved.  The diagnostic must still exist.
+            "future_return_same": [float("nan")] * len(symbols),
+            "future_return_lagged": [float("nan")] * len(symbols),
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals: list[dict[str, object]] = []
+        for index, symbol in enumerate(symbols, start=1):
+            fundamentals.append({
+                "symbol": symbol,
+                "roe": float(4 - index),
+                "publishDate": pd.Timestamp("2025-06-30"),
+                "reportPeriodEnd": pd.Timestamp("2024-12-31"),
+            })
+            if index < 3:
+                fundamentals.append({
+                    "symbol": symbol,
+                    "roe": float(index),
+                    "publishDate": pd.Timestamp("2024-04-30"),
+                    "reportPeriodEnd": pd.Timestamp("2023-12-31"),
+                })
+
+        observations = run_stage2_registered_cells(
+            prepared=base,
+            stock_master=stock_master,
+            fundamentals=pd.DataFrame(fundamentals),
+            rebalance_dates=[day],
+            plan=_stage2_plan(),
+        )
+        publication_roe = next(
+            row for row in observations
+            if row["variant"] == "I0000_pit_publication" and row["factor"] == "roe"
+        )
+        self.assertNotIn("timing_decomposition", publication_roe)
+        self.assertEqual(publication_roe["sample_audit"]["candidate_count"], 3)
+        self.assertEqual(publication_roe["sample_audit"]["signal_missing_count"], 1)
+        diagnostic = publication_roe["publication_exposure"]
+        self.assertEqual(diagnostic["report_signal_count"], 3)
+        self.assertEqual(diagnostic["publication_signal_count"], 2)
+        self.assertEqual(diagnostic["common_signal_count"], 2)
+        self.assertEqual(diagnostic["report_only_count"], 1)
+        self.assertEqual(diagnostic["publication_only_count"], 0)
+        self.assertEqual(diagnostic["premature_report_record_count"], 3)
+        self.assertEqual(diagnostic["premature_report_record_share"], 1.0)
+        self.assertEqual(diagnostic["changed_report_period_count"], 2)
+        self.assertEqual(diagnostic["changed_report_period_share"], 1.0)
+        self.assertEqual(
+            diagnostic["reporting_delay_calendar_days"],
+            {
+                "count": 3,
+                "mean": 181.0,
+                "median": 181.0,
+                "p25": 181.0,
+                "p75": 181.0,
+                "maximum": 181.0,
+            },
+        )
+
+    def test_nonfinite_quote_is_input_integrity_failure_not_endpoint_reason(self) -> None:
+        sessions = list(pd.bdate_range("2025-01-02", periods=22))
+        quotes = pd.DataFrame({
+            "date": sessions,
+            "symbol": ["000001.SZ"] * len(sessions),
+            "close": [10.0] * 21 + [float("inf")],
+            "amount": [10_000_000.0] * len(sessions),
+            "is_st": [False] * len(sessions),
+            "is_suspended": [False] * len(sessions),
+        })
+        with self.assertRaisesRegex(ConfirmatoryStudyError, "non-finite quote"):
+            _prepare_quotes(quotes, 20, exchange_sessions=sessions)
+
+    def test_quote_loader_rejects_missing_or_unparseable_numeric_values(self) -> None:
+        for invalid_close in ("", "not-a-number"):
+            with self.subTest(invalid_close=invalid_close), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "quotes.csv"
+                path.write_text(
+                    "date,symbol,close,amount,is_st,is_suspended\n"
+                    "2025-01-02,000001.SZ,10.0,10000000,false,false\n"
+                    f"2025-01-03,000001.SZ,{invalid_close},10000000,false,false\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError,
+                    "missing or non-numeric quote values",
+                ):
+                    _load_quotes(path)
 
     def test_stage2_runner_isolates_universe_publication_filters_and_lag(self) -> None:
         day = pd.Timestamp("2025-05-02")
@@ -365,6 +874,122 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         ].iloc[0]
         self.assertTrue(pd.isna(first_b["future_return_same"]))
 
+    def test_stage2_unresolved_exact_forward_endpoints_make_cells_non_estimable_and_auditable(self) -> None:
+        sessions = list(pd.bdate_range("2025-01-02", periods=22))
+        day = sessions[0]
+        symbols = [f"{index:06d}.SZ" for index in range(1, 8)]
+        missing_same_exit = symbols[0]
+        missing_lag_entry = symbols[1]
+        rows = []
+        for session_index, session in enumerate(sessions):
+            for symbol_index, symbol in enumerate(symbols, start=1):
+                if symbol == missing_same_exit and session_index == 20:
+                    continue
+                if symbol == missing_lag_entry and session_index == 1:
+                    continue
+                rows.append({
+                    "date": session,
+                    "symbol": symbol,
+                    "close": 10.0 + symbol_index + session_index / 10,
+                    "amount": 10_000_000.0,
+                    "is_st": False,
+                    "is_suspended": False,
+                })
+        prepared = _prepare_quotes(
+            pd.DataFrame(rows),
+            horizon=20,
+            exchange_sessions=sessions,
+        )
+        signal_rows = prepared["date"].eq(day)
+        prepared.loc[signal_rows, "momentum_60d"] = range(1, 8)
+        prepared.loc[signal_rows, "low_vol_20d"] = range(7, 0, -1)
+        prepared.loc[signal_rows, "amount_20d"] = 10_000_000.0
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [pd.NaT] * len(symbols),
+            "listStatus": ["listed"] * len(symbols),
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = pd.DataFrame({
+            "symbol": symbols,
+            "roe": [value / 100 for value in range(1, 8)],
+            "publishDate": [pd.Timestamp("2024-04-30")] * len(symbols),
+            "reportPeriodEnd": [pd.Timestamp("2023-12-31")] * len(symbols),
+        })
+        plan = _stage2_plan()
+
+        observations = run_stage2_registered_cells(
+            prepared=prepared,
+            stock_master=stock_master,
+            fundamentals=fundamentals,
+            rebalance_dates=[day],
+            plan=plan,
+        )
+        same_clock = next(
+            row for row in observations
+            if row["variant"] == "I0000_pit_publication" and row["factor"] == "roe"
+        )
+        lag_clock = next(
+            row for row in observations
+            if row["variant"] == "I0001_lag" and row["factor"] == "roe"
+        )
+
+        self.assertIsNone(same_clock["ic"])
+        self.assertIsNone(same_clock["top_minus_universe"])
+        self.assertEqual(same_clock["sample_audit"]["signal_eligible_count"], 7)
+        self.assertEqual(same_clock["sample_audit"]["estimable_count"], 6)
+        self.assertEqual(same_clock["sample_audit"]["unresolved_endpoint_count"], 1)
+        self.assertEqual(
+            same_clock["sample_audit"]["unresolved_endpoints"],
+            [{
+                "symbol": missing_same_exit,
+                "reason_code": "MISSING_EXACT_FORWARD_EXIT",
+            }],
+        )
+        self.assertIsNone(lag_clock["ic"])
+        self.assertIsNone(lag_clock["top_minus_universe"])
+        self.assertEqual(lag_clock["sample_audit"]["unresolved_endpoint_count"], 1)
+        self.assertEqual(
+            lag_clock["sample_audit"]["unresolved_endpoints"],
+            [{
+                "symbol": missing_lag_entry,
+                "reason_code": "MISSING_EXACT_LAG_ENTRY",
+            }],
+        )
+        self.assertIn("endpoint_records", same_clock["sample_audit"])
+        self.assertEqual(
+            {row["symbol"] for row in same_clock["sample_audit"]["endpoint_records"]},
+            set(symbols),
+        )
+        self.assertEqual(
+            [
+                row["resolution_code"]
+                for row in same_clock["sample_audit"]["endpoint_records"]
+            ].count("EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"),
+            6,
+        )
+        self.assertEqual(
+            [
+                row["resolution_code"]
+                for row in same_clock["sample_audit"]["endpoint_records"]
+            ].count("MISSING_EXACT_FORWARD_EXIT"),
+            1,
+        )
+        self.assertEqual(
+            [
+                row["resolution_code"]
+                for row in lag_clock["sample_audit"]["endpoint_records"]
+            ].count("MISSING_EXACT_LAG_ENTRY"),
+            1,
+        )
+        status = _stage2_evidence_status(
+            declaration={"source_classification": "real_market_data"},
+            observations=observations,
+            plan=plan,
+        )
+        self.assertIn("UNRESOLVED_FORWARD_ENDPOINTS", status["reason_codes"])
+
     def test_stage2_scope_rejects_bj_b_shares_funds_and_unsuffixed_symbols(self) -> None:
         day = pd.Timestamp("2020-06-01")
         valid = [f"{index:06d}.SZ" for index in range(1, 6)]
@@ -415,6 +1040,390 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         )
         self.assertEqual(baseline["cross_section_size"], len(valid))
 
+    def test_stage2_execution_writes_complete_private_endpoint_ledger_and_sanitizes_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            output = root / "out"
+
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ):
+                receipt = run_stage2_confirmatory_study(**paths, output_dir=output)
+
+            ledger_path = output / "endpoint_reason_ledger.private.json"
+            self.assertTrue(ledger_path.is_file())
+            ledger_bytes = ledger_path.read_bytes()
+            ledger = json.loads(ledger_bytes)
+            self.assertEqual(
+                ledger_bytes,
+                (
+                    json.dumps(
+                        ledger,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8"),
+            )
+            self.assertEqual(ledger["schema_version"], "stage2_endpoint_reason_ledger_v1")
+
+            metadata = receipt["endpoint_reason_ledger"]
+            self.assertEqual(
+                set(metadata),
+                {
+                    "filename",
+                    "sha256",
+                    "record_count",
+                    "aggregate_resolution_code_counts",
+                    "exact_denominator_coverage",
+                },
+            )
+            self.assertEqual(
+                metadata["filename"], "endpoint_reason_ledger.private.json"
+            )
+            self.assertEqual(metadata["sha256"], hashlib.sha256(ledger_bytes).hexdigest())
+            self.assertEqual(metadata["record_count"], len(ledger["records"]))
+
+            expected_record_count = sum(
+                row["sample_audit"]["signal_eligible_count"]
+                for row in receipt["monthly_observations"]
+            )
+            self.assertEqual(metadata["record_count"], expected_record_count)
+            self.assertEqual(
+                metadata["exact_denominator_coverage"],
+                {
+                    "assertion": (
+                        "one_record_per_signal_eligible_security_date_variant_factor"
+                    ),
+                    "expected_record_count": expected_record_count,
+                    "satisfied": True,
+                },
+            )
+
+            counts: dict[str, int] = {}
+            ledger_cell_counts: dict[tuple[str, str, str], int] = {}
+            record_keys: set[tuple[str, str, str, str]] = set()
+            for row in ledger["records"]:
+                self.assertEqual(
+                    set(row), {"date", "variant", "factor", "symbol", "resolution_code"}
+                )
+                counts[row["resolution_code"]] = counts.get(row["resolution_code"], 0) + 1
+                cell = (row["date"], row["variant"], row["factor"])
+                ledger_cell_counts[cell] = ledger_cell_counts.get(cell, 0) + 1
+                record_keys.add((*cell, row["symbol"]))
+            self.assertEqual(len(record_keys), len(ledger["records"]))
+            self.assertEqual(metadata["aggregate_resolution_code_counts"], counts)
+            self.assertEqual(
+                ledger_cell_counts,
+                {
+                    (row["date"], row["variant"], row["factor"]): row[
+                        "sample_audit"
+                    ]["signal_eligible_count"]
+                    for row in receipt["monthly_observations"]
+                },
+            )
+            for row in receipt["monthly_observations"]:
+                self.assertNotIn("unresolved_endpoints", row["sample_audit"])
+                self.assertNotIn("endpoint_records", row["sample_audit"])
+            self.assertNotIn(
+                '"symbol"',
+                json.dumps(receipt["monthly_observations"], sort_keys=True),
+            )
+
+    def test_stage2_endpoint_ledger_streams_large_input_with_bounded_python_heap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            observations: list[dict[str, object]] = []
+            writer = confirmatory_module._Stage2EndpointLedgerWriter(directory=root)
+            tracemalloc.start()
+            try:
+                for cell_index in range(256):
+                    observation: dict[str, object] = {
+                        "date": "2020-01-02",
+                        "variant": f"V{cell_index:04d}",
+                        "factor": "roe",
+                        "sample_audit": {
+                            "candidate_count": 1024,
+                            "signal_eligible_count": 1024,
+                            "signal_missing_count": 0,
+                            "estimable_count": 1024,
+                            "unresolved_endpoint_count": 0,
+                            "unresolved_endpoints": [],
+                            "endpoint_records": [
+                                {
+                                    "symbol": f"{symbol_index:06d}.SZ",
+                                    "resolution_code": (
+                                        "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+                                    ),
+                                }
+                                for symbol_index in range(1024)
+                            ],
+                        },
+                    }
+                    writer.add_observation(observation)
+                    audit = observation["sample_audit"]
+                    self.assertNotIn("endpoint_records", audit)
+                    self.assertNotIn("unresolved_endpoints", audit)
+                    observations.append(observation)
+
+                metadata = writer.finalize()
+                ledger_path = root / "endpoint_reason_ledger.private.json"
+                writer.copy_to(ledger_path)
+                confirmatory_module._validate_stage2_endpoint_reason_ledger(
+                    endpoint_ledger_path=ledger_path,
+                    metadata=metadata,
+                    observations=observations,
+                )
+                _, peak_bytes = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+                writer.close()
+
+            self.assertEqual(metadata["record_count"], 256 * 1024)
+            self.assertLess(peak_bytes, 24 * 1024 * 1024)
+
+    def test_public_endpoint_metadata_rejects_unregistered_reason_code_without_private_ledger(self) -> None:
+        observations = [{
+            "date": "2020-01-02",
+            "variant": "I0000_pit_publication",
+            "factor": "roe",
+            "sample_audit": {
+                "candidate_count": 1,
+                "signal_eligible_count": 1,
+                "signal_missing_count": 0,
+                "estimable_count": 0,
+                "unresolved_endpoint_count": 1,
+            },
+        }]
+        metadata = {
+            "filename": "endpoint_reason_ledger.private.json",
+            "sha256": "0" * 64,
+            "record_count": 1,
+            "aggregate_resolution_code_counts": {
+                "UNREGISTERED_ENDPOINT_REASON": 1,
+            },
+            "exact_denominator_coverage": {
+                "assertion": (
+                    "one_record_per_signal_eligible_security_date_variant_factor"
+                ),
+                "expected_record_count": 1,
+                "satisfied": True,
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError, "unsupported endpoint resolution code"
+        ):
+            confirmatory_module._validate_stage2_endpoint_reason_ledger(
+                endpoint_ledger_path=None,
+                metadata=metadata,
+                observations=observations,
+            )
+
+    def test_stage2_verifies_staged_artifacts_before_atomic_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            output = root / "out"
+
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ), patch(
+                "a_share_quant_agent.confirmatory_study.verify_stage2_study_receipt",
+                side_effect=ConfirmatoryStudyError("forced staged verification failure"),
+            ):
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "forced staged verification failure"
+                ):
+                    run_stage2_confirmatory_study(**paths, output_dir=output)
+
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob(".confirmatory-stage2-*")), [])
+
+    def test_stage2_verifier_rejects_invalid_private_endpoint_ledger_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            output = root / "out"
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=output)
+
+            receipt_path = output / "receipt.json"
+            ledger_path = output / "endpoint_reason_ledger.private.json"
+            original_receipt_bytes = receipt_path.read_bytes()
+            original_ledger_bytes = ledger_path.read_bytes()
+            original_receipt = json.loads(original_receipt_bytes)
+            original_ledger = json.loads(original_ledger_bytes)
+
+            verify_stage2_study_receipt(
+                receipt_path, endpoint_ledger_path=ledger_path
+            )
+
+            def write_receipt(receipt: dict[str, object]) -> None:
+                _rewrite_receipt_integrity(receipt)
+                receipt_path.write_text(
+                    json.dumps(
+                        receipt,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+            with self.subTest("canonical bytes"):
+                pretty_ledger = (
+                    json.dumps(original_ledger, ensure_ascii=False, indent=2) + "\n"
+                ).encode("utf-8")
+                ledger_path.write_bytes(pretty_ledger)
+                changed_receipt = json.loads(original_receipt_bytes)
+                changed_receipt["endpoint_reason_ledger"]["sha256"] = hashlib.sha256(
+                    pretty_ledger
+                ).hexdigest()
+                write_receipt(changed_receipt)
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "endpoint ledger is not canonical JSON"
+                ):
+                    verify_stage2_study_receipt(
+                        receipt_path, endpoint_ledger_path=ledger_path
+                    )
+
+            receipt_path.write_bytes(original_receipt_bytes)
+            ledger_path.write_bytes(original_ledger_bytes)
+            with self.subTest("aggregate resolution counts"):
+                changed_ledger = json.loads(original_ledger_bytes)
+                changed_ledger["records"][0][
+                    "resolution_code"
+                ] = "MISSING_EXACT_FORWARD_EXIT"
+                changed_ledger_bytes = (
+                    json.dumps(
+                        changed_ledger,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                ledger_path.write_bytes(changed_ledger_bytes)
+                changed_receipt = json.loads(original_receipt_bytes)
+                metadata = changed_receipt["endpoint_reason_ledger"]
+                metadata["sha256"] = hashlib.sha256(changed_ledger_bytes).hexdigest()
+                counts = metadata["aggregate_resolution_code_counts"]
+                counts["EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"] -= 1
+                counts["MISSING_EXACT_FORWARD_EXIT"] = 1
+                write_receipt(changed_receipt)
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError,
+                    "aggregate resolution counts differ from monthly audits",
+                ):
+                    verify_stage2_study_receipt(
+                        receipt_path, endpoint_ledger_path=ledger_path
+                    )
+
+            receipt_path.write_bytes(original_receipt_bytes)
+            ledger_path.write_bytes(original_ledger_bytes)
+            with self.subTest("exact denominator coverage"):
+                changed_ledger = json.loads(original_ledger_bytes)
+                changed_ledger["records"].pop()
+                changed_ledger_bytes = (
+                    json.dumps(
+                        changed_ledger,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                ledger_path.write_bytes(changed_ledger_bytes)
+                changed_receipt = json.loads(original_receipt_bytes)
+                metadata = changed_receipt["endpoint_reason_ledger"]
+                metadata["sha256"] = hashlib.sha256(changed_ledger_bytes).hexdigest()
+                metadata["record_count"] -= 1
+                metadata["aggregate_resolution_code_counts"][
+                    "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+                ] -= 1
+                metadata["exact_denominator_coverage"][
+                    "expected_record_count"
+                ] -= 1
+                write_receipt(changed_receipt)
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "exact denominator coverage"
+                ):
+                    verify_stage2_study_receipt(
+                        receipt_path, endpoint_ledger_path=ledger_path
+                    )
+
+            receipt_path.write_bytes(original_receipt_bytes)
+            ledger_path.write_bytes(original_ledger_bytes)
+            with self.subTest("explicit audit requires supplied ledger"):
+                ledger_path.unlink()
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "private endpoint ledger is missing"
+                ):
+                    verify_stage2_study_receipt(
+                        receipt_path, endpoint_ledger_path=ledger_path
+                    )
+
+    def test_stage2_verifier_rejects_cross_section_size_audit_mismatch_in_both_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            output = root / "out"
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ), patch(
+                "a_share_quant_agent.confirmatory_study._verify_coverage_probe_spec_commit_binding"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=output)
+
+                receipt_path = output / "receipt.json"
+                receipt = json.loads(receipt_path.read_bytes())
+                receipt["monthly_observations"][0]["cross_section_size"] += 1
+                _rewrite_receipt_integrity(receipt)
+                receipt_path.write_text(
+                    json.dumps(
+                        receipt,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                for label, endpoint_ledger_path in (
+                    ("public receipt only", None),
+                    (
+                        "controlled private-ledger audit",
+                        output / "endpoint_reason_ledger.private.json",
+                    ),
+                ):
+                    with self.subTest(label=label), self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        "cross-section size differs from sample audit estimable count",
+                    ):
+                        verify_stage2_study_receipt(
+                            receipt_path,
+                            endpoint_ledger_path=endpoint_ledger_path,
+                        )
+
     def test_stage2_receipt_reports_all_factorial_cells_and_keeps_claim_gates_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -430,6 +1439,31 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 )
 
             self.assertEqual(receipt["schema_version"], "confirmatory_study_receipt_v2")
+            probe_file = receipt["data"]["files"]["coverage_probe_receipt"]
+            probe_package = receipt["data"]["coverage_probe_receipt"]
+            self.assertEqual(
+                probe_file["sha256"],
+                receipt["plan"]["content"]["coverage_probe_receipt_sha256"],
+            )
+            self.assertEqual(
+                probe_package["source_file_sha256"], probe_file["sha256"]
+            )
+            self.assertEqual(probe_package["content"]["status"], "PASSED")
+            self.assertEqual(
+                receipt["registration_evidence"]["design_manifest"]["artifacts"]
+                ["coverage_probe_receipt_sha256"],
+                probe_file["sha256"],
+            )
+            self.assertEqual(
+                receipt["registration_evidence"]["registration_receipt"]
+                ["coverage_probe_receipt_sha256"],
+                probe_file["sha256"],
+            )
+            self.assertEqual(
+                receipt["registration_evidence"]["execution_authorization"]
+                ["bound_artifacts"]["coverage_probe_receipt_sha256"],
+                probe_file["sha256"],
+            )
             self.assertEqual(len(receipt["results"]), 18 * 4)
             self.assertEqual(receipt["selection_control"], {
                 "all_registered_results_reported": True,
@@ -456,7 +1490,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             self.assertEqual(len(receipt["estimands"]["shapley_ic"]), 4)
             self.assertEqual(
                 receipt["estimands"]["multiplicity_control"]["secondary_member_count"],
-                25,
+                28,
             )
             self.assertEqual(
                 [row["factor"] for row in receipt["estimands"]["timing_negative_controls"]],
@@ -487,6 +1521,13 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             self.assertFalse(receipt["status"]["generalization_claim"])
             self.assertFalse(receipt["status"]["usable_for_trading_decisions"])
             self.assertFalse(receipt["status"]["revision_history_claim"])
+            self.assertFalse(receipt["status"]["vintage_value_claim"])
+            self.assertFalse(
+                receipt["status"]["historical_investor_observed_value_claim"]
+            )
+            self.assertFalse(receipt["status"]["announcement_reaction_claim"])
+            self.assertFalse(receipt["status"]["return_timing_claim"])
+            self.assertFalse(receipt["status"]["portfolio_or_trading_claim"])
             self.assertEqual(
                 receipt["plan"]["content"]["external_registration"]["identifier"],
                 "fixture-registration-v1",
@@ -516,6 +1557,46 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             )
             self.assertEqual(public_status["status"], "INSUFFICIENT_EVIDENCE")
             self.assertEqual(public_status["verified_receipt_count"], 1)
+
+            standalone_public_receipt = root / "published-stage2-receipt.json"
+            standalone_public_receipt.write_bytes(
+                (root / "out" / "receipt.json").read_bytes()
+            )
+            verified_public = verify_stage2_study_receipt(
+                standalone_public_receipt
+            )
+            self.assertEqual(verified_public["study_id"], receipt["study_id"])
+            standalone_status = build_public_evidence_status(
+                [standalone_public_receipt]
+            )
+            self.assertEqual(
+                standalone_status,
+                {
+                    "schema_version": "public_evidence_status_v1",
+                    "status": "INSUFFICIENT_EVIDENCE",
+                    "source_of_truth": "verified_confirmatory_receipts",
+                    "verified_receipt_count": 1,
+                    "study_ids": [receipt["study_id"]],
+                    "performance_claim": False,
+                    "generalization_claim": False,
+                    "usable_for_trading_decisions": False,
+                },
+            )
+            self.assertFalse(receipt["estimands"]["global_claim_gate"]["passed"])
+            changed = json.loads(
+                (root / "out" / "receipt.json").read_text(encoding="utf-8")
+            )
+            changed["estimands"]["primary_family"][0]["claim_eligible"] = True
+            _rewrite_receipt_integrity(changed)
+            tampered_global_gate = root / "tampered-global-claim-gate.json"
+            tampered_global_gate.write_text(
+                json.dumps(changed, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "estimands failed verification"
+            ):
+                verify_stage2_study_receipt(tampered_global_gate)
 
             changed = json.loads(
                 (root / "out" / "receipt.json").read_text(encoding="utf-8")
@@ -948,6 +2029,237 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfirmatoryStudyError, "coverage report hash"):
                 run_stage2_confirmatory_study(**paths, output_dir=root / "out")
 
+    def test_stage2_coverage_probe_receipt_is_strictly_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            spec_path = paths["coverage_probe_spec_path"]
+            receipt_path = paths["coverage_probe_receipt_path"]
+            original = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+            validated = _validate_stage2_coverage_probe_receipt(
+                spec_path=spec_path,
+                receipt_path=receipt_path,
+                expected_study_id="a-share-factor-timing-bias-decomposition-v2",
+            )
+            self.assertEqual(validated["status"], "PASSED")
+
+            inventory_path = paths["prior_specification_inventory_path"]
+            original_inventory_bytes = inventory_path.read_bytes()
+            inventory_path.write_bytes(original_inventory_bytes + b" ")
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "exact prior specification inventory bytes"
+            ):
+                _validate_stage2_coverage_probe_receipt(
+                    spec_path=spec_path,
+                    receipt_path=receipt_path,
+                    expected_study_id="a-share-factor-timing-bias-decomposition-v2",
+                )
+            inventory_path.write_bytes(original_inventory_bytes)
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "after the data review scope cutoff"
+            ):
+                _validate_stage2_coverage_probe_receipt(
+                    spec_path=spec_path,
+                    receipt_path=receipt_path,
+                    expected_study_id=(
+                        "a-share-factor-timing-bias-decomposition-v2"
+                    ),
+                    review_scope_cutoff_at="2026-08-31T13:20:00+00:00",
+                )
+
+            def rewrite(receipt: dict[str, object], *, refresh_id: bool = True) -> None:
+                if refresh_id:
+                    receipt.pop("receipt_id", None)
+                    canonical_without_id = (
+                        json.dumps(
+                            receipt,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                    receipt["receipt_id"] = "sha256:" + hashlib.sha256(
+                        canonical_without_id
+                    ).hexdigest()
+                receipt_path.write_text(
+                    json.dumps(
+                        receipt,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+            cases = (
+                (
+                    "canonical receipt id",
+                    lambda item: item.__setitem__("receipt_id", "sha256:" + "0" * 64),
+                    False,
+                    "receipt identifier",
+                ),
+                (
+                    "spec hash",
+                    lambda item: item.__setitem__("spec_sha256", "0" * 64),
+                    True,
+                    "specification hash",
+                ),
+                (
+                    "uppercase artifact hash",
+                    lambda item: item["artifacts"][0].__setitem__(
+                        "sha256", "A" * 64
+                    ),
+                    True,
+                    "private-artifact evidence is invalid",
+                ),
+                (
+                    "study id",
+                    lambda item: item.__setitem__("study_id", "wrong-study"),
+                    True,
+                    "study identifier",
+                ),
+                (
+                    "probe id",
+                    lambda item: item.__setitem__("probe_id", "wrong-probe"),
+                    True,
+                    "probe identifier",
+                ),
+                (
+                    "request scope",
+                    lambda item: item["request"].__setitem__(
+                        "dates", ["2018-06-29"]
+                    ),
+                    True,
+                    "request scope",
+                ),
+                (
+                    "provider",
+                    lambda item: item["request"].__setitem__(
+                        "provider_interface", "changed.provider"
+                    ),
+                    True,
+                    "request scope",
+                ),
+                (
+                    "price mode",
+                    lambda item: item["request"].__setitem__(
+                        "price_mode", "adjusted"
+                    ),
+                    True,
+                    "request scope",
+                ),
+                (
+                    "passed status",
+                    lambda item: item.__setitem__("status", "BLOCKED"),
+                    True,
+                    "must have PASSED",
+                ),
+                (
+                    "complete coverage",
+                    lambda item: item["coverage"].__setitem__(
+                        "observed_symbol_date_cells", 23
+                    ),
+                    True,
+                    "complete fixed-scope coverage",
+                ),
+                (
+                    "all gates",
+                    lambda item: item["gates"].__setitem__(
+                        next(iter(item["gates"])), False
+                    ),
+                    True,
+                    "gates have not all passed",
+                ),
+                (
+                    "rights",
+                    lambda item: item["rights"].__setitem__(
+                        "aggregate_receipt_publication_allowed", False
+                    ),
+                    True,
+                    "rights",
+                ),
+                (
+                    "claim boundaries",
+                    lambda item: item["claim_boundaries"].__setitem__(
+                        "factor_outcome_claim_allowed", True
+                    ),
+                    True,
+                    "claim boundaries",
+                ),
+                (
+                    "timestamp subject",
+                    lambda item: item["external_timestamp_proof"].__setitem__(
+                        "subject_sha256", "0" * 64
+                    ),
+                    True,
+                    "timestamp proof",
+                ),
+                (
+                    "unsupported timestamp proof label",
+                    lambda item: item["external_timestamp_proof"].__setitem__(
+                        "type", "detached_digital_signature"
+                    ),
+                    True,
+                    "timestamp proof",
+                ),
+                (
+                    "nonexistent agent commit",
+                    lambda item: item["repository_state"].__setitem__(
+                        "agent_commit", "0" * 40
+                    ),
+                    True,
+                    "Git commit object",
+                ),
+                (
+                    "uppercase agent commit",
+                    lambda item: item["repository_state"].__setitem__(
+                        "agent_commit", "A" * 40
+                    ),
+                    True,
+                    "repository state is invalid",
+                ),
+                (
+                    "timestamp chronology",
+                    lambda item: item["external_timestamp_proof"].__setitem__(
+                        "timestamped_at_utc", "2026-08-31T14:00:00+00:00"
+                    ),
+                    True,
+                    "before probe execution",
+                ),
+            )
+            for label, mutate, refresh_id, pattern in cases:
+                with self.subTest(label=label):
+                    changed = json.loads(json.dumps(original))
+                    mutate(changed)
+                    rewrite(changed, refresh_id=refresh_id)
+                    with self.assertRaisesRegex(ConfirmatoryStudyError, pattern):
+                        _validate_stage2_coverage_probe_receipt(
+                            spec_path=spec_path,
+                            receipt_path=receipt_path,
+                            expected_study_id=(
+                                "a-share-factor-timing-bias-decomposition-v2"
+                            ),
+                        )
+
+    def test_stage2_run_requires_the_bound_coverage_probe_receipt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            paths["coverage_probe_receipt_path"] = root / "missing-probe-receipt.json"
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "coverage probe receipt"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=root / "out")
+
     def test_stage2_run_recomputes_coverage_instead_of_trusting_gate_booleans(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -997,6 +2309,43 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ConfirmatoryStudyError, "before report-period"):
                 _load_stage2_fundamentals(impossible_timing)
+
+    def test_stage2_fundamental_adapter_rejects_raw_duplicate_before_dropping_malformed_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "duplicate-with-malformed-roe.csv"
+            path.write_text(
+                "symbol,roeDiluted,publishDate,reportPeriodEnd\n"
+                "000001.SZ,0.1,2020-04-30,2019-12-31\n"
+                "000001.SZ,not-a-number,2020-05-01,2019-12-31\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError,
+                "duplicate symbol-report periods",
+            ):
+                _load_stage2_fundamentals(path)
+
+    def test_stage2_fundamental_adapter_rejects_missing_or_invalid_raw_keys(self) -> None:
+        invalid_rows = (
+            ",0.2,2020-04-30,2019-12-31",
+            "000002.SZ,0.2,2020-04-30,not-a-date",
+        )
+        for invalid_row in invalid_rows:
+            with self.subTest(invalid_row=invalid_row), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "invalid-key.csv"
+                path.write_text(
+                    "symbol,roeDiluted,publishDate,reportPeriodEnd\n"
+                    "000001.SZ,0.1,2020-04-30,2019-12-31\n"
+                    f"{invalid_row}\n",
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError,
+                    "missing or invalid fundamental keys",
+                ):
+                    _load_stage2_fundamentals(path)
 
     def test_stage2_run_rejects_prior_outcome_exposure_even_when_rehashed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1107,6 +2456,84 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 expected_code_commit=_current_git_sha(),
             )
 
+    def test_stage2_coverage_probe_spec_freezes_superseded_v1_and_design_boundary(self) -> None:
+        spec_path = (
+            Path(__file__).resolve().parents[1]
+            / "studies"
+            / "pit_factor_bias_decomposition_v2"
+            / "coverage_probe_spec.v2.json"
+        )
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        _validate_stage2_coverage_probe_spec(
+            spec, expected_study_id="a-share-factor-timing-bias-decomposition-v2"
+        )
+        cases = (
+            (
+                "superseded v1 path",
+                lambda item: item["supersedes"].__setitem__(
+                    "path", "coverage_probe_spec.other.json"
+                ),
+                "fixed v1 supersession",
+            ),
+            (
+                "superseded v1 hash",
+                lambda item: item["supersedes"].__setitem__("sha256", "A" * 64),
+                "fixed v1 supersession",
+            ),
+            (
+                "variant boundary",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "variants", 17
+                ),
+                "design boundary",
+            ),
+            (
+                "cell boundary",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "factor_variant_cells", 71
+                ),
+                "design boundary",
+            ),
+            (
+                "primary boundary",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "primary_estimands", 2
+                ),
+                "design boundary",
+            ),
+            (
+                "secondary boundary",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "secondary_estimands", 27
+                ),
+                "design boundary",
+            ),
+            (
+                "inferential boundary",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "total_inferential_estimands", 28
+                ),
+                "design boundary",
+            ),
+            (
+                "required commit contents",
+                lambda item: item["execution_boundary"].__setitem__(
+                    "required_commit_contents",
+                    ["coverage_probe_spec.v2.json"],
+                ),
+                "required commit contents",
+            ),
+        )
+        for label, mutate, pattern in cases:
+            with self.subTest(label=label):
+                changed = json.loads(json.dumps(spec))
+                mutate(changed)
+                with self.assertRaisesRegex(ConfirmatoryStudyError, pattern):
+                    _validate_stage2_coverage_probe_spec(
+                        changed,
+                        expected_study_id="a-share-factor-timing-bias-decomposition-v2",
+                    )
+
     def test_stage2_run_rejects_draft_authorization_even_when_rehashed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1190,6 +2617,171 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "INCOMPLETE_REGISTERED_MONTHLY_CELLS",
             incomplete["reason_codes"],
         )
+
+    def test_stage2_global_stop_rule_suppresses_all_estimand_claim_flags(self) -> None:
+        plan = _stage2_plan()
+        observations: list[dict[str, object]] = []
+        months = list(pd.period_range("2010-01", "2022-12", freq="M"))
+        bad_cell = (
+            months[-1].start_time.date().isoformat(),
+            "I1111_full_implementation",
+            "momentum_60d",
+        )
+        for month_index, period in enumerate(months):
+            day = period.start_time.date().isoformat()
+            wiggle = ((month_index % 7) - 3) * 0.0002
+            report_support = -0.002
+            record_replacement = -0.020 + wiggle
+            publication_support = 0.001
+            total_timing = (
+                report_support + record_replacement + publication_support
+            )
+            for variant in plan["variants"]:
+                components = set(variant["components"])
+                for factor_index, factor in enumerate(plan["factors"], start=1):
+                    base = 0.03 + factor_index * 0.01 + month_index * 0.00001
+                    if variant["id"] == "A0_final_report_end":
+                        value = base - 0.004 + wiggle / 5
+                    elif variant["id"] == "A1_pit_report_end":
+                        value = base
+                    else:
+                        value = base
+                        if factor == "roe":
+                            value += total_timing
+                        elif factor == "composite":
+                            value -= 0.010 + wiggle / 2
+                        value += sum(
+                            (index + 1) * 0.0005
+                            for index, component in enumerate(STAGE2_COMPONENTS)
+                            if component in components
+                        ) * (1.0 + wiggle)
+                    is_bad = (day, variant["id"], factor) == bad_cell
+                    row: dict[str, object] = {
+                        "date": day,
+                        "variant": variant["id"],
+                        "factor": factor,
+                        "ic": None if is_bad else value,
+                        "top_minus_universe": None if is_bad else value / 10,
+                        "cross_section_size": 999 if is_bad else 1000,
+                        "sample_audit": {
+                            "candidate_count": 1000,
+                            "signal_missing_count": 0,
+                            "signal_eligible_count": 1000,
+                            "estimable_count": 999 if is_bad else 1000,
+                            "unresolved_endpoint_count": 1 if is_bad else 0,
+                        },
+                    }
+                    if (
+                        variant["id"] == "I0000_pit_publication"
+                        and factor == "roe"
+                    ):
+                        row["publication_exposure"] = {
+                            "schema_version": "stage2_publication_exposure_month_v1",
+                            "uses_forward_returns": False,
+                            "date": day,
+                            "report_signal_count": 1000,
+                            "publication_signal_count": 950,
+                            "common_signal_count": 900,
+                            "report_only_count": 100,
+                            "publication_only_count": 50,
+                            "premature_report_record_count": 500,
+                            "premature_report_record_share": 0.5,
+                            "changed_report_period_count": 450,
+                            "changed_report_period_share": 0.5,
+                            "missing_recorded_publish_date_count": 0,
+                            "reporting_delay_calendar_days": {
+                                "count": 1000,
+                                "mean": 90.0,
+                                "median": 90.0,
+                                "p25": 60.0,
+                                "p75": 120.0,
+                                "maximum": 180.0,
+                            },
+                        }
+                        row["timing_decomposition"] = {
+                            "report_support_restriction": report_support,
+                            "common_support_record_replacement": record_replacement,
+                            "publication_support_extension": publication_support,
+                            "total_timing_difference": total_timing,
+                            "efficiency_residual": 0.0,
+                            "u_r_count": 1000,
+                            "u_p_count": 950,
+                            "intersection_count": 900,
+                        }
+                    observations.append(row)
+
+        status = _stage2_evidence_status(
+            declaration={"source_classification": "real_market_data"},
+            observations=observations,
+            plan=plan,
+        )
+        self.assertEqual(status["code"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(status["complete_registered_rebalance_count"], 155)
+        self.assertIn("UNRESOLVED_FORWARD_ENDPOINTS", status["reason_codes"])
+
+        default_stopped = build_registered_estimands(
+            observations,
+            plan=plan,
+            nw_lag=3,
+            minimum_claim_months=120,
+        )
+        self.assertFalse(default_stopped["global_claim_gate"]["passed"])
+        self.assertFalse(default_stopped["primary_family"][0]["claim_eligible"])
+        self.assertFalse(
+            default_stopped["primary_family"][0]
+            ["reject_primary_at_alpha_0_05"]
+        )
+
+        locally_eligible = build_registered_estimands(
+            observations,
+            plan=plan,
+            nw_lag=3,
+            minimum_claim_months=120,
+            global_claim_eligible=True,
+        )
+        self.assertTrue(locally_eligible["primary_family"][0]["claim_eligible"])
+        self.assertTrue(
+            locally_eligible["primary_family"][0]
+            ["reject_primary_at_alpha_0_05"]
+        )
+
+        globally_stopped = build_registered_estimands(
+            observations,
+            plan=plan,
+            nw_lag=3,
+            minimum_claim_months=120,
+            global_claim_eligible=False,
+        )
+        self.assertFalse(globally_stopped["global_claim_gate"]["passed"])
+        flag_values: list[bool] = []
+
+        def collect_flags(value: object) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "claim_eligible" or key.startswith("reject_"):
+                        flag_values.append(child)
+                    collect_flags(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect_flags(child)
+
+        collect_flags(globally_stopped)
+        self.assertTrue(flag_values)
+        self.assertTrue(all(value is False for value in flag_values))
+        verify_registered_estimands(
+            globally_stopped,
+            factors=plan["factors"],
+            expected_global_claim_eligible=False,
+        )
+
+        tampered = json.loads(json.dumps(globally_stopped))
+        tampered["primary_family"][0]["claim_eligible"] = True
+        with self.assertRaisesRegex(Stage2EstimandError, "global claim gate"):
+            verify_registered_estimands(
+                tampered,
+                factors=plan["factors"],
+                expected_global_claim_eligible=False,
+            )
 
 
 def _write_fixture(root: Path, *, source_classification: str) -> dict[str, Path]:
@@ -1355,6 +2947,13 @@ def _stage2_plan() -> dict[str, object]:
         "design_frozen_at": "2026-08-31T22:45:00+08:00",
         "locked_at": "2026-09-01T00:00:00+08:00",
         "runner_scope": "ic_core_only",
+        "runtime_contract": {
+            "python_version": "3.12.12",
+            "numpy_version": "2.0.2",
+            "pandas_version": "2.3.3",
+            "dependency_match_rule": "exact",
+            "whole_repository_clean_required": True,
+        },
         "registration_semantics": {
             "plan_core_rule": (
                 "Before registration set status to locked, materialize every fixed field and "
@@ -1388,6 +2987,10 @@ def _stage2_plan() -> dict[str, object]:
             "verification_uri": "https://example.test/fixture-registration-v1",
         },
         "coverage_report_sha256": "a" * 64,
+        "coverage_probe_spec_path": "coverage_probe_spec.v2.json",
+        "coverage_probe_spec_sha256": "6" * 64,
+        "coverage_probe_receipt_path": "coverage_probe_receipt.v2.json",
+        "coverage_probe_receipt_sha256": "5" * 64,
         "review_attestation_sha256": "b" * 64,
         "data_declaration_sha256": "1" * 64,
         "official_calendar_sha256": "2" * 64,
@@ -1437,7 +3040,37 @@ def _stage2_plan() -> dict[str, object]:
         "ic_outcome_clock": {
             "no_lag": "adjusted close t to adjusted close t+20 on official exchange sessions",
             "one_session_lag": "adjusted close t+1 to adjusted close t+21 on official exchange sessions",
-            "missing_symbol_session_rule": "return_missing_do_not_shift_to_next_observed_symbol_row",
+            "missing_symbol_session_rule": "cell_non_estimable_do_not_shift_carry_forward_or_assign_default_recovery",
+        },
+        "endpoint_resolution": {
+            "signal_eligible_denominator_fixed_before_outcome_lookup": True,
+            "current_supported_method": "exact_adjusted_close_quote_on_each_required_official_session_only",
+            "required_sessions": {
+                "no_lag": ["t", "t+20"],
+                "one_session_lag": ["t+1", "t+21"],
+            },
+            "maximum_unresolved_required_endpoints_per_cell": 0,
+            "unresolved_rule": "cell_non_estimable_and_global_insufficient_evidence",
+            "forbidden_fallbacks": [
+                "next_observed_quote",
+                "post_endpoint_reopening_quote",
+                "unattested_last_price_carry_forward",
+                "zero_or_other_default_recovery",
+            ],
+            "unimplemented_adapters": [
+                "calendarized_suspension_valuation",
+                "delisting_or_terminal_wealth",
+            ],
+            "unresolved_reason_codes": [
+                "MISSING_EXACT_FORWARD_EXIT",
+                "MISSING_EXACT_LAG_ENTRY",
+                "MISSING_EXACT_LAG_EXIT",
+            ],
+            "receipt_contract": (
+                "Record aggregate endpoint reason-code counts, bind the complete private "
+                "per-security endpoint-reason ledger by SHA-256, and assert exact coverage "
+                "of every signal-eligible security-month-factor-variant record."
+            ),
         },
         "inference": {
             "primary_estimand": "P1_roe_publication_signed_decrement",
@@ -1445,15 +3078,81 @@ def _stage2_plan() -> dict[str, object]:
             "reported_null_hypothesis": "two_sided_mean_equals_zero",
             "primary_multiplicity": "none_single_primary",
             "confidence_level": 0.95,
-            "secondary_family_member_count": 25,
+            "secondary_family_member_count": 28,
             "secondary_fdr": 0.1,
             "timing_isolation_absolute_tolerance": 1e-12,
+            "timing_decomposition": {
+                "efficiency_absolute_tolerance": 1e-12,
+            },
             "missing_family_member_rule": "retain_in_denominator_and_treat_as_non_rejection",
+        },
+        "roe_timing_common_support_decomposition": {
+            "supports": {
+                "R_t": (
+                    "A1 finite report-period ROE support after non-outcome eligibility "
+                    "rules and successful endpoint resolution"
+                ),
+                "P_t": (
+                    "I0000 finite recorded-publication-date ROE support after non-outcome "
+                    "eligibility rules and successful endpoint resolution"
+                ),
+                "C_t": "intersection of R_t and P_t; supports may be non-nested",
+            },
+            "components": [
+                {
+                    "id": "S_roe_report_side_support_restriction",
+                    "definition": "IC_R(C_t)-IC_R(R_t)",
+                    "test": "two_sided_secondary_bh28",
+                },
+                {
+                    "id": "S_roe_within_common_support_record_replacement",
+                    "definition": "IC_P(C_t)-IC_R(C_t)",
+                    "test": "two_sided_secondary_bh28",
+                },
+                {
+                    "id": "S_roe_publication_side_support_extension",
+                    "definition": "IC_P(P_t)-IC_P(C_t)",
+                    "test": "two_sided_secondary_bh28",
+                },
+            ],
+            "rank_rule": (
+                "Recompute both signal and outcome ranks inside the support named by each "
+                "IC term."
+            ),
+            "monthly_identity": (
+                "IC_P(P_t)-IC_R(R_t)=report_side_support_restriction+"
+                "within_common_support_record_replacement+publication_side_support_extension"
+            ),
+            "efficiency_tolerance_source": (
+                "inference.timing_decomposition.efficiency_absolute_tolerance"
+            ),
+            "efficiency_failure_rule": (
+                "absolute identity residual above the registered efficiency tolerance "
+                "invalidates the run"
+            ),
+            "interpretation_boundary": (
+                "ordered arithmetic decomposition only; no causal, revision, or vintage "
+                "interpretation"
+            ),
+        },
+        "publication_exposure_diagnostics": {
+            "uses_forward_returns": False,
+            "inference": "descriptive_only_outside_bh_family",
+            "outputs": [
+                "R_t_P_t_C_t_report_only_and_publication_only_counts_by_month",
+                "share_of_report_side_selected_records_not_yet_recorded_as_published_at_signal_date",
+                "share_of_common_support_records_with_different_selected_report_periods",
+                "report_period_end_to_recorded_publish_date_calendar_day_distribution",
+            ],
         },
         "missingness": {
             "signal_imputation": "none",
             "composite_complete_case": True,
             "all_registered_monthly_cells_required_for_evidence_status": True,
+            "aggregate_signal_missingness_counts_required": True,
+            "aggregate_common_support_counts_required": True,
+            "endpoint_reason_code_for_every_signal_eligible_record_required": True,
+            "outcome_availability_must_not_shrink_signal_eligible_denominator": True,
         },
         "portfolio_module": {
             "status": "planned_unimplemented_excluded_from_this_runner",
@@ -1469,9 +3168,8 @@ def _stage2_plan() -> dict[str, object]:
         "planned_excluded_modules": {
             "status": "planned_unimplemented_excluded_from_this_runner",
             "items": [
-                "dedicated_signal_missingness_tables",
-                "per_security_exclusion_reason_codes",
-                "eligible_universe_loss_output",
+                "full_per_security_signal_missingness_and_non_endpoint_exclusion_audit",
+                "eligible_universe_loss_attribution_beyond_registered_support_counts",
                 "percentage_attenuation_output",
                 "raw_ratio_regressions",
                 "robustness_analyses",
@@ -1482,6 +3180,7 @@ def _stage2_plan() -> dict[str, object]:
                 "transaction_costs",
                 "turnover",
                 "nonfills",
+                "announcement_event_or_return_timing_study",
             ],
             "shapley_boundary": (
                 "Exact four-component Shapley allocation preserves interactions but does not "
@@ -1494,12 +3193,27 @@ def _stage2_plan() -> dict[str, object]:
             "or rename cells after design_frozen_at."
         ),
         "reporting_rule": (
-            "Report every registered IC cell and exactly 26 inferential estimands (one "
-            "primary plus 25 secondary family members), with two deterministic "
-            "timing-isolation checks reported separately; cell-level means, Newey-West "
-            "t-statistics, and top-minus-universe spreads are descriptive only and cannot "
-            "support cell-specific discovery claims; do not select or headline a best result."
+            "Report every registered IC cell and exactly 29 inferential estimands (one "
+            "primary plus 28 secondary family members), including the three ordered ROE "
+            "common-support components, with their efficiency identity at absolute tolerance "
+            "1e-12 and two deterministic timing-isolation checks reported separately. Also "
+            "report aggregate signal-missingness/common-support counts and no-return "
+            "publication-exposure diagnostics. Cell-level means, Newey-West t-statistics, "
+            "and top-minus-universe spreads are descriptive only and cannot support "
+            "cell-specific discovery claims; do not select or headline a best result. The "
+            "result receipt binds the complete per-security endpoint-reason ledger and "
+            "verifies signal-eligible-denominator coverage."
         ),
+        "claim_boundaries": {
+            "authorized_accounting_timing_claim": (
+                "recorded-publication-date specification effect in a single-version "
+                "provider snapshot"
+            ),
+            "revision_or_vintage_claim": False,
+            "historical_investor_observed_value_claim": False,
+            "announcement_reaction_or_return_timing_claim": False,
+            "portfolio_or_trading_claim": False,
+        },
         "deviation_rule": (
             "Record every deviation without replacing the primary analysis; "
             "outcome-aware deviations are exploratory only."
@@ -1586,9 +3300,135 @@ def _bind_stage2_gate_artifacts(
 
     protocol_source_path = root / "protocol_source.md"
     statistical_analysis_plan_path = root / "sap.md"
-    prior_specification_inventory_path = root / "prior_inventory.json"
+    coverage_probe_spec_path = root / "coverage_probe_spec.v2.json"
+    coverage_probe_receipt_path = root / "coverage_probe_receipt.v2.json"
+    prior_specification_inventory_path = root / "prior_specification_inventory.json"
     protocol_source_path.write_text("fixture protocol source\n", encoding="utf-8")
     statistical_analysis_plan_path.write_text("fixture statistical analysis plan\n", encoding="utf-8")
+    maintained_probe_spec_path = (
+        Path(__file__).resolve().parents[1]
+        / "studies"
+        / "pit_factor_bias_decomposition_v2"
+        / "coverage_probe_spec.v2.json"
+    )
+    coverage_probe_spec_path.write_bytes(maintained_probe_spec_path.read_bytes())
+    coverage_probe_spec = json.loads(
+        coverage_probe_spec_path.read_text(encoding="utf-8")
+    )
+    coverage_probe_spec_sha256 = _sha256(coverage_probe_spec_path)
+    probe_symbols = [
+        row["symbol"]
+        for row in coverage_probe_spec["selection_protocol"]["symbols"]
+    ]
+    probe_gate_ids = [
+        row["id"]
+        for group in ("pre_execution_gates", "post_collection_quality_gates")
+        for row in coverage_probe_spec[group]
+    ]
+    claim_boundary_keys = list(
+        coverage_probe_spec["public_receipt_schema"]["properties"]
+        ["claim_boundaries"]["required"]
+    )
+    coverage_probe_receipt = {
+        "schema_version": "stage2_coverage_probe_receipt_v2",
+        "study_id": plan["study_id"],
+        "probe_id": coverage_probe_spec["probe_id"],
+        "receipt_id": "sha256:" + "0" * 64,
+        "spec_sha256": coverage_probe_spec_sha256,
+        "status": "PASSED",
+        "executed_at_utc": "2026-08-31T13:30:00+00:00",
+        "external_timestamp_proof": {
+            "type": "human_verified_external_timestamp",
+            "provider": "fixture timestamp registry",
+            "identifier": "fixture-probe-spec-timestamp-v2",
+            "timestamped_at_utc": "2026-08-31T13:00:00+00:00",
+            "verification_uri": "https://example.test/fixture-probe-timestamp",
+            "evidence_sha256": "9" * 64,
+            "subject_type": "coverage_probe_spec_sha256",
+            "subject_sha256": coverage_probe_spec_sha256,
+            "verifier": "fixture independent reviewer",
+            "verified_at_utc": "2026-08-31T13:40:00+00:00",
+            "trust_boundary": (
+                "The timestamp record has no offline-verifiable signature; authenticity "
+                "requires independent human verification."
+            ),
+        },
+        "repository_state": {
+            "agent_commit": paths["code_revision"],
+            "qdata_commit": coverage_probe_spec["request_protocol"]["locked_runtime"]
+            ["qdata_repository_commit"],
+            "agent_clean": True,
+            "qdata_clean": True,
+            "python_version": coverage_probe_spec["request_protocol"]
+            ["locked_runtime"]["python_version"],
+            "akshare_version": coverage_probe_spec["request_protocol"]
+            ["locked_runtime"]["akshare_version"],
+        },
+        "request": {
+            "provider_adapter": coverage_probe_spec["request_protocol"]
+            ["provider_adapter"],
+            "provider_interface": coverage_probe_spec["request_protocol"]
+            ["provider_interface"],
+            "upstream_provider_identity": "fixture upstream daily-bar service",
+            "dates": coverage_probe_spec["request_protocol"]["dates"],
+            "symbols": probe_symbols,
+            "price_mode": coverage_probe_spec["request_protocol"]["price_mode"],
+            "adjust_argument": coverage_probe_spec["request_protocol"]
+            ["akshare_adjust_argument"],
+        },
+        "artifacts": [
+            {
+                "kind": "normalized_private",
+                "relative_path": "normalized-bars.csv",
+                "sha256": "8" * 64,
+                "size_bytes": 1024,
+                "row_count": 24,
+                "symbol_count": 12,
+                "minimum_date": "2016-06-30",
+                "maximum_date": "2018-06-29",
+                "schema_sha256": "7" * 64,
+            }
+        ],
+        "coverage": {
+            "expected_symbol_date_cells": 24,
+            "observed_symbol_date_cells": 24,
+            "missing_symbol_date_cells": [],
+            "duplicate_symbol_date_cells": 0,
+            "extra_symbol_date_cells": 0,
+        },
+        "field_quality": {"all_required_raw_bar_fields_valid": True},
+        "failures": [],
+        "gates": {gate_id: True for gate_id in probe_gate_ids},
+        "rights": {
+            "review_status": "verified",
+            "raw_redistribution_allowed": False,
+            "aggregate_receipt_publication_allowed": True,
+        },
+        "claim_boundaries": {key: False for key in claim_boundary_keys},
+    }
+    coverage_probe_receipt_without_id = dict(coverage_probe_receipt)
+    coverage_probe_receipt_without_id.pop("receipt_id")
+    coverage_probe_receipt["receipt_id"] = "sha256:" + hashlib.sha256(
+        (
+            json.dumps(
+                coverage_probe_receipt_without_id,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    ).hexdigest()
+    coverage_probe_receipt_path.write_text(
+        json.dumps(
+            coverage_probe_receipt,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     entries = [{
         "inventory_id": "fixture-prior-specification",
         "artifact_type": "locked_confirmatory_study_plan",
@@ -1629,6 +3469,8 @@ def _bind_stage2_gate_artifacts(
     )
     plan["protocol_source_sha256"] = _sha256(protocol_source_path)
     plan["statistical_analysis_plan_sha256"] = _sha256(statistical_analysis_plan_path)
+    plan["coverage_probe_spec_sha256"] = coverage_probe_spec_sha256
+    plan["coverage_probe_receipt_sha256"] = _sha256(coverage_probe_receipt_path)
     plan["prior_specification_inventory_sha256"] = _sha256(
         prior_specification_inventory_path
     )
@@ -1646,8 +3488,14 @@ def _bind_stage2_gate_artifacts(
         "study_id": plan["study_id"],
         "status": "reviewed_pass",
         "review_scope_cutoff_at": "2026-08-31T21:55:00+08:00",
+        "coverage_probe_spec_path": plan["coverage_probe_spec_path"],
+        "coverage_probe_spec_sha256": plan["coverage_probe_spec_sha256"],
+        "coverage_probe_receipt_path": plan["coverage_probe_receipt_path"],
+        "coverage_probe_receipt_sha256": plan["coverage_probe_receipt_sha256"],
         "execution_semantics_verified": True,
         "tradability_fields_verified": True,
+        "exact_endpoint_resolution_semantics_verified": True,
+        "endpoint_reason_ledger_rights_verified": True,
         "data_rights_verified": True,
         "official_calendar_verified": True,
         "reviewed_at": "2026-08-31T22:00:00+08:00",
@@ -1658,6 +3506,8 @@ def _bind_stage2_gate_artifacts(
         "evidence_sha256": {
             "execution_semantics": "1" * 64,
             "tradability_fields": "2" * 64,
+            "exact_endpoint_resolution": "6" * 64,
+            "endpoint_reason_ledger_rights": "7" * 64,
             "data_rights": "3" * 64,
             "official_calendar": "4" * 64,
         },
@@ -1666,6 +3516,11 @@ def _bind_stage2_gate_artifacts(
             "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core": True,
             "amount_units_and_cutoff_timing_are_documented": True,
             "st_and_suspension_fields_are_non_degenerate_and_historically_effective": True,
+            "signal_eligible_denominator_is_fixed_before_outcome_lookup": True,
+            "current_ic_core_resolves_only_exact_adjusted_close_quotes_on_required_official_sessions": True,
+            "unresolved_endpoints_cannot_be_dropped_shifted_carried_forward_or_assigned_default_recovery": True,
+            "suspension_valuation_and_delisting_terminal_wealth_adapters_are_not_claimed_by_the_current_ic_core": True,
+            "private_endpoint_reason_ledger_hash_and_public_aggregate_counts_are_permitted": True,
             "licensed_local_analysis_is_permitted": True,
             "public_aggregate_outputs_metadata_and_hashes_are_permitted": True,
             "public_official_calendar_session_dates_are_permitted": True,
@@ -1726,6 +3581,10 @@ def _bind_stage2_gate_artifacts(
         "prior_specification_entry_count": inventory["entry_count"],
         "prior_specification_entries_sha256": inventory["entries_sha256"],
         "prior_exposure_log_sha256": _sha256(prior_exposure_log_path),
+        "coverage_probe_spec_path": plan["coverage_probe_spec_path"],
+        "coverage_probe_receipt_path": plan["coverage_probe_receipt_path"],
+        "coverage_probe_spec_sha256": plan["coverage_probe_spec_sha256"],
+        "coverage_probe_receipt_sha256": plan["coverage_probe_receipt_sha256"],
         "protocol_source_sha256": plan["protocol_source_sha256"],
         "statistical_analysis_plan_sha256": plan[
             "statistical_analysis_plan_sha256"
@@ -1743,6 +3602,7 @@ def _bind_stage2_gate_artifacts(
             "data_review_completed_not_after_attestation": True,
             "attestation_will_precede_design_freeze": True,
             "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": True,
+            "registered_publication_exposure_diagnostic_values_not_inspected_through_attested_at": True,
         },
         "statement": "Fixture attestation that no Stage-2 outcomes were inspected.",
         "signature": {
@@ -1772,6 +3632,8 @@ def _bind_stage2_gate_artifacts(
         key: plan[key]
         for key in (
             "data_declaration_sha256", "official_calendar_sha256",
+            "coverage_probe_spec_sha256",
+            "coverage_probe_receipt_sha256",
             "coverage_report_sha256", "review_attestation_sha256",
             "protocol_source_sha256", "statistical_analysis_plan_sha256",
             "prior_specification_inventory_sha256",
@@ -1790,6 +3652,23 @@ def _bind_stage2_gate_artifacts(
         "artifacts": expected_artifacts,
         "input_file_sha256": input_hashes,
         "code_commit": plan["code_commit"],
+        "registered_design_assertions": {
+            "variant_count": 18,
+            "factor_variant_cell_count": 72,
+            "primary_estimand_count": 1,
+            "secondary_estimand_count": 28,
+            "total_inferential_estimand_count": 29,
+            "roe_common_support_component_count": 3,
+            "timing_decomposition_tolerance_source": (
+                "execution_plan.inference.timing_decomposition."
+                "efficiency_absolute_tolerance"
+            ),
+            "endpoint_resolution_method": "exact_official_session_adjusted_close_only",
+            "result_receipt_binds_complete_endpoint_reason_ledger": True,
+            "single_version_claim_boundary": (
+                "recorded_publication_date_specification_effect_only"
+            ),
+        },
     }
     design_manifest_path = root / "design_manifest.json"
     design_manifest_path.write_text(
@@ -1814,6 +3693,24 @@ def _bind_stage2_gate_artifacts(
         "registered_artifact_sha256": plan["external_registration"][
             "design_manifest_sha256"
         ],
+        "coverage_probe_receipt_sha256": plan[
+            "coverage_probe_receipt_sha256"
+        ],
+        "registered_scope_summary": {
+            "variants": 18,
+            "factor_variant_cells": 72,
+            "primary_estimands": 1,
+            "secondary_estimands": 28,
+            "total_inferential_estimands": 29,
+            "roe_common_support_components": 3,
+            "timing_decomposition_tolerance_source": (
+                "design_manifest.registered_design_assertions."
+                "timing_decomposition_tolerance_source"
+            ),
+            "claim_boundary": (
+                "single_version_recorded_publication_date_specification_effect_only"
+            ),
+        },
         "proof": {
             "type": "human_verified_registry_record",
             "evidence_sha256": "5" * 64,
@@ -1877,10 +3774,29 @@ def _bind_stage2_gate_artifacts(
             "authorized_analysis_period": plan["test_period"],
             "authorized_code_commit": plan["code_commit"],
             "outcome_data_release_permitted_after_authorized_at": True,
+            "authorized_core_outputs": [
+                "18_variant_72_cell_ic_lattice",
+                "one_primary_and_28_secondary_inferential_estimands",
+                "three_part_ordered_roe_common_support_decomposition",
+                "aggregate_signal_missingness_and_common_support_counts",
+                "no_return_publication_exposure_diagnostics",
+                "per_security_endpoint_reason_ledger_hash_and_aggregate_receipt_counts",
+            ],
+            "endpoint_boundary": (
+                "The current core supports exact adjusted-close quotes on required official "
+                "sessions only. Any unresolved endpoint makes the cell non-estimable and "
+                "the study INSUFFICIENT_EVIDENCE; suspension-valuation and "
+                "delisting-terminal-wealth adapters are not authorized."
+            ),
+            "claim_boundary": (
+                "The strongest authorized accounting-timing claim is a "
+                "recorded-publication-date specification effect in a single-version provider "
+                "snapshot. Revision, vintage-value, historical-investor-observed-value, "
+                "announcement-reaction, and return-timing claims remain unauthorized."
+            ),
             "planned_excluded_modules_remain_unauthorized": [
-                "dedicated_signal_missingness_tables",
-                "per_security_exclusion_reason_codes",
-                "eligible_universe_loss_output",
+                "full_per_security_signal_missingness_and_non_endpoint_exclusion_audit",
+                "eligible_universe_loss_attribution_beyond_registered_support_counts",
                 "percentage_attenuation_output",
                 "raw_ratio_regressions",
                 "robustness_analyses",
@@ -1891,6 +3807,7 @@ def _bind_stage2_gate_artifacts(
                 "transaction_costs",
                 "turnover",
                 "nonfills",
+                "announcement_event_or_return_timing_study",
             ],
         },
         "authorizer": "fixture-authorizer",
@@ -1921,6 +3838,8 @@ def _bind_stage2_gate_artifacts(
     return {
         **paths,
         "coverage_report_path": coverage_path,
+        "coverage_probe_spec_path": coverage_probe_spec_path,
+        "coverage_probe_receipt_path": coverage_probe_receipt_path,
         "review_attestation_path": attestation_path,
         "design_manifest_path": design_manifest_path,
         "registration_receipt_path": registration_receipt_path,
@@ -1985,18 +3904,22 @@ def _forge_stage2_receipt_as_real(
             "newey_west_lag": int(plan["newey_west_lag"]),
         },
     )
-    receipt["estimands"] = build_registered_estimands(
-        receipt["monthly_observations"],
-        plan=plan,
-        nw_lag=int(plan["newey_west_lag"]),
-        minimum_claim_months=int(plan["minimum_significance_months"]),
-    )
     receipt["status"] = _stage2_evidence_status(
         declaration={"source_classification": "real_market_data"},
         observations=receipt["monthly_observations"],
         plan=plan,
     )
     receipt["status"]["revision_history_claim"] = False
+    receipt["estimands"] = build_registered_estimands(
+        receipt["monthly_observations"],
+        plan=plan,
+        nw_lag=int(plan["newey_west_lag"]),
+        minimum_claim_months=int(plan["minimum_significance_months"]),
+        global_claim_eligible=(
+            receipt["status"]["code"]
+            == "REAL_MARKET_REGISTERED_HISTORICAL_IC_CORE_STATISTICS"
+        ),
+    )
     receipt["sample"]["symbol_count"] = 1000
     receipt["sample"]["complete_registered_rebalance_count"] = receipt["status"][
         "complete_registered_rebalance_count"

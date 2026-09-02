@@ -1,0 +1,46 @@
+{
+  "schema_version": "stage2_author_identity_package_v1",
+  "status": "template_incomplete_do_not_submit",
+  "manuscript_title": "Report Dates, Publication Dates, and the A-Share ROE Signal: A Pre-Specified Historical Confirmation",
+  "corresponding_author": {
+    "full_legal_name_english": null,
+    "preferred_publishing_name": null,
+    "affiliation": null,
+    "department": null,
+    "institutional_email": null,
+    "orcid": null,
+    "postal_address": null,
+    "country_or_region": null
+  },
+  "coauthors": [],
+  "credit_taxonomy": {
+    "conceptualization": [],
+    "data_curation": [],
+    "formal_analysis": [],
+    "investigation": [],
+    "methodology": [],
+    "project_administration": [],
+    "software": [],
+    "supervision": [],
+    "validation": [],
+    "visualization": [],
+    "writing_original_draft": [],
+    "writing_review_and_editing": []
+  },
+  "funding_statement": null,
+  "competing_interests_statement": null,
+  "data_access_contact_and_arrangement": null,
+  "reviewer_access_contact_and_arrangement": null,
+  "author_approvals": [],
+  "completion_checks": {
+    "all_names_and_order_confirmed": false,
+    "all_affiliations_confirmed": false,
+    "corresponding_email_confirmed": false,
+    "orcid_values_confirmed_or_explicitly_absent": false,
+    "credit_roles_approved_by_all_authors": false,
+    "funding_and_conflicts_confirmed": false,
+    "data_and_reviewer_access_arrangements_confirmed": false,
+    "all_authors_approved_submission": false
+  },
+  "privacy_rule": "Keep the populated package private. Transfer only journal-required fields into the submission system or non-anonymous title page after every named author approves disclosure."
+}

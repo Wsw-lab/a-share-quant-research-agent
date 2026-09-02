@@ -18,6 +18,10 @@
   "prior_specification_entry_count": null,
   "prior_specification_entries_sha256": null,
   "prior_exposure_log_sha256": null,
+  "coverage_probe_spec_path": "coverage_probe_spec.v2.json",
+  "coverage_probe_receipt_path": "coverage_probe_receipt.v2.json",
+  "coverage_probe_spec_sha256": null,
+  "coverage_probe_receipt_sha256": null,
   "protocol_source_sha256": null,
   "statistical_analysis_plan_sha256": null,
   "coverage_report_sha256": null,
@@ -32,14 +36,13 @@
     "knowledge_cutoff_not_after_attestation": false,
     "data_review_completed_not_after_attestation": false,
     "attestation_will_precede_design_freeze": false,
-    "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": false
+    "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": false,
+    "registered_publication_exposure_diagnostic_values_not_inspected_through_attested_at": false
   },
-  "statement": "I have reviewed the prior-exposure log and the complete machine-readable specification inventory through the stated cutoff. I attest that no factor IC, forward-return, portfolio-return, variant-ranking, or test-statistic outcome for the fixed 2010-2022 Stage-2 panel has been inspected by the research team through attested_at. I understand that known pilot exposure and unknown historical execution status remain disclosed. If this statement cannot be made truthfully, the plan core must not be frozen and the study must stop.",
+  "statement": "I have reviewed the prior-exposure log and the complete machine-readable specification inventory through the stated cutoff. I attest that no factor IC, forward-return, portfolio-return, variant-ranking, test-statistic outcome, or registered publication-exposure diagnostic value for the fixed 2010-2022 Stage-2 panel has been inspected by the research team through attested_at. I understand that known pilot exposure and unknown historical execution status remain disclosed. If this statement cannot be made truthfully, the plan core must not be frozen and the study must stop.",
   "signature": {
     "type": null,
     "allowed_types": [
-      "detached_digital_signature",
-      "external_registry_attestation",
       "human_verified_evidence"
     ],
     "evidence_sha256": null,

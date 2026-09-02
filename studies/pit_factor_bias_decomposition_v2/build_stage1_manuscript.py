@@ -225,6 +225,7 @@ def configure_styles(doc: Document) -> None:
     for style_name, size, before, after in (
         ("Heading 1", 13.6, 7, 3.5),
         ("Heading 2", 11.2, 5, 2.5),
+        ("Heading 3", 10.2, 4, 2),
     ):
         st = styles[style_name]
         st.font.name = "Calibri"
@@ -294,7 +295,7 @@ def configure_section_and_headers(doc: Document) -> None:
     p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p.clear()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    r = p.add_run("STAGE-1 MANUSCRIPT   |   A-SHARE SPECIFICATION-EFFECT DECOMPOSITION")
+    r = p.add_run("PRE-RESULTS PROTOCOL   |   A-SHARE ROE INFORMATION TIMING")
     r.font.name = "Calibri"
     r.font.size = Pt(7.5)
     r.font.bold = True
@@ -373,7 +374,7 @@ def add_inline(paragraph, text: str, *, base_size: float | None = None, base_col
 
 def add_cover(doc: Document, meta: dict[str, str]) -> None:
     p = doc.add_paragraph(style="Protocol Kicker" if "Protocol Kicker" in doc.styles else "Normal")
-    p.add_run("REGISTERED-REPORT STAGE 1 · ANONYMOUS PRE-RESULTS MANUSCRIPT")
+    p.add_run("ANONYMOUS PRE-RESULTS PROTOCOL DRAFT")
 
     p = doc.add_paragraph(style="Title")
     p.add_run(meta["title"])
@@ -495,35 +496,49 @@ def centered(draw, box, text, font, fill, spacing=4):
         y += height + spacing
 
 
-def create_evidence_figure(path: Path) -> None:
+def create_accounting_timeline_figure(path: Path) -> None:
     img = Image.new("RGB", (1800, 610), f"#{WHITE}")
     draw = ImageDraw.Draw(img)
     title = ImageFont.truetype(font_path(True), 38)
-    head = ImageFont.truetype(font_path(True), 29)
-    body = ImageFont.truetype(font_path(False), 23)
-    small = ImageFont.truetype(font_path(False), 20)
-    draw.text((65, 38), "Three evidence partitions, three distinct inferential roles", font=title, fill=f"#{NAVY}")
+    head = ImageFont.truetype(font_path(True), 25)
+    body = ImageFont.truetype(font_path(False), 22)
+    small = ImageFont.truetype(font_path(False), 19)
+    draw.text((65, 38), "Two clocks assign the same accounting record to different dates", font=title, fill=f"#{NAVY}")
     draw.line((65, 96, 1735, 96), fill=f"#{BLUE}", width=5)
 
-    boxes = [
-        (75, 155, 555, 500, PALE_GOLD, GOLD, "OBSERVED PILOT", "Jan 2025–Jun 2026", "Known before H1\n16 / 16 cells disclosed", "Motivation only"),
-        (660, 155, 1140, 500, PALE_BLUE, BLUE, "HISTORICAL PANEL", "Jan 2010–Dec 2022", "Outcome-blind if gates pass\n72 cells; fixed inference", "Confirmatory target"),
-        (1245, 155, 1725, 500, PALE_GREEN, GREEN, "PROSPECTIVE EXTENSION", "After registration / IPA", "At least 12 months\nreported separately", "Prospective evidence"),
-    ]
-    for x1, y1, x2, y2, fill, outline, label, dates, desc, role in boxes:
-        rounded_box(draw, (x1, y1, x2, y2), f"#{fill}", f"#{outline}", radius=24, width=4)
-        centered(draw, (x1 + 20, y1 + 24, x2 - 20, y1 + 78), label, head, f"#{outline}")
-        centered(draw, (x1 + 20, y1 + 93, x2 - 20, y1 + 135), dates, body, f"#{NAVY}")
-        draw.line((x1 + 35, y1 + 155, x2 - 35, y1 + 155), fill=f"#{outline}", width=2)
-        centered(draw, (x1 + 28, y1 + 176, x2 - 28, y1 + 270), desc, body, f"#{GREY}", spacing=8)
-        rounded_box(draw, (x1 + 75, y2 - 70, x2 - 75, y2 - 25), f"#{WHITE}", f"#{outline}", radius=14, width=2)
-        centered(draw, (x1 + 75, y2 - 70, x2 - 75, y2 - 25), role, small, f"#{outline}")
+    period_x, signal_x, publication_x, eligible_x = 210, 655, 1160, 1580
+    timeline_y = 330
+    draw.line((period_x, timeline_y, eligible_x, timeline_y), fill=f"#{BORDER}", width=7)
+    draw.polygon([(eligible_x - 10, timeline_y - 15), (eligible_x + 18, timeline_y), (eligible_x - 10, timeline_y + 15)], fill=f"#{BORDER}")
 
-    draw.line((555, 330, 660, 330), fill=f"#{BORDER}", width=5)
-    draw.polygon([(650, 316), (675, 330), (650, 344)], fill=f"#{BORDER}")
-    draw.line((1140, 330, 1245, 330), fill=f"#{BORDER}", width=5)
-    draw.polygon([(1235, 316), (1260, 330), (1235, 344)], fill=f"#{BORDER}")
-    centered(draw, (90, 525, 1710, 585), "No pooled headline estimate · calendar order does not determine evidentiary status", body, f"#{GREY}")
+    rounded_box(draw, (period_x, 145, publication_x, 245), f"#{PALE_GOLD}", f"#{GOLD}", radius=18, width=3)
+    centered(
+        draw,
+        (period_x + 15, 155, publication_x - 15, 235),
+        "PREMATURE-USE INTERVAL UNDER THE REPORT-PERIOD CLOCK",
+        head,
+        f"#{GOLD}",
+    )
+
+    milestones = [
+        (period_x, "FISCAL PERIOD END", "Report-period rule\nfirst admits record", GOLD),
+        (signal_x, "MONTHLY SIGNAL", "Record may be selected\nbefore publication", GOLD),
+        (publication_x, "RECORDED PUBLICATION DATE", "Date stored in the\nsingle-version export", BLUE),
+        (eligible_x, "FIRST CONSERVATIVE SESSION", "Publication rule admits record\nonly strictly after date", GREEN),
+    ]
+    for x, label, desc, color in milestones:
+        draw.line((x, timeline_y - 18, x, timeline_y + 18), fill=f"#{color}", width=6)
+        draw.ellipse((x - 10, timeline_y - 10, x + 10, timeline_y + 10), fill=f"#{color}")
+        centered(draw, (x - 190, 355, x + 190, 402), label, small, f"#{color}")
+        centered(draw, (x - 190, 410, x + 190, 490), desc, body, f"#{NAVY}", spacing=6)
+
+    centered(
+        draw,
+        (95, 520, 1705, 585),
+        "Database eligibility only · not a claim about the value investors first saw or every earlier public signal",
+        body,
+        f"#{GREY}",
+    )
     img.save(path, dpi=(300, 300))
 
 
@@ -534,7 +549,7 @@ def create_design_figure(path: Path) -> None:
     head = ImageFont.truetype(font_path(True), 27)
     body = ImageFont.truetype(font_path(False), 22)
     small = ImageFont.truetype(font_path(True), 20)
-    draw.text((65, 35), "Pre-specified 18-variant architecture", font=title, fill=f"#{NAVY}")
+    draw.text((65, 35), "Pre-specified information and implementation design", font=title, fill=f"#{NAVY}")
     draw.line((65, 92, 1735, 92), fill=f"#{BLUE}", width=5)
 
     chain = [
@@ -561,7 +576,7 @@ def create_design_figure(path: Path) -> None:
     draw.line((1165, 330, 1165, 410), fill=f"#{BLUE}", width=5)
     draw.polygon([(1151, 397), (1165, 422), (1179, 397)], fill=f"#{BLUE}")
     rounded_box(draw, (175, 430, 1625, 645), f"#{LIGHT_GREY}", f"#{BORDER}", radius=25, width=4)
-    centered(draw, (210, 448, 1590, 490), "COMPLETE 16-CELL IMPLEMENTATION BLOCK", head, f"#{NAVY}")
+    centered(draw, (210, 448, 1590, 490), "COMPLETE 16-VARIANT IMPLEMENTATION LATTICE", head, f"#{NAVY}")
     components = [
         (250, "ST\nexclusion"),
         (570, "Suspension\nexclusion"),
@@ -571,7 +586,7 @@ def create_design_figure(path: Path) -> None:
     for x, text in components:
         rounded_box(draw, (x, 515, x + 250, 610), f"#{WHITE}", f"#{MID_BLUE}", radius=16, width=3)
         centered(draw, (x + 10, 520, x + 240, 605), text, body, f"#{BLUE}", spacing=5)
-    centered(draw, (180, 652, 1620, 704), "All 16 subsets × 4 factors · exact monthly Shapley allocation · no preferred entry order", body, f"#{GREY}")
+    centered(draw, (180, 652, 1620, 704), "16 implementation variants × 4 factors = 64 implementation cells · exact monthly Shapley allocation", body, f"#{GREY}")
     img.save(path, dpi=(300, 300))
 
 
@@ -602,6 +617,7 @@ def table_widths(headers: list[str]) -> list[float]:
     key = tuple(headers)
     maps = {
         ("Variant", "Factor", "Mean IC", "NW t", "Top minus universe", "Mean N"): [1.08, 1.45, 0.78, 0.70, 1.73, 1.26],
+        ("Factor", "Historical-universe report-end IC", "Recorded-publication IC", "Difference", "Role"): [1.12, 1.88, 1.52, 0.82, 1.66],
         ("Group", "Count", "Definition", "Inference", "Authorized role"): [1.05, 0.52, 2.10, 1.55, 1.78],
         ("Observed condition", "Authorized interpretation", "Prohibited interpretation"): [1.55, 2.75, 2.70],
         ("ID", "Historical universe", "Accounting availability", "Enabled implementation components"): [2.35, 1.25, 1.35, 2.05],
@@ -621,7 +637,16 @@ def add_table(doc: Document, rows: list[list[str]]) -> None:
     set_table_borders(table)
     set_repeat_table_header(table.rows[0])
 
-    numeric_headers = {"Count", "Mean IC", "NW t", "Top minus universe", "Mean N"}
+    numeric_headers = {
+        "Count",
+        "Mean IC",
+        "NW t",
+        "Top minus universe",
+        "Mean N",
+        "Historical-universe report-end IC",
+        "Recorded-publication IC",
+        "Difference",
+    }
     for row_index, values in enumerate(rows):
         row = table.rows[row_index]
         keep_row_together(row)
@@ -703,10 +728,15 @@ def add_body(doc: Document, lines: list[str], figures: dict[str, Path]) -> None:
         if text.startswith("[[FIGURE:"):
             key = text.removeprefix("[[FIGURE:").removesuffix("]]" )
             alt_texts = {
-                "EVIDENCE_CHRONOLOGY": "Evidence chronology separating the observed pilot, conditionally outcome-blind historical panel, and prospective extension.",
-                "DESIGN_MAP": "Pre-specified 18-variant architecture with an ordered information-set chain and complete 16-cell implementation block.",
+                "ACCOUNTING_TIMELINE": "Timeline contrasting fiscal-period eligibility with conservative eligibility strictly after the recorded publication date.",
+                "DESIGN_MAP": "Pre-specified information-set chain and complete 16-variant implementation lattice, producing 64 implementation factor-variant cells.",
             }
             add_figure(doc, figures[key], 6.85, alt_texts[key])
+            index += 1
+            continue
+
+        if text == "[[PAGEBREAK]]":
+            doc.add_page_break()
             index += 1
             continue
 
@@ -733,6 +763,12 @@ def add_body(doc: Document, lines: list[str], figures: dict[str, Path]) -> None:
         if text.startswith("## "):
             p = doc.add_paragraph(style="Heading 2")
             p.add_run(text[3:])
+            index += 1
+            continue
+
+        if text.startswith("### "):
+            p = doc.add_paragraph(style="Heading 3")
+            p.add_run(text[4:])
             index += 1
             continue
 
@@ -793,8 +829,8 @@ def set_document_properties(doc: Document, meta: dict[str, str]) -> None:
     props = doc.core_properties
     props.title = meta["title"]
     props.subject = meta["subtitle"]
-    props.author = "Anonymous"
-    props.last_modified_by = "Anonymous"
+    props.author = ""
+    props.last_modified_by = ""
     props.keywords = meta["keywords"]
     props.comments = "Anonymous pre-results Stage-1 working paper; confirmatory outcomes not accessed."
     props.category = "Working paper"
@@ -802,9 +838,9 @@ def set_document_properties(doc: Document, meta: dict[str, str]) -> None:
 
 def main() -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
-    evidence_figure = ASSET_DIR / "evidence_chronology.png"
+    accounting_timeline = ASSET_DIR / "accounting_availability_timeline.png"
     design_figure = ASSET_DIR / "prespecified_design_map.png"
-    create_evidence_figure(evidence_figure)
+    create_accounting_timeline_figure(accounting_timeline)
     create_design_figure(design_figure)
 
     meta, body = parse_frontmatter(SOURCE.read_text(encoding="utf-8").splitlines())
@@ -814,7 +850,7 @@ def main() -> None:
     configure_section_and_headers(doc)
     set_document_properties(doc, meta)
     add_cover(doc, meta)
-    add_body(doc, body, {"EVIDENCE_CHRONOLOGY": evidence_figure, "DESIGN_MAP": design_figure})
+    add_body(doc, body, {"ACCOUNTING_TIMELINE": accounting_timeline, "DESIGN_MAP": design_figure})
 
     # Encourage Word/LibreOffice to refresh PAGE and NUMPAGES fields when opened.
     settings = doc.settings._element

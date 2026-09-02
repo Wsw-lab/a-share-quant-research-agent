@@ -7,8 +7,14 @@
   "reviewer": null,
   "reviewer_role": null,
   "reviewer_authority_basis": null,
+  "coverage_probe_spec_path": "coverage_probe_spec.v2.json",
+  "coverage_probe_spec_sha256": null,
+  "coverage_probe_receipt_path": "coverage_probe_receipt.v2.json",
+  "coverage_probe_receipt_sha256": null,
   "execution_semantics_verified": false,
   "tradability_fields_verified": false,
+  "exact_endpoint_resolution_semantics_verified": false,
+  "endpoint_reason_ledger_rights_verified": false,
   "data_rights_verified": false,
   "official_calendar_verified": false,
   "input_file_sha256": {
@@ -49,6 +55,8 @@
   "evidence_sha256": {
     "execution_semantics": null,
     "tradability_fields": null,
+    "exact_endpoint_resolution": null,
+    "endpoint_reason_ledger_rights": null,
     "data_rights": null,
     "official_calendar": null
   },
@@ -57,6 +65,11 @@
     "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core": false,
     "amount_units_and_cutoff_timing_are_documented": false,
     "st_and_suspension_fields_are_non_degenerate_and_historically_effective": false,
+    "signal_eligible_denominator_is_fixed_before_outcome_lookup": false,
+    "current_ic_core_resolves_only_exact_adjusted_close_quotes_on_required_official_sessions": false,
+    "unresolved_endpoints_cannot_be_dropped_shifted_carried_forward_or_assigned_default_recovery": false,
+    "suspension_valuation_and_delisting_terminal_wealth_adapters_are_not_claimed_by_the_current_ic_core": false,
+    "private_endpoint_reason_ledger_hash_and_public_aggregate_counts_are_permitted": false,
     "licensed_local_analysis_is_permitted": false,
     "public_aggregate_outputs_metadata_and_hashes_are_permitted": false,
     "public_official_calendar_session_dates_are_permitted": false,
@@ -66,8 +79,10 @@
     "no_factor_ic_return_or_variant_ranking_was_reviewed": false
   },
   "evidence_notes": {
-    "execution_semantics": "Document adjusted-close construction, decision cutoff, timezone, corporate-action handling, and official-session endpoints. Unadjusted open and nonfill semantics belong to a later portfolio module.",
+    "execution_semantics": "Document adjusted-close construction, decision cutoff, timezone, corporate-action handling, and exact per-symbol official-session endpoints. Unadjusted open and nonfill semantics belong to a later portfolio module.",
     "tradability_fields": "Show non-degenerate ST and suspension behavior under historically effective vendor definitions. Price-limit, missing-open, and nonfill evidence is required only for a later portfolio module and does not authorize that unimplemented module.",
+    "exact_endpoint_resolution": "Verify that signal-session t is present during candidate formation. For each signal-eligible record, missing t+20, t+1, or t+21 receives one of the three fixed unresolved reason codes; next quotes, reopening prices, last prices, and default recoveries are forbidden. Suspension-valuation and delisting-terminal-wealth adapters remain unimplemented.",
+    "endpoint_reason_ledger_rights": "Confirm that the complete per-security endpoint-reason ledger may be retained privately and hash-bound in the result receipt, and that aggregate reason-code counts may be published without redistributing licensed rows.",
     "data_rights": "Cite the contract or license terms permitting local analysis, public aggregate outputs, metadata, hashes, and publication of the exact official-calendar session dates embedded in the receipt.",
     "official_calendar": "Retain authoritative SSE/SZSE provenance, resolve any disagreement, verify all endpoint and quote-date membership rules, and bind the exact CSV bytes."
   },
@@ -78,10 +93,13 @@
   },
   "signature": {
     "type": null,
+    "allowed_types": [
+      "human_verified_evidence"
+    ],
     "evidence_sha256": null,
     "signer_identity": null,
     "verification_uri": null,
     "trust_boundary": "Identity and evidence authenticity require independent human verification."
   },
-  "completion_gate": "All required booleans must be true, all hashes must be 64 lowercase hexadecimal characters, all identities and timestamps must be complete, and status must become reviewed_pass before this artifact may enter the plan core."
+  "completion_gate": "All required booleans, including exact-endpoint and endpoint-ledger-rights assertions, must be true; all hashes must be 64 lowercase hexadecimal characters; all identities and timestamps must be complete; and status must become reviewed_pass before this artifact may enter the plan core."
 }

@@ -5,6 +5,8 @@
   "design_frozen_at": null,
   "plan_core_sha256": null,
   "artifacts": {
+    "coverage_probe_spec_sha256": null,
+    "coverage_probe_receipt_sha256": null,
     "data_declaration_sha256": null,
     "official_calendar_sha256": null,
     "coverage_report_sha256": null,
@@ -22,6 +24,18 @@
     "official_calendar": null
   },
   "code_commit": null,
+  "registered_design_assertions": {
+    "variant_count": 18,
+    "factor_variant_cell_count": 72,
+    "primary_estimand_count": 1,
+    "secondary_estimand_count": 28,
+    "total_inferential_estimand_count": 29,
+    "roe_common_support_component_count": 3,
+    "timing_decomposition_tolerance_source": "execution_plan.inference.timing_decomposition.efficiency_absolute_tolerance",
+    "endpoint_resolution_method": "exact_official_session_adjusted_close_only",
+    "result_receipt_binds_complete_endpoint_reason_ledger": true,
+    "single_version_claim_boundary": "recorded_publication_date_specification_effect_only"
+  },
   "hash_contract": {
     "plan_core": "Canonical UTF-8 JSON with sorted keys and compact separators after removing only external_registration and locked_at from the fully materialized plan.",
     "artifact_and_input_files": "SHA-256 over exact raw bytes; do not normalize line endings, row order, whitespace, or serialization after design_frozen_at.",

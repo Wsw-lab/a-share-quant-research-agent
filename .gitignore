@@ -28,3 +28,7 @@ __pycache__/
 /data_assets/industry/
 /data_assets/stock_master/
 /data_assets/investoday_candidate/
+
+# Private study records. Public placeholder templates remain tracked.
+author_identity_package.private.json
+endpoint_reason_ledger.private.json

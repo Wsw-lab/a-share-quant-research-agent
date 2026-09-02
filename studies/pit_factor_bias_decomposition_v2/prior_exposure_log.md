@@ -36,6 +36,7 @@ These values may motivate hypotheses but may not be counted as prospective confi
 - Four cumulative pilot variants: naive, PIT universe, PIT publication, and bundled audited lag.
 - Numerous non-confirmatory strategy templates and variants elsewhere in the repository.
 - Existing synthetic execution experiments, walk-forward utilities, cost and audit modules.
+- The ordered three-part ROE common-support decomposition, strict exact-endpoint rule, aggregate publication-exposure diagnostics, and endpoint-ledger integrity contract were added during a post-pilot design audit before any 2010-2022 Stage-2 factor or return outcome was released or inspected. Their origin must be disclosed as audit-driven rather than theory-only.
 
 No later paper may imply that Stage-2 factors were selected without exposure to these alternatives.
 
@@ -47,7 +48,7 @@ The intended primary registered historical panel is fixed at January 2010 throug
 
 An owner attestation that no 2010-2022 factor IC or return outcome has previously been inspected is still required before this boundary can be locked. If that attestation cannot be made, the study stops and a different protocol must be designed without consulting candidate-sample outcomes.
 
-The 2023-2026 pilot interval will be reported as a separate precondition sample. If it is also displayed within a long historical chart, the chart and tables must mark it as previously observed and primary inference must remain separately identifiable.
+The January 2025-June 2026 pilot evaluation will be reported as a separate precondition sample; its source quote file begins in 2023. If either interval is also displayed within a long historical chart, the chart and tables must mark it as previously observed and primary inference must remain separately identifiable.
 
 ## Required event fields and chronology
 

@@ -29,4 +29,4 @@ fixture 的实验 verdict 固定为 `INSUFFICIENT_EVIDENCE`。它不证明真实
 
 QData 仓库记录的有界本地 selector/迁移测试只是其自身的限定证据；Agent 的离线路径不启动数据库，`cross-store transactions` 仍未验证。
 
-公开 receipt 允许审阅者核对方案范围、代码 commit、输入身份、全部结果和主张边界；由于省略的授权数据无法从 checkout 恢复，它不是第三方独立重算。参见 [README](README.md) 与[历史证据说明](docs/legacy-evidence.md)。
+公开 receipt 允许审阅者核对方案范围、代码 commit、输入身份、全部结果和主张边界。Stage-2 若获授权执行，公开 receipt 还会给出端点 reason-code 汇总，并以 SHA-256 绑定保留在受控环境中的逐证券私有端点账本；公开文件不披露证券级缺失记录。公开模式只能验证 receipt 与账本元数据，只有在受控审阅中另行提供私有账本时，验证器才会检查账本哈希、排序、唯一性、逐 cell 基数和汇总计数。由于省略的授权数据无法从 checkout 恢复，它仍不是第三方独立重算。参见 [README](README.md) 与[历史证据说明](docs/legacy-evidence.md)。

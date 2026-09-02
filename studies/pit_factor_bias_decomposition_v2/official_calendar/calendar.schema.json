@@ -29,7 +29,7 @@
     ],
     "minimum_common_sessions_per_target_month": 15,
     "quote_membership_rule": "Every quote date used by Stage 2 must appear exactly once in this calendar.",
-    "endpoint_rule": "The first monthly rebalance and every fixed t+20 and t+21 endpoint must resolve by position in this calendar; a missing symbol row never shifts the endpoint.",
+    "endpoint_rule": "The first monthly rebalance and every fixed t, t+1, t+20, and t+21 endpoint are defined by position in this calendar. Calendar position does not supply a per-security price. Under the current adapter an exact adjusted-close quote is required on each applicable session; a missing symbol row makes the cell non-estimable and never shifts, carries forward, or receives a default recovery.",
     "exchange_disagreement_rule": "Fail closed until authoritative evidence establishes whether both SSE and SZSE were open."
   },
   "required_sidecar_evidence": [

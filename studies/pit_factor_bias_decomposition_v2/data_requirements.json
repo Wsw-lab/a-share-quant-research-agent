@@ -6,7 +6,7 @@
     "monthly_observations": 156,
     "sessions_per_month": 15,
     "publish_date_non_null_rate": 0.95,
-    "quoted_symbols_per_target_month": 1000,
+    "complete_per_symbol_quote_contracts_per_target_month": 1000,
     "target_primary_interval": [
       "2010-01-01",
       "2022-12-31"
@@ -18,8 +18,12 @@
   "post_execution_evidence_eligibility": {
     "minimum_finite_signal_outcome_pairs_per_registered_factor_variant_month": 1000,
     "required_complete_registered_months": 156,
+    "maximum_unresolved_required_endpoints_per_registered_factor_variant_month": 0,
+    "denominator_rule": "Fix the signal-eligible denominator before outcome lookup; outcome availability may not remove a signal-eligible security.",
+    "reason_ledger_rule": "Every signal-eligible security-month-factor-variant record must receive an endpoint-resolution code. The canonical result receipt must report aggregate code counts, bind the complete private ledger by SHA-256, and verify denominator coverage.",
     "timing": "Evaluate only after externally authorized execution; this is not a pre-lock coverage test.",
-    "failure_status": "INSUFFICIENT_EVIDENCE"
+    "failure_status": "INSUFFICIENT_EVIDENCE",
+    "failure_rule": "Any unresolved required endpoint makes the affected cell non-estimable; do not drop the security, shorten the interval, or relax the threshold."
   },
   "daily_quotes": {
     "required": [
@@ -29,6 +33,14 @@
       "amount",
       "is_st",
       "is_suspended"
+    ],
+    "coverage_gates": [
+      "every target month contains at least 15 distinct quote dates that are members of the bound official calendar",
+      "duplicate security rows cannot increase the distinct-session count",
+      "for each of all 156 target rebalances, at least 1,000 strict SH/SZ A-share identifiers jointly have quote rows at every official session t-60 through t for the implemented 60-session momentum history, at every official session t-20 through t for 20 daily returns, at every official session t-19 through t for the 20-session amount mean, and at t, t+1, t+20, and t+21 for both exact outcome clocks",
+      "the scoped quote universe for each target rebalance is restricted to strict A-shares satisfying listDate <= signal date <= delistDate (with a missing delistDate treated as open-ended)",
+      "the per-symbol contract is derived only from identifier/date presence; a dense rebalance date, aggregate monthly symbol count, or file-level minimum and maximum dates cannot substitute for the warm-up and endpoint rows",
+      "every quote date is a member of the bound official calendar"
     ],
     "planned_portfolio_or_robustness_fields_not_required_by_current_ic_core": [
       "high",
@@ -41,7 +53,30 @@
       "adjustment_factor",
       "float_market_cap"
     ],
-    "semantics": "The adjusted close return series, amount units and cutoff timing, official-session calendar, adjustment convention, and missing-session behavior must be documented and hash-bound for the IC core. Unadjusted open, price-limit, volume, and nonfill semantics are inputs to a planned portfolio module and are not required or claimed by the current runner."
+    "semantics": "The adjusted close return series, amount units and cutoff timing, official-session calendar, adjustment convention, exact per-symbol endpoint behavior, and missing-session behavior must be documented and hash-bound for the IC core. Under the current adapter only an exact adjusted-close quote on the required official session resolves an endpoint. Unadjusted open, price-limit, volume, and nonfill semantics are inputs to a planned portfolio module and are not required or claimed by the current runner."
+  },
+  "endpoint_resolution": {
+    "required_sessions": {
+      "no_lag": ["t", "t+20"],
+      "one_session_lag": ["t+1", "t+21"]
+    },
+    "currently_supported_method": "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE",
+    "unsupported_without_a_separately_validated_and_frozen_adapter": [
+      "suspension_valuation_or_last_price_carry_forward",
+      "delisting_return_cash_settlement_or_terminal_wealth"
+    ],
+    "forbidden_fallbacks": [
+      "advance_to_next_observed_quote",
+      "use_a_post_endpoint_reopening_quote",
+      "use_last_observed_price",
+      "assign_zero_or_other_default_recovery"
+    ],
+    "unresolved_codes": [
+      "MISSING_EXACT_FORWARD_EXIT",
+      "MISSING_EXACT_LAG_ENTRY",
+      "MISSING_EXACT_LAG_EXIT"
+    ],
+    "evidence_boundary": "A bound official calendar establishes the target session position but does not establish a per-security price on that session. The current exact-quote adapter records which required endpoint is missing but does not infer whether suspension, delisting, or another economic cause produced the absence. Any unresolved per-security endpoint remains blocking."
   },
   "official_calendar": {
     "required": true,
@@ -72,6 +107,14 @@
       "listStatus",
       "stockType"
     ],
+    "semantic_gates": [
+      "every scoped SH/SZ A-share row has a valid listDate",
+      "every scoped delisted row has a valid delistDate on or after listDate",
+      "active rows have no delistDate and delisted rows are not represented as active",
+      "monthly coverage counts use only securities active on that month's first official signal session; future listings and already-delisted securities cannot contribute",
+      "listStatus uses a documented active or delisted value",
+      "the scoped master contains at least one delisted A-share"
+    ],
     "strongly_preferred": [
       "board",
       "industry_code",
@@ -93,6 +136,7 @@
       "transformation": "latest disclosed cumulative interim or annual observation; no analyst annualization",
       "maximum_staleness_months": 18,
       "duplicate_symbol_report_period_rule": "fail closed without a separately validated vintage schema",
+      "publication_order_rule": "a usable roeDiluted record with publishDate earlier than reportPeriodEnd is invalid and blocks readiness",
       "required_evidence": [
         "provider_field_dictionary_sha256",
         "endpoint_mapping_sha256",
@@ -112,7 +156,17 @@
       "version_or_revision_identifier",
       "value_as_of_vintage"
     ],
-    "boundary": "publishDate supports only first-availability timing. The current runner has no validated revision-vintage adapter, so revision-history claims are unconditionally prohibited; merely observing vintage-like columns, high field completeness, or multiple symbol-period versions is diagnostic and cannot open that claim gate."
+    "boundary": "In a single-version provider snapshot, publishDate supports only a recorded-publication-date specification effect: under the date-only rule, the stored snapshot record is withheld until the first common official signal session strictly after its recorded date. The current runner has no validated revision-vintage adapter and does not identify the value investors observed at first release. Revision, restatement, vintage-value, announcement-reaction, and return-timing claims are unconditionally prohibited; merely observing vintage-like columns, high field completeness, or multiple symbol-period versions is diagnostic and cannot open any of those claim gates."
+  },
+  "registered_no_return_publication_exposure_diagnostics": {
+    "uses_forward_returns": false,
+    "outputs": [
+      "monthly report-side, publication-side, common, report-only, and publication-only support counts",
+      "share of report-side selected records whose recorded publishDate is on or after the signal date",
+      "share of common-support records whose selected reportPeriodEnd changes under recorded-publication-date availability",
+      "calendar-day distribution from reportPeriodEnd to recorded publishDate"
+    ],
+    "claim_boundary": "Descriptive design-exposure evidence only; no return association, causal disclosure mechanism, or event-study claim."
   },
   "market_controls": {
     "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
@@ -139,18 +193,30 @@
       "symbol_count",
       "minimum_and_maximum_dates"
     ],
-    "public_release": "Publish code, schemas, synthetic fixtures, hashes, and aggregate coverage only; the receipt may embed the exact official-calendar session dates only when that publication right is explicitly attested, and no licensed market or fundamental row may be published without separate explicit rights."
+    "public_release": "Publish code, schemas, synthetic fixtures, hashes, aggregate coverage, aggregate missingness/common-support diagnostics, and aggregate endpoint reason-code counts only. The complete per-security endpoint-reason ledger remains private but is bound in the result receipt by SHA-256. The receipt may embed the exact official-calendar session dates only when that publication right is explicitly attested, and no licensed market or fundamental row may be published without separate explicit rights."
+  },
+  "execution_environment": {
+    "python_version": "3.12.12",
+    "numpy_version": "2.0.2",
+    "pandas_version": "2.3.3",
+    "dependency_match_rule": "exact",
+    "whole_repository_clean_required": true,
+    "gate": "The registered real-data runner must execute at the checked-out registered commit with no tracked or untracked change anywhere in the repository; an untracked root import hook such as sitecustomize.py is a blocking condition."
   },
   "outcome_blind_boundary": {
+    "current_probe_spec": "coverage_probe_spec.v2.json",
+    "immutable_predecessor": "coverage_probe_spec.v1.json retained byte-for-byte",
     "allowed_before_registration": [
       "schema and field dictionary review",
       "aggregate date, row, symbol, session, and non-null coverage",
       "fixed-symbol fixed-date source probes",
-      "hashing and rights review"
+      "hashing and rights review",
+      "generic exact-session quote coverage and endpoint-adapter semantic review that contains no factor signal, forward return, IC, or variant ranking"
     ],
     "prohibited_before_registration": [
       "factor IC or return inspection on the 2010-2022 primary panel",
       "variant ranking",
+      "publication-exposure diagnostic values before their definitions and output contract are externally frozen",
       "threshold changes based on Stage-2 outcomes"
     ]
   }

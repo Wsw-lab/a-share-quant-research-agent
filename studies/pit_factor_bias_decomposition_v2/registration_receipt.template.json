@@ -9,19 +9,25 @@
   "verification_uri": null,
   "registered_artifact_type": "stage2_design_manifest_v1_exact_bytes_or_sha256_digest",
   "registered_artifact_sha256": null,
+  "coverage_probe_receipt_sha256": null,
+  "registered_scope_summary": {
+    "variants": 18,
+    "factor_variant_cells": 72,
+    "primary_estimands": 1,
+    "secondary_estimands": 28,
+    "total_inferential_estimands": 29,
+    "roe_common_support_components": 3,
+    "timing_decomposition_tolerance_source": "design_manifest.registered_design_assertions.timing_decomposition_tolerance_source",
+    "claim_boundary": "single_version_recorded_publication_date_specification_effect_only"
+  },
   "proof": {
     "type": null,
     "allowed_types": [
-      "detached_digital_signature",
-      "registry_inclusion_proof",
       "human_verified_registry_record"
     ],
     "evidence_sha256": null,
     "verifier": null,
     "verified_at": null,
-    "signature_algorithm": null,
-    "signing_key_identifier": null,
-    "signature_or_inclusion_proof": null,
     "trust_boundary": "The registry record has no offline-verifiable signature; authenticity requires independent human verification."
   },
   "chronology_contract": {
@@ -29,6 +35,6 @@
     "timezone_rule": "Every timestamp must be finite ISO-8601 with an explicit UTC offset.",
     "identity_rule": "provider, identifier, verification_uri, registered_at, and registered_artifact_sha256 must agree with the retained provider record."
   },
-  "human_trust_boundary": "When no offline-verifiable provider signature or inclusion proof exists, the manifest hash establishes artifact identity but not timestamp authenticity. A named human verifier must inspect the provider-controlled record, preserve and hash the evidence, and accept responsibility for that verification.",
+  "human_trust_boundary": "The current verifier does not implement cryptographic signature or registry-inclusion-proof validation. The manifest hash establishes artifact identity but not timestamp authenticity. A named human verifier must inspect the provider-controlled record, preserve and hash the evidence, and accept responsibility for that verification; a future cryptographic path requires a new tested protocol.",
   "completion_gate": "Do not populate this template unless an external provider has actually accepted the exact design-manifest artifact. Null, placeholder, unverified, or self-issued evidence cannot authorize execution."
 }

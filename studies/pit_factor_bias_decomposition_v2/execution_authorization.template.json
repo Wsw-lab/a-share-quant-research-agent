@@ -9,6 +9,8 @@
   "registration_receipt_sha256": null,
   "plan_core_sha256": null,
   "bound_artifacts": {
+    "coverage_probe_spec_sha256": null,
+    "coverage_probe_receipt_sha256": null,
     "data_declaration_sha256": null,
     "official_calendar_sha256": null,
     "coverage_report_sha256": null,
@@ -52,10 +54,19 @@
     ],
     "authorized_code_commit": null,
     "outcome_data_release_permitted_after_authorized_at": false,
+    "authorized_core_outputs": [
+      "18_variant_72_cell_ic_lattice",
+      "one_primary_and_28_secondary_inferential_estimands",
+      "three_part_ordered_roe_common_support_decomposition",
+      "aggregate_signal_missingness_and_common_support_counts",
+      "no_return_publication_exposure_diagnostics",
+      "per_security_endpoint_reason_ledger_hash_and_aggregate_receipt_counts"
+    ],
+    "endpoint_boundary": "The current core supports exact adjusted-close quotes on required official sessions only. Any unresolved endpoint makes the cell non-estimable and the study INSUFFICIENT_EVIDENCE; suspension-valuation and delisting-terminal-wealth adapters are not authorized.",
+    "claim_boundary": "The strongest authorized accounting-timing claim is a recorded-publication-date specification effect in a single-version provider snapshot. Revision, vintage-value, historical-investor-observed-value, announcement-reaction, and return-timing claims remain unauthorized.",
     "planned_excluded_modules_remain_unauthorized": [
-      "dedicated_signal_missingness_tables",
-      "per_security_exclusion_reason_codes",
-      "eligible_universe_loss_output",
+      "full_per_security_signal_missingness_and_non_endpoint_exclusion_audit",
+      "eligible_universe_loss_attribution_beyond_registered_support_counts",
       "percentage_attenuation_output",
       "raw_ratio_regressions",
       "robustness_analyses",
@@ -65,15 +76,14 @@
       "next_open_portfolios",
       "transaction_costs",
       "turnover",
-      "nonfills"
+      "nonfills",
+      "announcement_event_or_return_timing_study"
     ]
   },
   "statement": null,
   "signature": {
     "type": null,
     "allowed_types": [
-      "detached_digital_signature",
-      "external_registry_attestation",
       "human_verified_evidence"
     ],
     "evidence_sha256": null,

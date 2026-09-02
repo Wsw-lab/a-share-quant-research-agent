@@ -14,7 +14,7 @@ date
 
 Each row represents one official session on which both the Shanghai Stock Exchange and Shenzhen Stock Exchange were open. Dates use ISO `YYYY-MM-DD` in the `Asia/Shanghai` timezone, are unique, and are strictly increasing. Closed dates are omitted. Any SSE/SZSE calendar disagreement is a blocking condition until it is resolved against retained authoritative evidence.
 
-The calendar must include every common session from January 2009 through the end of January 2023, cover every month from January 2010 through December 2022, and provide enough forward sessions to resolve all fixed `t+20` and `t+21` IC endpoints. Every quote date used by the study must be a member of this calendar.
+The calendar must include every common session from January 2009 through the end of January 2023, cover every month from January 2010 through December 2022, and provide the fixed positions for all `t`, `t+1`, `t+20`, and `t+21` IC endpoints. Every quote date used by the study must be a member of this calendar. A calendar position does not itself resolve a per-security endpoint: under the current IC adapter an exact adjusted-close quote must exist for the security on every required session. Missing endpoints cannot shift to another quote, use an unattested last price, or receive a default recovery; they make the cell non-estimable and the study `INSUFFICIENT_EVIDENCE`.
 
 ## Binding and review
 
