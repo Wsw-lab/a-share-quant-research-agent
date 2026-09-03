@@ -752,8 +752,6 @@ def add_body(doc: Document, lines: list[str], figures: dict[str, Path]) -> None:
                 p.add_run(heading)
             else:
                 if heading == "References":
-                    p_break = doc.add_paragraph()
-                    p_break.add_run().add_break(WD_BREAK.PAGE)
                     in_references = True
                 p = doc.add_paragraph(style="Heading 1")
                 p.add_run(heading)

@@ -12,14 +12,16 @@
   "contains_outcome_values": false,
   "purpose": "Record specifications and plans present at the documented repository snapshot, outcome-blindly and without reporting factor returns, rankings, test statistics, or inferred execution histories. Any separately named unexecuted probe retains its own narrower execution-status assertion.",
   "entry_count": 14,
-  "entries_sha256": "952040c483d486dc8a334e4036a8491cfbdfaa65b79d64ed4d27bf51df42ee77",
+  "entries_sha256": "503829059ec403f194cce332f754294f6b9439870b025199bb07cd4469fa767b",
   "chronology_contract": {
-    "required_order": "repository_snapshot.inspected_at <= inventory_cutoff_at <= generated_at <= prior_exposure_attestation.attested_at <= execution_plan.design_frozen_at",
+    "required_order": "repository_snapshot.inspected_at <= inventory_cutoff_at <= generated_at <= coverage_probe_timestamp_proof.timestamped_at_utc <= coverage_probe_timestamp_proof.verified_at_utc <= coverage_probe_receipt.executed_at_utc <= prior_exposure_attestation.attested_at <= execution_plan.design_frozen_at",
     "timestamp_rule": "inspected_at, inventory_cutoff_at, generated_at, and every downstream attestation time must be finite ISO-8601 with an explicit UTC offset",
+    "snapshot_commit_rule": "repository_snapshot.head_commit is the already-existing audited base commit from before this inventory is finalized. It must be a Git ancestor of the commit containing the final inventory and probe specification and of the later plan code commit; it is not a self-referential field and need not equal either descendant commit.",
     "cutoff_rule": "The inventory includes every in-scope artifact known through inventory_cutoff_at. Later discoveries require a new version, new entries_sha256, new inventory-file hash, and new prior-exposure attestation.",
     "entries_hash_rule": "entries_sha256 is SHA-256 of the canonical UTF-8 JSON entries array with sorted keys, compact separators, and one trailing LF; entry_count equals the exact array length.",
     "manifest_gate": "No null root identity or timestamp field, count mismatch, hash mismatch, post-cutoff silent edit, or outcome value is permitted when this inventory enters design_manifest_v1."
   },
+  "completion_gate": "This maintained file remains a visibly incomplete template. Before the probe package is timestamped, an authorized preparer must populate every null identity, timestamp, and dirty-snapshot hash field as applicable; verify the base-commit ancestry and chronology contract; recompute the exact entries hash if any entry changes; and change status to manifest_eligible_outcome_blind. The finalized bytes must then be committed with coverage_probe_spec.v2.json, and every later package, probe receipt, plan, and manifest must bind that same exact inventory-file hash.",
   "repository_snapshot": {
     "head_commit": "4dfd0ad6298a6fcf0246e6f3bb8a7bb6c527d6ad",
     "head_commit_subject": "Publish A-share factor replication working paper",
@@ -310,6 +312,7 @@
         "studies/pit_factor_bias_decomposition_v2/statistical_analysis_plan.md",
         "studies/pit_factor_bias_decomposition_v2/prior_exposure_log.md",
         "studies/pit_factor_bias_decomposition_v2/data_review_attestation.template.json",
+        "studies/pit_factor_bias_decomposition_v2/data_declaration.template.json",
         "studies/pit_factor_bias_decomposition_v2/prior_exposure_attestation.template.json",
         "studies/pit_factor_bias_decomposition_v2/design_manifest.template.json",
         "studies/pit_factor_bias_decomposition_v2/registration_receipt.template.json",
@@ -356,6 +359,7 @@
       "related_paths": [
         "studies/pit_factor_bias_decomposition_v2/plan.draft.json",
         "studies/pit_factor_bias_decomposition_v2/data_review_attestation.template.json",
+        "studies/pit_factor_bias_decomposition_v2/data_declaration.template.json",
         "studies/pit_factor_bias_decomposition_v2/design_manifest.template.json",
         "studies/pit_factor_bias_decomposition_v2/registration_receipt.template.json",
         "studies/pit_factor_bias_decomposition_v2/execution_authorization.template.json",
@@ -401,18 +405,20 @@
       "related_paths": [
         "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v1.json",
         "studies/pit_factor_bias_decomposition_v2/data_requirements.json",
-        "studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json"
+        "studies/pit_factor_bias_decomposition_v2/coverage_probe_timestamp_package.template.json",
+        "studies/pit_factor_bias_decomposition_v2/coverage_probe_timestamp_proof.template.json",
+        "studies/pit_factor_bias_decomposition_v2/coverage_probe_rights_review.template.json"
       ],
       "present_in_repository": true,
       "repository_state": "working_tree_uncommitted",
       "introduced_in_commit": null,
-      "commit_semantics": "The v2 specification and this inventory must first be committed together and the exact v2 bytes externally timestamped before execution is permitted.",
-      "content_sha256_at_inventory": "32203cd7db274b81f544667bf6ff4c8453cbcb7835fb952930773b3aaf0143da",
+      "commit_semantics": "The v2 specification and this inventory must first be committed together; a canonical package manifest binding both exact file hashes and the containing Agent commit must then be externally timestamped and independently verified before execution is permitted.",
+      "content_sha256_at_inventory": "9612a4632e866b2791deafb82eb85a1a4f61c1a6be0f610439b7825d49837bf6",
       "specification_ids": [
         "stage2-akshare-raw-coverage-2016-2018-v2"
       ],
       "outcome_exposure_known": "no",
-      "outcome_exposure_basis": "Contemporaneous authoring assertion: the v2 probe was not executed while this specification and inventory were prepared; execution is prohibited until a commit containing these exact bytes has been externally timestamped.",
+      "outcome_exposure_basis": "Contemporaneous authoring assertion: the v2 probe was not executed while this specification and inventory were prepared; execution is prohibited until the canonical package binding their exact hashes and the containing Agent commit has been externally timestamped and independently verified.",
       "execution_history_claim": "not_executed_during_inventory_preparation"
     }
   ],

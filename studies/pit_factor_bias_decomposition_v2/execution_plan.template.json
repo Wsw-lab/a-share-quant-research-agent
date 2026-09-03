@@ -4,6 +4,22 @@
   "study_id": "a-share-factor-timing-bias-decomposition-v2",
   "status": "draft_template_do_not_run",
   "runner_scope": "ic_core_only",
+  "public_receipt_embedding": {
+    "schema_version": "stage2_public_receipt_embedding_consent_v1",
+    "approved": false,
+    "artifact_type": "execution_plan",
+    "scope": "full_artifact",
+    "receipt_schema_version": "confirmatory_study_receipt_v2",
+    "public_fields": [
+      "*"
+    ],
+    "privacy_assertions": {
+      "sensitive_material_excluded": false,
+      "local_filesystem_locations_excluded": false,
+      "identities_and_verification_uris_approved_for_publication": false
+    },
+    "statement": "The specified artifact scope is approved for embedding in the public Stage-2 receipt."
+  },
   "runtime_contract": {
     "python_version": "3.12.12",
     "numpy_version": "2.0.2",
@@ -63,6 +79,7 @@
   "rebalance_frequency": "monthly",
   "forward_horizon_sessions": 20,
   "minimum_amount": 5000000,
+  "minimum_amount_unit": "CNY",
   "minimum_symbols": 1000,
   "minimum_oos_rebalances": 156,
   "minimum_significance_months": 120,
@@ -81,19 +98,67 @@
   "fundamental_contract": {
     "roe_source_field": "roeDiluted",
     "normalized_field": "roe",
+    "mapping_cardinality": "one_to_one",
     "unit": "decimal",
+    "publication_date_field": "publishDate",
+    "publication_date_semantics": "actual_recorded_disclosure_date_not_scheduled_or_update_date",
     "maximum_staleness_months": 18,
     "same_day_publication_usable": false,
     "duplicate_symbol_report_period_rule": "fail_closed"
   },
+  "security_identifier_contract": {
+    "contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+    "canonical_format": "six_ascii_digits_dot_uppercase_SH_or_SZ",
+    "cross_input_join_rule": "the_same_provider_stable_identifier_semantics_apply_to_quotes_stock_master_and_fundamentals",
+    "provider_stability_rule": "identifier_identity_must_not_depend_on_extraction_or_acquisition_date",
+    "code_change_rule": "every_historical_code_change_or_reassignment_is_resolved_by_a_documented_provider_mapping_before_input_hash_binding"
+  },
+  "universe_contract": {
+    "terminal_survivor_cutoff": "2023-01-31",
+    "terminal_survivor_rule": "listDate_on_or_before_signal_session_and_delistDate_is_null_or_strictly_after_terminal_survivor_cutoff",
+    "point_in_time_rule": "listDate_on_or_before_signal_session_and_delistDate_is_null_or_on_or_after_signal_session",
+    "lifecycle_consistency_rule": "active_status_requires_null_delistDate_delisted_status_requires_valid_delistDate_on_or_after_listDate",
+    "acquisition_date_rule": "must_not_affect_terminal_survivor_membership"
+  },
+  "rank_group_contract": {
+    "rank_method": "average",
+    "percentile_rank": true,
+    "bottom_quintile_rule": "percentile_rank_less_than_or_equal_to_0.2",
+    "top_quintile_rule": "percentile_rank_strictly_greater_than_0.8",
+    "tie_rule": "all_equal_signal_values_receive_the_same_average_percentile_rank_and_remain_together_so_group_sizes_may_differ_from_twenty_percent"
+  },
+  "quote_price_adjustment_contract": {
+    "canonical_close_field": "close",
+    "raw_close_field": "close_raw",
+    "adjustment_factor_field": "adjustment_factor",
+    "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+    "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+    "adjusted_price_formula": "close=close_raw*adjustment_factor",
+    "relative_tolerance": 1e-12,
+    "absolute_tolerance": 1e-12,
+    "factor_alignment_rule": "exact_symbol_and_official_session_no_fill",
+    "factor_domain_rule": "finite_strictly_positive",
+    "normalization_base_rule": "provider_cumulative_factor_as_delivered_no_rebasing",
+    "return_invariance_rule": "per_symbol_positive_constant_factor_rescaling_leaves_return_ratios_unchanged",
+    "cross_sectional_price_level_used_as_estimand": false,
+    "materialization_stage": "adjusted_close_materialized_before_raw_input_hash_binding"
+  },
   "ic_outcome_clock": {
-    "no_lag": "adjusted close t to adjusted close t+20 on official exchange sessions",
-    "one_session_lag": "adjusted close t+1 to adjusted close t+21 on official exchange sessions",
+    "no_lag": "provider close observation t to provider close observation t+20 on official exchange sessions",
+    "one_session_lag": "provider close observation t+1 to provider close observation t+21 on official exchange sessions",
+    "close_observation_type_field": "close_observation_type",
+    "close_observation_type_mapping": {
+      "is_suspended_false": "traded_close",
+      "is_suspended_true": "suspension_valuation"
+    },
+    "suspension_valuation_source_rule": "provider_recorded_or_published_for_exact_official_session_never_researcher_forward_filled",
+    "interpretation": "valuation_return_and_rank_ic_not_executable_trade_return",
     "missing_symbol_session_rule": "cell_non_estimable_do_not_shift_carry_forward_or_assign_default_recovery"
   },
   "endpoint_resolution": {
     "signal_eligible_denominator_fixed_before_outcome_lookup": true,
-    "current_supported_method": "exact_adjusted_close_quote_on_each_required_official_session_only",
+    "current_supported_method": "exact_provider_recorded_close_or_same_session_suspension_valuation_on_each_required_official_session_only",
+    "suspension_valuation_rule": "provider_recorded_or_published_for_the_exact_official_session;_research_code_never_forward_fills",
     "required_sessions": {
       "no_lag": ["t", "t+20"],
       "one_session_lag": ["t+1", "t+21"]
@@ -104,10 +169,10 @@
       "next_observed_quote",
       "post_endpoint_reopening_quote",
       "unattested_last_price_carry_forward",
+      "researcher_generated_forward_fill",
       "zero_or_other_default_recovery"
     ],
     "unimplemented_adapters": [
-      "calendarized_suspension_valuation",
       "delisting_or_terminal_wealth"
     ],
     "unresolved_reason_codes": [
@@ -204,7 +269,7 @@
   },
   "variants_source": "Before design-manifest registration, copy the exact 18 variants from plan.draft.json, freeze their order in the plan core, and do not add, delete, or rename cells after design_frozen_at.",
   "variants": [],
-  "reporting_rule": "Report every registered IC cell and exactly 29 inferential estimands (one primary plus 28 secondary family members), including the three ordered ROE common-support components, with their efficiency identity at absolute tolerance 1e-12 and two deterministic timing-isolation checks reported separately. Also report aggregate signal-missingness/common-support counts and no-return publication-exposure diagnostics. Cell-level means, Newey-West t-statistics, and top-minus-universe spreads are descriptive only and cannot support cell-specific discovery claims; do not select or headline a best result. The result receipt binds the complete per-security endpoint-reason ledger and verifies signal-eligible-denominator coverage.",
+  "reporting_rule": "Report every registered IC cell and exactly 29 inferential estimands (one primary plus 28 secondary family members), including the three ordered ROE common-support components, with their efficiency identity at absolute tolerance 1e-12 and two deterministic timing-isolation checks reported separately. Also report aggregate signal-missingness/common-support counts and no-return publication-exposure diagnostics. Cell-level means, Newey-West t-statistics, and top-minus-universe spreads are descriptive only and cannot support cell-specific discovery claims; do not select or headline a best result. The result receipt binds the complete per-security endpoint-reason ledger and verifies signal-eligible-denominator coverage. All return and IC outputs are valuation-return diagnostics based on provider close observations, not executable trade-return evidence.",
   "claim_boundaries": {
     "authorized_accounting_timing_claim": "recorded-publication-date specification effect in a single-version provider snapshot",
     "revision_or_vintage_claim": false,

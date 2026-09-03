@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import csv
 from datetime import date, timedelta
 import json
@@ -7,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import tracemalloc
 import unittest
@@ -17,14 +19,36 @@ import pandas as pd
 import a_share_quant_agent.confirmatory_study as confirmatory_module
 from a_share_quant_agent.confirmatory_study import (
     ConfirmatoryStudyError,
+    STAGE2_AUTHORIZATION_ENDPOINT_BOUNDARY,
     STAGE2_COMPONENTS,
+    STAGE2_ENDPOINT_RESOLUTION_CONTRACT,
+    STAGE2_FUNDAMENTAL_CONTRACT,
+    STAGE2_IC_OUTCOME_CLOCK,
+    STAGE2_PRIVATE_DECLARATION_FIELDS,
+    STAGE2_PRICE_ADJUSTMENT_CONTRACT,
+    STAGE2_PRICE_ADJUSTMENT_CONVENTION,
+    STAGE2_PRICE_ADJUSTMENT_METHOD,
+    STAGE2_PUBLIC_DECLARATION_FIELDS,
     STAGE2_SCHEMA_VERSION,
+    STAGE2_REPORTING_RULE,
+    STAGE2_REGISTERED_DESIGN_ASSERTIONS,
+    STAGE2_REGISTERED_SCOPE_SUMMARY,
+    STAGE2_RANK_GROUP_CONTRACT,
+    STAGE2_RESOLVED_ENDPOINT_CODE,
+    STAGE2_SECURITY_IDENTIFIER_CONTRACT,
+    STAGE2_SECURITY_IDENTIFIER_CONTRACT_TOKEN,
+    STAGE2_TERMINAL_SURVIVOR_CUTOFF,
+    STAGE2_UNIVERSE_CONTRACT,
     STAGE2_VARIANT_MASK_ORDER,
     _aggregate_results,
+    _expected_stage2_public_embedding_consent,
     _load_quotes,
+    _load_stage2_quotes,
     _load_stage2_fundamentals,
     _stage2_evidence_status,
+    _stage2_rank_groups,
     _validate_prior_specification_inventory,
+    _validate_stage2_public_receipt_privacy,
     _validate_stage2_coverage_probe_spec,
     _validate_stage2_coverage_probe_receipt,
     _validate_stage2_plan,
@@ -33,7 +57,7 @@ from a_share_quant_agent.confirmatory_study import (
     build_public_evidence_status,
     run_confirmatory_study,
     run_stage2_confirmatory_study,
-    run_stage2_registered_cells,
+    _run_stage2_registered_cells,
     stage2_registered_content_sha256,
     validate_stage2_variant_plan,
     verify_stage2_study_receipt,
@@ -44,6 +68,10 @@ from a_share_quant_agent.stage2_estimands import (
     Stage2EstimandError,
     build_registered_estimands,
     verify_registered_estimands,
+)
+from a_share_quant_agent.data_access import (
+    STAGE2_REQUIRED_FIELDS,
+    stage2_public_source_projection_sha256,
 )
 
 
@@ -76,19 +104,39 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             self.assertFalse(receipt["status"]["performance_claim"])
             verify_study_receipt(root / "out" / "receipt.json")
 
-    def test_real_market_status_requires_locked_plan_and_minimum_oos_evidence(self) -> None:
+    def test_legacy_real_market_run_is_rejected_before_outcome_load_or_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _write_fixture(root, source_classification="real_market_data")
+            output = root / "out"
 
-            receipt = run_confirmatory_study(**paths, output_dir=root / "out")
+            with patch.object(confirmatory_module, "_load_quotes") as load_quotes:
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError,
+                    "legacy run accepts synthetic_fixture only",
+                ):
+                    run_confirmatory_study(**paths, output_dir=output)
 
-            self.assertEqual(receipt["status"]["code"], "REAL_MARKET_OOS_STATISTICS")
-            self.assertGreaterEqual(receipt["sample"]["test_rebalance_count"], 3)
-            self.assertTrue(receipt["data"]["files"]["quotes"]["sha256"])
-            self.assertFalse(receipt["data"]["redistributable"])
-            self.assertFalse(receipt["status"]["performance_claim"])
-            self.assertEqual(receipt["code"]["agent_git_sha"], "1" * 40)
+            load_quotes.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_legacy_cli_help_declares_the_synthetic_only_boundary(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "a_share_quant_agent.confirmatory_study",
+                "run",
+                "--help",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("synthetic_fixture", completed.stdout)
+        self.assertIn("run-stage2", completed.stdout)
+        self.assertIn("Real-market execution is rejected", completed.stdout)
 
     def test_unlocked_or_incomplete_plan_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,7 +157,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
     def test_receipt_verifier_rejects_self_consistent_scope_or_claim_expansion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            paths = _write_fixture(root, source_classification="real_market_data")
+            paths = _write_fixture(root, source_classification="synthetic_fixture")
             run_confirmatory_study(**paths, output_dir=root / "out")
             original = json.loads((root / "out" / "receipt.json").read_text(encoding="utf-8"))
 
@@ -153,14 +201,18 @@ class ConfirmatoryStudyTest(unittest.TestCase):
     def test_public_status_is_derived_from_verified_receipts_not_legacy_registries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            real_paths = _write_fixture(root / "real", source_classification="real_market_data")
             synthetic_paths = _write_fixture(root / "synthetic", source_classification="synthetic_fixture")
-            run_confirmatory_study(**real_paths, output_dir=root / "real-out")
             run_confirmatory_study(**synthetic_paths, output_dir=root / "synthetic-out")
+            historical_pilot_receipt = (
+                Path(__file__).resolve().parents[1]
+                / "evidence"
+                / "pit_factor_replication_v1"
+                / "receipt.json"
+            )
 
             status = build_public_evidence_status([
                 root / "synthetic-out" / "receipt.json",
-                root / "real-out" / "receipt.json",
+                historical_pilot_receipt,
             ])
 
             self.assertEqual(status["status"], "REAL_MARKET_OOS_STATISTICS")
@@ -175,7 +227,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             written = write_public_evidence_status(
                 [
                     root / "synthetic-out" / "receipt.json",
-                    root / "real-out" / "receipt.json",
+                    historical_pilot_receipt,
                 ],
                 status_path,
             )
@@ -184,6 +236,43 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 status_path.read_bytes(),
                 (json.dumps(status, sort_keys=True, separators=(",", ":")) + "\n").encode(),
             )
+
+    def test_rehashed_nonallowlisted_v1_receipt_cannot_promote_public_status(self) -> None:
+        historical_pilot_receipt = (
+            Path(__file__).resolve().parents[1]
+            / "evidence"
+            / "pit_factor_replication_v1"
+            / "receipt.json"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forged = json.loads(
+                historical_pilot_receipt.read_text(encoding="utf-8")
+            )
+            # v1 integrity is self-asserted.  This harmless content mutation and
+            # matching integrity rewrite demonstrate that structural v1
+            # verification alone is not provenance.
+            forged["data"]["source_name"] = "self-consistent-forged-v1"
+            _rewrite_receipt_integrity(forged)
+            forged_path = root / "forged-v1.json"
+            forged_path.write_text(
+                json.dumps(
+                    forged,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            verified = verify_study_receipt(forged_path)
+            self.assertEqual(
+                verified["status"]["code"], "REAL_MARKET_OOS_STATISTICS"
+            )
+            public_status = build_public_evidence_status([forged_path])
+            self.assertEqual(public_status["status"], "INSUFFICIENT_EVIDENCE")
+            self.assertEqual(public_status["verified_receipt_count"], 1)
 
     def test_stage2_plan_requires_baseline_chain_and_complete_factorial(self) -> None:
         plan = _stage2_plan()
@@ -245,6 +334,9 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 "test_period", ["2024-01-01", "2024-07-31"]
             )),
             ("minimum_symbols", lambda plan: plan.__setitem__("minimum_symbols", 5)),
+            ("minimum_amount_unit", lambda plan: plan.__setitem__(
+                "minimum_amount_unit", "thousand_CNY"
+            )),
             ("minimum_oos_rebalances", lambda plan: plan.__setitem__(
                 "minimum_oos_rebalances", 3
             )),
@@ -254,6 +346,18 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             ("fundamental_contract", lambda plan: plan["fundamental_contract"].__setitem__(
                 "maximum_staleness_months", 36
             )),
+            ("quote_price_adjustment_contract", lambda plan: plan[
+                "quote_price_adjustment_contract"
+            ].__setitem__("price_adjustment_convention", "qfq")),
+            ("security_identifier_contract", lambda plan: plan[
+                "security_identifier_contract"
+            ].__setitem__("contract_id", "extraction_current_symbol")),
+            ("universe_contract", lambda plan: plan[
+                "universe_contract"
+            ].__setitem__("terminal_survivor_cutoff", "2099-12-31")),
+            ("rank_group_contract", lambda plan: plan[
+                "rank_group_contract"
+            ].__setitem__("top_quintile_rule", "percentile_rank_greater_than_or_equal_to_0.8")),
             ("ic_outcome_clock", lambda plan: plan["ic_outcome_clock"].__setitem__(
                 "missing_symbol_session_rule", "shift_to_next_row"
             )),
@@ -294,6 +398,72 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfirmatoryStudyError, "Git commit object"):
             _verify_repository_commit("1" * 40, require_clean=False)
 
+    def test_stage2_plan_rejects_integer_aliases_for_fixed_booleans(self) -> None:
+        fixed_boolean_paths = (
+            ("claim_boundaries", "portfolio_or_trading_claim"),
+            ("fundamental_contract", "same_day_publication_usable"),
+            ("rank_group_contract", "percentile_rank"),
+            ("missingness", "composite_complete_case"),
+        )
+        for object_name, field_name in fixed_boolean_paths:
+            for integer_alias in (0, 1):
+                with self.subTest(
+                    object_name=object_name,
+                    field_name=field_name,
+                    integer_alias=integer_alias,
+                ):
+                    plan = _stage2_plan()
+                    plan[object_name][field_name] = integer_alias
+                    plan["external_registration"]["registered_content_sha256"] = (
+                        stage2_registered_content_sha256(plan)
+                    )
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        f"Stage-2 {object_name} differs",
+                    ):
+                        _validate_stage2_plan(plan)
+
+    def test_stage2_plan_rejects_external_registration_extra_fields(self) -> None:
+        plan = _stage2_plan()
+        plan["external_registration"]["unregistered_payload"] = {
+            "raw_rows": [1, 2, 3]
+        }
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError,
+            "external registration is missing or invalid",
+        ):
+            _validate_stage2_plan(plan)
+
+    def test_stage2_public_embedding_consent_rejects_integer_boolean_aliases(self) -> None:
+        for field_path in (
+            ("approved",),
+            ("privacy_assertions", "sensitive_material_excluded"),
+            ("privacy_assertions", "local_filesystem_locations_excluded"),
+            (
+                "privacy_assertions",
+                "identities_and_verification_uris_approved_for_publication",
+            ),
+        ):
+            for integer_alias in (0, 1):
+                with self.subTest(
+                    field_path=field_path,
+                    integer_alias=integer_alias,
+                ):
+                    plan = _stage2_plan()
+                    consent = plan["public_receipt_embedding"]
+                    target = consent
+                    for key in field_path[:-1]:
+                        target = target[key]
+                    target[field_path[-1]] = integer_alias
+                    plan["external_registration"]["registered_content_sha256"] = (
+                        stage2_registered_content_sha256(plan)
+                    )
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        "execution_plan public receipt embedding consent",
+                    ):
+                        _validate_stage2_plan(plan)
+
     def test_stage2_plan_accepts_canonical_protocol_contract(self) -> None:
         self.assertEqual(len(_validate_stage2_plan(_stage2_plan())), 18)
 
@@ -328,6 +498,69 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         status_command = mocked_run.call_args_list[-1].args[0]
         self.assertNotIn("--", status_command)
         self.assertNotIn("src/a_share_quant_agent", status_command)
+
+    def test_stage2_estimand_implementation_loads_before_any_execution_gate(self) -> None:
+        import_events: list[str] = []
+        original_import = builtins.__import__
+
+        def tracking_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.endswith("stage2_estimands"):
+                import_events.append(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        repository = Path(__file__).resolve().parents[1]
+        placeholder_paths = {
+            key: repository / "does-not-need-to-exist"
+            for key in (
+                "plan_path", "quotes_path", "stock_master_path",
+                "fundamentals_path", "official_calendar_path",
+                "data_declaration_path", "data_rights_attestation_path",
+                "coverage_report_path", "coverage_probe_spec_path",
+                "coverage_probe_receipt_path", "review_attestation_path",
+                "design_manifest_path", "registration_receipt_path",
+                "execution_authorization_path", "protocol_source_path",
+                "statistical_analysis_plan_path",
+                "prior_specification_inventory_path", "prior_exposure_log_path",
+                "prior_exposure_attestation_path",
+            )
+        }
+        with patch.object(builtins, "__import__", side_effect=tracking_import):
+            with self.assertRaises(ConfirmatoryStudyError):
+                run_stage2_confirmatory_study(
+                    **placeholder_paths,
+                    authorization_consumption_dir=repository / ".unsafe-consumption",
+                    code_revision="0" * 40,
+                    output_dir=repository / ".unsafe-output",
+                )
+        self.assertTrue(
+            import_events,
+            "the registered estimand module must be fixed before path and repository gates",
+        )
+
+    def test_stage2_real_data_rechecks_registered_repository_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="real_market_data"),
+                _stage2_plan(),
+            )
+            with patch.object(
+                confirmatory_module,
+                "_verify_repository_commit",
+            ) as repository_check, patch.object(
+                confirmatory_module,
+                "_verify_stage2_runtime_contract",
+            ), patch.object(
+                confirmatory_module,
+                "_validate_stage2_data_bindings",
+            ):
+                run_stage2_confirmatory_study(
+                    **paths,
+                    output_dir=root / "out",
+                )
+        self.assertEqual(repository_check.call_count, 2)
+        for call in repository_check.call_args_list:
+            self.assertTrue(call.kwargs["require_clean"])
 
     def test_stage2_repository_gate_rejects_untracked_files_hidden_by_git_excludes(self) -> None:
         cases = (
@@ -501,8 +734,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 },
             ])
 
-        observations = run_stage2_registered_cells(
-            prepared=base,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=pd.DataFrame(fundamentals),
             rebalance_dates=[day],
@@ -515,7 +748,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         )
         self.assertAlmostEqual(publication_roe["ic"], 1.0)
 
-    def test_stage2_rejects_master_eligible_symbol_without_signal_day_quote(self) -> None:
+    def test_stage2_candidate_is_active_master_intersect_signal_day_quotes(self) -> None:
         day = pd.Timestamp("2025-06-02")
         symbols = [f"{index:06d}.SZ" for index in range(1, 7)]
         quoted_symbols = symbols[:-1]
@@ -544,16 +777,21 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "reportPeriodEnd": [pd.Timestamp("2023-12-31")] * len(symbols),
         })
 
-        with self.assertRaisesRegex(
-            ConfirmatoryStudyError,
-            "master-eligible.*signal-day quote",
-        ):
-            run_stage2_registered_cells(
-                prepared=base,
-                stock_master=stock_master,
-                fundamentals=fundamentals,
-                rebalance_dates=[day],
-                plan=_stage2_plan(),
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
+            stock_master=stock_master,
+            fundamentals=fundamentals,
+            rebalance_dates=[day],
+            plan=_stage2_plan(),
+        )
+
+        self.assertTrue(observations)
+        for observation in observations:
+            audit = observation["sample_audit"]
+            self.assertEqual(audit["candidate_count"], len(quoted_symbols))
+            self.assertNotIn(
+                symbols[-1],
+                {row["symbol"] for row in audit["endpoint_records"]},
             )
 
     def test_stage2_final_survivor_universe_still_begins_at_listing_date(self) -> None:
@@ -587,8 +825,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         })
 
         try:
-            observations = run_stage2_registered_cells(
-                prepared=base,
+            observations = _run_stage2_registered_cells(
+                prepared=_stage2_prepared_with_close_types(base),
                 stock_master=stock_master,
                 fundamentals=fundamentals,
                 rebalance_dates=[day],
@@ -605,6 +843,76 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             final_survivor_roe["sample_audit"]["candidate_count"],
             len(quoted_symbols),
         )
+
+    def test_stage2_terminal_survivor_uses_fixed_outcome_cutoff_not_current_status(self) -> None:
+        day = pd.Timestamp("2020-01-02")
+        symbols = [f"{index:06d}.SZ" for index in range(1, 9)]
+        base = pd.DataFrame({
+            "date": [day] * len(symbols),
+            "symbol": symbols,
+            "is_st": [False] * len(symbols),
+            "is_suspended": [False] * len(symbols),
+            "amount_20d": [10_000_000.0] * len(symbols),
+            "momentum_60d": list(range(1, 9)),
+            "low_vol_20d": list(range(8, 0, -1)),
+            "future_return_same": [value / 100 for value in range(1, 9)],
+            "future_return_lagged": [value / 100 for value in range(1, 9)],
+        })
+        stock_master = pd.DataFrame({
+            "symbol": symbols,
+            "listDate": [pd.Timestamp("2010-01-01")] * len(symbols),
+            "delistDate": [
+                pd.Timestamp("2022-01-01"),
+                pd.Timestamp(STAGE2_TERMINAL_SURVIVOR_CUTOFF),
+                pd.Timestamp("2023-02-01"),
+                *([pd.NaT] * 5),
+            ],
+            "listStatus": ["delisted", "delisted", "delisted", *(["listed"] * 5)],
+            "stockType": ["A股"] * len(symbols),
+        })
+        fundamentals = pd.DataFrame({
+            "symbol": symbols,
+            "roe": [value / 100 for value in range(1, 9)],
+            "publishDate": [pd.Timestamp("2019-04-30")] * len(symbols),
+            "reportPeriodEnd": [pd.Timestamp("2018-12-31")] * len(symbols),
+        })
+
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
+            stock_master=stock_master,
+            fundamentals=fundamentals,
+            rebalance_dates=[day],
+            plan=_stage2_plan(),
+        )
+        by_variant = {
+            row["variant"]: row
+            for row in observations
+            if row["factor"] == "roe"
+        }
+        self.assertEqual(
+            by_variant["A0_final_report_end"]["sample_audit"]["candidate_count"],
+            6,
+        )
+        self.assertEqual(
+            by_variant["A1_pit_report_end"]["sample_audit"]["candidate_count"],
+            8,
+        )
+
+    def test_stage2_quintile_boundaries_are_deterministic_and_keep_ties_together(self) -> None:
+        distinct = pd.Series(range(1, 1001), dtype=float)
+        _, bottom, top = _stage2_rank_groups(distinct)
+        self.assertEqual(int(bottom.sum()), 200)
+        self.assertEqual(int(top.sum()), 200)
+
+        tied = distinct.copy()
+        tied.iloc[194:206] = 200.5
+        tied.iloc[794:806] = 800.5
+        ranks, tied_bottom, tied_top = _stage2_rank_groups(tied)
+        self.assertEqual(int(tied_bottom.sum()), 194)
+        self.assertEqual(int(tied_top.sum()), 206)
+        self.assertEqual(ranks.iloc[194:206].nunique(), 1)
+        self.assertFalse(tied_bottom.iloc[194:206].any())
+        self.assertTrue(tied_top.iloc[794:806].all())
 
     def test_stage2_monthly_timing_diagnostics_close_three_part_common_support_identity(self) -> None:
         day = pd.Timestamp("2025-06-02")
@@ -644,8 +952,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     "reportPeriodEnd": pd.Timestamp("2023-12-31"),
                 })
 
-        observations = run_stage2_registered_cells(
-            prepared=base,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=pd.DataFrame(fundamentals),
             rebalance_dates=[day],
@@ -717,8 +1025,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     "reportPeriodEnd": pd.Timestamp("2023-12-31"),
                 })
 
-        observations = run_stage2_registered_cells(
-            prepared=base,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=pd.DataFrame(fundamentals),
             rebalance_dates=[day],
@@ -782,6 +1090,120 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 ):
                     _load_quotes(path)
 
+    def test_stage2_quote_loader_enforces_exact_close_observation_mapping(self) -> None:
+        valid = (
+            "date,symbol,close_raw,adjustment_factor,close,price_adjustment_method,price_adjustment_convention,close_observation_type,amount,amount_unit,is_st,is_suspended\n"
+            f"2025-01-02,000001.SZ,5.0,2,10.0,{STAGE2_PRICE_ADJUSTMENT_METHOD},{STAGE2_PRICE_ADJUSTMENT_CONVENTION},traded_close,10000000,CNY,false,false\n"
+            f"2025-01-02,000002.SZ,9.5,1,9.5,{STAGE2_PRICE_ADJUSTMENT_METHOD},{STAGE2_PRICE_ADJUSTMENT_CONVENTION},suspension_valuation,0,CNY,false,true\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "quotes.csv"
+            path.write_text(valid, encoding="utf-8")
+            loaded = _load_stage2_quotes(path)
+            self.assertEqual(
+                set(loaded["close_observation_type"]),
+                {"traded_close", "suspension_valuation"},
+            )
+
+            path.write_text(
+                valid.replace(
+                    "close_observation_type,", "", 1
+                ).replace(
+                    ",traded_close,", ",", 1
+                ).replace(
+                    ",suspension_valuation,", ",", 1
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "locked close-observation contract"
+            ):
+                _load_stage2_quotes(path)
+
+            for old, new, message in (
+                (
+                    STAGE2_PRICE_ADJUSTMENT_METHOD,
+                    "provider_adjusted_close",
+                    "price_adjustment_method",
+                ),
+                (
+                    STAGE2_PRICE_ADJUSTMENT_CONVENTION,
+                    "qfq",
+                    "price_adjustment_convention",
+                ),
+                (",5.0,2,10.0,", ",5.0,2,9.0,", "does not equal close_raw"),
+            ):
+                path.write_text(valid.replace(old, new, 1), encoding="utf-8")
+                with self.assertRaisesRegex(ConfirmatoryStudyError, message):
+                    _load_stage2_quotes(path)
+
+            path.write_text(
+                valid.replace(
+                    ",suspension_valuation,0,CNY,false,true",
+                    ",traded_close,0,CNY,false,true",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "does not match is_suspended"
+            ):
+                _load_stage2_quotes(path)
+
+            path.write_text(
+                valid.replace(",10000000,CNY,", ",10000000,thousand_CNY,", 1),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError, "amount_unit must be exact CNY"
+            ):
+                _load_stage2_quotes(path)
+
+    def test_stage2_registered_cell_runner_cannot_bypass_close_observation_contract(self) -> None:
+        day = pd.Timestamp("2020-01-02")
+        missing_contract = pd.DataFrame({
+            "date": [day],
+            "symbol": ["000001.SZ"],
+            "is_suspended": [False],
+        })
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError, "missing the close-observation contract"
+        ):
+            _run_stage2_registered_cells(
+                prepared=missing_contract,
+                stock_master=pd.DataFrame(),
+                fundamentals=pd.DataFrame(),
+                rebalance_dates=[day],
+                plan=_stage2_plan(),
+            )
+
+        mismatched_contract = missing_contract.assign(
+            close_observation_type="suspension_valuation"
+        )
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError, "does not match is_suspended"
+        ):
+            _run_stage2_registered_cells(
+                prepared=mismatched_contract,
+                stock_master=pd.DataFrame(),
+                fundamentals=pd.DataFrame(),
+                rebalance_dates=[day],
+                plan=_stage2_plan(),
+            )
+
+        missing_price_contract = missing_contract.assign(
+            close_observation_type="traded_close"
+        )
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError, "missing the price-adjustment contract"
+        ):
+            _run_stage2_registered_cells(
+                prepared=missing_price_contract,
+                stock_master=pd.DataFrame(),
+                fundamentals=pd.DataFrame(),
+                rebalance_dates=[day],
+                plan=_stage2_plan(),
+            )
+
     def test_stage2_runner_isolates_universe_publication_filters_and_lag(self) -> None:
         day = pd.Timestamp("2025-05-02")
         symbols = [f"{index:06d}.SZ" for index in range(1, 9)]
@@ -824,8 +1246,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             ])
         fundamentals = pd.DataFrame(fundamental_rows)
 
-        observations = run_stage2_registered_cells(
-            prepared=base,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=fundamentals,
             rebalance_dates=[day],
@@ -838,7 +1260,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             for row in observations
             if row["factor"] == "roe"
         }
-        self.assertEqual(roe["A0_final_report_end"]["cross_section_size"], 7)
+        self.assertEqual(roe["A0_final_report_end"]["cross_section_size"], 8)
         self.assertEqual(roe["A1_pit_report_end"]["cross_section_size"], 8)
         self.assertEqual(roe["I0000_pit_publication"]["cross_section_size"], 8)
         self.assertAlmostEqual(roe["A1_pit_report_end"]["ic"], -1.0)
@@ -920,8 +1342,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         })
         plan = _stage2_plan()
 
-        observations = run_stage2_registered_cells(
-            prepared=prepared,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(prepared),
             stock_master=stock_master,
             fundamentals=fundamentals,
             rebalance_dates=[day],
@@ -967,7 +1389,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             [
                 row["resolution_code"]
                 for row in same_clock["sample_audit"]["endpoint_records"]
-            ].count("EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"),
+            ].count(STAGE2_RESOLVED_ENDPOINT_CODE),
             6,
         )
         self.assertEqual(
@@ -1028,8 +1450,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "reportPeriodEnd": [pd.Timestamp("2019-12-31")] * len(symbols),
         })
 
-        rows = run_stage2_registered_cells(
-            prepared=base,
+        rows = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=fundamentals,
             rebalance_dates=[day],
@@ -1160,7 +1582,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                                 {
                                     "symbol": f"{symbol_index:06d}.SZ",
                                     "resolution_code": (
-                                        "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+                                        STAGE2_RESOLVED_ENDPOINT_CODE
                                     ),
                                 }
                                 for symbol_index in range(1024)
@@ -1326,7 +1748,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 metadata = changed_receipt["endpoint_reason_ledger"]
                 metadata["sha256"] = hashlib.sha256(changed_ledger_bytes).hexdigest()
                 counts = metadata["aggregate_resolution_code_counts"]
-                counts["EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"] -= 1
+                counts[STAGE2_RESOLVED_ENDPOINT_CODE] -= 1
                 counts["MISSING_EXACT_FORWARD_EXIT"] = 1
                 write_receipt(changed_receipt)
                 with self.assertRaisesRegex(
@@ -1357,7 +1779,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 metadata["sha256"] = hashlib.sha256(changed_ledger_bytes).hexdigest()
                 metadata["record_count"] -= 1
                 metadata["aggregate_resolution_code_counts"][
-                    "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+                    STAGE2_RESOLVED_ENDPOINT_CODE
                 ] -= 1
                 metadata["exact_denominator_coverage"][
                     "expected_record_count"
@@ -1442,6 +1864,12 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 )
 
             self.assertEqual(receipt["schema_version"], "confirmatory_study_receipt_v2")
+            for file_label, file_evidence in receipt["data"]["files"].items():
+                self.assertEqual(
+                    set(file_evidence),
+                    {"sha256"},
+                    file_label,
+                )
             probe_file = receipt["data"]["files"]["coverage_probe_receipt"]
             probe_package = receipt["data"]["coverage_probe_receipt"]
             self.assertEqual(
@@ -1468,6 +1896,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 probe_file["sha256"],
             )
             self.assertEqual(len(receipt["results"]), 18 * 4)
+
             self.assertEqual(receipt["selection_control"], {
                 "all_registered_results_reported": True,
                 "full_factorial_reported": True,
@@ -1554,7 +1983,37 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 receipt["data"]["files"]["prior_exposure_log"]["sha256"],
                 _sha256(paths["prior_exposure_log_path"]),
             )
+            self.assertIs(receipt["data"]["redistributable"], False)
             verify_stage2_study_receipt(root / "out" / "receipt.json")
+            for integer_alias in (0, 1):
+                with self.subTest(
+                    receipt_redistributable_integer_alias=integer_alias
+                ):
+                    changed = json.loads(
+                        (root / "out" / "receipt.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                    changed["data"]["redistributable"] = integer_alias
+                    _rewrite_receipt_integrity(changed)
+                    changed_path = (
+                        root / f"redistributable-integer-{integer_alias}.json"
+                    )
+                    changed_path.write_text(
+                        json.dumps(
+                            changed,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        "data summary differs from the canonical declaration",
+                    ):
+                        verify_stage2_study_receipt(changed_path)
             public_status = build_public_evidence_status(
                 [root / "out" / "receipt.json"]
             )
@@ -1693,7 +2152,590 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             with self.assertRaisesRegex(ConfirmatoryStudyError, "Cartesian lattice"):
                 verify_stage2_study_receipt(tampered_lattice)
 
-    def test_stage2_runner_embeds_canonical_registered_data_declaration(self) -> None:
+    def test_stage2_verifier_rejects_rehashed_file_evidence_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=root / "out")
+
+            original = json.loads(
+                (root / "out" / "receipt.json").read_text(encoding="utf-8")
+            )
+            mutations = (
+                ("raw size", "quotes", "size_bytes", 123),
+                ("private declaration size", "data_declaration", "size_bytes", 456),
+                ("private report name", "coverage_report", "name", "coverage.json"),
+                (
+                    "private attestation path",
+                    "prior_exposure_attestation",
+                    "path",
+                    "private/prior-exposure.json",
+                ),
+            )
+            for label, artifact, key, value in mutations:
+                with self.subTest(label=label):
+                    changed = json.loads(json.dumps(original))
+                    changed["data"]["files"][artifact][key] = value
+                    _rewrite_receipt_integrity(changed)
+                    changed_path = root / f"file-evidence-{key}.json"
+                    changed_path.write_text(
+                        json.dumps(
+                            changed,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        "file evidence must contain exactly one registered SHA-256",
+                    ):
+                        verify_stage2_study_receipt(changed_path)
+
+    def test_stage2_verifier_rejects_rehashed_raw_and_outcome_payload_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=root / "out")
+
+            original = json.loads(
+                (root / "out" / "receipt.json").read_text(encoding="utf-8")
+            )
+            cases = (
+                (
+                    "raw payload at receipt root",
+                    lambda receipt: receipt.__setitem__(
+                        "raw_input_rows",
+                        [{"symbol": "000001.SZ", "close": 10.0}],
+                    ),
+                    "receipt has fields outside the fixed public schema",
+                ),
+                (
+                    "outcome payload in monthly observation",
+                    lambda receipt: receipt["monthly_observations"][0].__setitem__(
+                        "outcome_payload",
+                        [0.01, -0.02],
+                    ),
+                    "monthly observation is invalid",
+                ),
+            )
+            for label, mutate, pattern in cases:
+                with self.subTest(label=label):
+                    changed = json.loads(json.dumps(original))
+                    mutate(changed)
+                    _rewrite_receipt_integrity(changed)
+                    changed_path = root / f"extra-{label.replace(' ', '-')}.json"
+                    changed_path.write_text(
+                        json.dumps(
+                            changed,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(ConfirmatoryStudyError, pattern):
+                        verify_stage2_study_receipt(changed_path)
+
+    def test_stage2_public_registration_artifacts_reject_unknown_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            artifacts = {
+                "design_manifest": json.loads(
+                    paths["design_manifest_path"].read_text(encoding="utf-8")
+                ),
+                "registration_receipt": json.loads(
+                    paths["registration_receipt_path"].read_text(encoding="utf-8")
+                ),
+                "execution_authorization": json.loads(
+                    paths["execution_authorization_path"].read_text(encoding="utf-8")
+                ),
+            }
+            confirmatory_module._validate_stage2_registered_scope_contracts(
+                manifest=artifacts["design_manifest"],
+                registration_receipt=artifacts["registration_receipt"],
+                authorization=artifacts["execution_authorization"],
+            )
+
+            cases = (
+                ("design_manifest", None),
+                ("registration_receipt", None),
+                ("execution_authorization", None),
+                ("design_manifest", "registered_design_assertions"),
+                ("registration_receipt", "registered_scope_summary"),
+                ("registration_receipt", "proof"),
+                ("execution_authorization", "release_scope"),
+                ("execution_authorization", "signature"),
+            )
+            for artifact_name, nested_name in cases:
+                with self.subTest(
+                    artifact=artifact_name,
+                    nested=nested_name,
+                ):
+                    changed = json.loads(json.dumps(artifacts))
+                    target = changed[artifact_name]
+                    if nested_name is not None:
+                        target = target[nested_name]
+                    target["unregistered_payload"] = [1, 2, 3]
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError,
+                        "fields outside|fixed design",
+                    ):
+                        confirmatory_module._validate_stage2_registered_scope_contracts(
+                            manifest=changed["design_manifest"],
+                            registration_receipt=changed["registration_receipt"],
+                            authorization=changed["execution_authorization"],
+                        )
+
+    def test_stage2_public_receipt_templates_match_exact_consent_contract(self) -> None:
+        study = (
+            Path(__file__).resolve().parents[1]
+            / "studies"
+            / "pit_factor_bias_decomposition_v2"
+        )
+        templates = {
+            "execution_plan": (
+                "execution_plan.template.json",
+                "full_artifact",
+                None,
+            ),
+            "data_declaration": (
+                "data_declaration.template.json",
+                "fixed_public_projection",
+                STAGE2_PUBLIC_DECLARATION_FIELDS,
+            ),
+            "design_manifest": (
+                "design_manifest.template.json",
+                "full_artifact",
+                None,
+            ),
+            "registration_receipt": (
+                "registration_receipt.template.json",
+                "full_artifact",
+                None,
+            ),
+            "execution_authorization": (
+                "execution_authorization.template.json",
+                "full_artifact",
+                None,
+            ),
+        }
+        for artifact_type, (filename, scope, public_fields) in templates.items():
+            with self.subTest(artifact_type=artifact_type):
+                template = json.loads((study / filename).read_text(encoding="utf-8"))
+                consent = _expected_stage2_public_embedding_consent(
+                    artifact_type,
+                    scope=scope,
+                    public_fields=public_fields,
+                )
+                consent["approved"] = False
+                consent["privacy_assertions"] = {
+                    key: False for key in consent["privacy_assertions"]
+                }
+                self.assertEqual(template["public_receipt_embedding"], consent)
+
+        declaration_template = json.loads(
+            (study / "data_declaration.template.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(set(declaration_template), STAGE2_PRIVATE_DECLARATION_FIELDS)
+        self.assertEqual(
+            declaration_template["fundamental_contract"],
+            STAGE2_FUNDAMENTAL_CONTRACT,
+        )
+        self.assertEqual(
+            {
+                key: declaration_template["security_identifier_contract"][key]
+                for key in STAGE2_SECURITY_IDENTIFIER_CONTRACT
+            },
+            STAGE2_SECURITY_IDENTIFIER_CONTRACT,
+        )
+        manifest_template = json.loads(
+            (study / "design_manifest.template.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            set(manifest_template["public_receipt_projection_sha256"]),
+            {"data_declaration", "official_calendar_session_dates"},
+        )
+        self.assertEqual(
+            manifest_template["registered_design_assertions"],
+            STAGE2_REGISTERED_DESIGN_ASSERTIONS,
+        )
+        authorization_template = json.loads(
+            (study / "execution_authorization.template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            authorization_template["release_scope"]["endpoint_boundary"],
+            STAGE2_AUTHORIZATION_ENDPOINT_BOUNDARY,
+        )
+        self.assertEqual(
+            authorization_template["release_scope"][
+                "quote_price_adjustment_contract"
+            ],
+            STAGE2_PRICE_ADJUSTMENT_CONTRACT,
+        )
+        self.assertEqual(
+            authorization_template["release_scope"]["universe_contract"],
+            STAGE2_UNIVERSE_CONTRACT,
+        )
+        self.assertEqual(
+            authorization_template["release_scope"]["rank_group_contract"],
+            STAGE2_RANK_GROUP_CONTRACT,
+        )
+        self.assertEqual(
+            authorization_template["release_scope"][
+                "security_identifier_contract"
+            ],
+            STAGE2_SECURITY_IDENTIFIER_CONTRACT,
+        )
+        registration_template = json.loads(
+            (study / "registration_receipt.template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            registration_template["registered_scope_summary"],
+            STAGE2_REGISTERED_SCOPE_SUMMARY,
+        )
+        confirmatory_module._validate_stage2_registration_artifact_schemas(
+            manifest=manifest_template,
+            registration_receipt=registration_template,
+            authorization=authorization_template,
+        )
+        inventory = json.loads(
+            (study / "prior_specification_inventory.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        related_paths = {
+            path
+            for entry in inventory["entries"]
+            for path in entry.get("related_paths", [])
+        }
+        self.assertIn(
+            "studies/pit_factor_bias_decomposition_v2/"
+            "data_declaration.template.json",
+            related_paths,
+        )
+        canonical_entries = (
+            json.dumps(
+                inventory["entries"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        self.assertEqual(
+            inventory["entries_sha256"],
+            hashlib.sha256(canonical_entries).hexdigest(),
+        )
+
+    def test_stage2_requires_public_embedding_consent_for_each_artifact(self) -> None:
+        cases = (
+            ("execution_plan", "full_artifact", None),
+            (
+                "data_declaration",
+                "fixed_public_projection",
+                STAGE2_PUBLIC_DECLARATION_FIELDS,
+            ),
+            ("design_manifest", "full_artifact", None),
+            ("registration_receipt", "full_artifact", None),
+            ("execution_authorization", "full_artifact", None),
+        )
+        for artifact_type, scope, public_fields in cases:
+            with self.subTest(artifact_type=artifact_type), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                rejected = _expected_stage2_public_embedding_consent(
+                    artifact_type,
+                    scope=scope,
+                    public_fields=public_fields,
+                )
+                rejected["approved"] = False
+                paths = _bind_stage2_gate_artifacts(
+                    _write_fixture(root, source_classification="synthetic_fixture"),
+                    _stage2_plan(),
+                    public_consent_overrides={artifact_type: rejected},
+                )
+                consumption_dir = root / "consumed"
+                paths["authorization_consumption_dir"] = consumption_dir
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError,
+                    f"{artifact_type} public receipt embedding consent",
+                ):
+                    run_stage2_confirmatory_study(
+                        **paths,
+                        output_dir=root / "out",
+                    )
+                self.assertFalse(consumption_dir.exists())
+                self.assertFalse((root / "out").exists())
+
+    def test_stage2_prepublication_privacy_lint_fails_closed_without_value_leakage(self) -> None:
+        cases = (
+            (
+                "unreviewed declaration field",
+                "declaration",
+                "fixed reviewed schema",
+                "private-contract-reference-7821",
+            ),
+            (
+                "absolute declaration path",
+                "path",
+                "absolute local path",
+                "/" + "Users/alice/private/licence.txt",
+            ),
+            (
+                "credential-like plan key",
+                "credential",
+                "credential-like key",
+                "never-publish-this-token-value",
+            ),
+            (
+                "internal registration URL",
+                "internal_url",
+                "non-public URL address",
+                "https://127.0.0.1/private-registration",
+            ),
+        )
+        for label, mutation, pattern, sensitive_value in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                paths = _write_fixture(root, source_classification="synthetic_fixture")
+                plan = _stage2_plan()
+                if mutation in {"declaration", "path"}:
+                    declaration = json.loads(
+                        paths["data_declaration_path"].read_text(encoding="utf-8")
+                    )
+                    if mutation == "declaration":
+                        declaration["contract_reference"] = sensitive_value
+                    else:
+                        declaration["price_semantics"] = sensitive_value
+                    paths["data_declaration_path"].write_text(
+                        json.dumps(declaration, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                elif mutation == "credential":
+                    plan["external_registration"]["api_token"] = sensitive_value
+                else:
+                    plan["external_registration"]["verification_uri"] = sensitive_value
+                paths = _bind_stage2_gate_artifacts(paths, plan)
+                consumption_dir = root / "consumed"
+                paths["authorization_consumption_dir"] = consumption_dir
+                with self.assertRaisesRegex(ConfirmatoryStudyError, pattern) as raised:
+                    run_stage2_confirmatory_study(
+                        **paths,
+                        output_dir=root / "out",
+                    )
+                self.assertNotIn(sensitive_value, str(raised.exception))
+                self.assertFalse(consumption_dir.exists())
+                self.assertFalse((root / "out").exists())
+
+    def test_stage2_declaration_never_claims_raw_redistribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            declaration = json.loads(
+                paths["data_declaration_path"].read_text(encoding="utf-8")
+            )
+            for invalid_value in (True, 0, 1):
+                with self.subTest(redistributable=invalid_value):
+                    changed = json.loads(json.dumps(declaration))
+                    changed["redistributable"] = invalid_value
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError, "public/private semantic fields"
+                    ):
+                        confirmatory_module._validate_stage2_declaration(changed)
+
+    def test_stage2_public_privacy_lint_covers_path_and_url_forms(self) -> None:
+        _validate_stage2_public_receipt_privacy(
+            {
+                "request": {
+                    "route_evidence": {
+                        "endpoint_path": "/api/qt/stock/kline/get"
+                    }
+                }
+            },
+            label="coverage probe public receipt",
+        )
+        cases = (
+            ("C" + r":\private\review.txt", "absolute local path"),
+            ("~/private/review.txt", "absolute local path"),
+            ("file:///private/review.txt", "absolute local path"),
+            (
+                "Reviewed at " + "/" + "Users/reviewer/private.txt",
+                "absolute local path",
+            ),
+            (
+                "Stored under " + "/" + "home/reviewer/private.txt",
+                "absolute local path",
+            ),
+            ("Stored under /var/private/review.txt", "absolute local path"),
+            ("Reviewed at /workspace/alice/private.txt", "absolute local path"),
+            ("Reviewed at /foo/bar", "absolute local path"),
+            ("Reviewed path:/foo/bar", "absolute local path"),
+            (
+                "Copied from D" + r":\private\review.txt",
+                "absolute local path",
+            ),
+            (
+                "FILE://" + "/" + "Users/reviewer/private.txt",
+                "absolute local path",
+            ),
+            (
+                "file:" + "/" + "Users/reviewer/private.txt",
+                "absolute local path",
+            ),
+            ("http://example.test/review", "non-HTTPS URL"),
+            (
+                "Reviewed at http://localhost:8080/review",
+                "non-HTTPS URL",
+            ),
+            ("https://user:password@example.test/review", "URL user information"),
+            (
+                "Reviewer URL: https://user:password@example.test/review",
+                "URL user information",
+            ),
+            (
+                "https://example.test/review?access_token=hidden",
+                "credential-like URL query key",
+            ),
+            (
+                "Reviewer URL: https://example.test/review?X-API-Key=hidden",
+                "credential-like URL query key",
+            ),
+            (
+                "https://example.test/review?%2561pi_key=hidden",
+                "credential-like URL query key",
+            ),
+            (
+                "https://example.test/review?redirect="
+                "https%3A%2F%2Fuser%3Apassword%40example.test%2Fprivate",
+                "URL user information",
+            ),
+            (
+                "https://example.test/review?clientSecret=hidden",
+                "credential-like URL query key",
+            ),
+            (
+                "https://example.test/review?X-Amz-Signature=hidden",
+                "credential-like URL query key",
+            ),
+            (
+                "https://example.test/callback#access_token=hidden",
+                "credential-like URL fragment key",
+            ),
+            (
+                "https://example.test/callback#api%255fkey=hidden",
+                "credential-like URL fragment key",
+            ),
+            (
+                "https://example.test/callback/access_token=hidden",
+                "credential-like URL path parameter key",
+            ),
+            (
+                "https://example.test/callback;XApiKey=hidden",
+                "credential-like URL path parameter key",
+            ),
+            (
+                "https://example.test/callback;"
+                "X%252dAmz%252dSignature=hidden",
+                "credential-like URL path parameter key",
+            ),
+            ("https://registry.internal/review", "local or internal URL host"),
+            ("https://%6cocalhost/review", "local or internal URL host"),
+            ("https://10.0.0.1/review", "non-public URL address"),
+            ("https://%31%32%37.0.0.1/review", "non-public URL address"),
+        )
+        for sensitive_value, pattern in cases:
+            with self.subTest(pattern=pattern):
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, pattern
+                ) as raised:
+                    _validate_stage2_public_receipt_privacy(
+                        {"review_reference": sensitive_value},
+                        label="fixture public material",
+                    )
+                self.assertNotIn(sensitive_value, str(raised.exception))
+
+        for credential_key in (
+            "accessToken",
+            "refreshToken",
+            "clientSecret",
+            "privateKey",
+            "authorization",
+            "bearerToken",
+            "X-Amz-Signature",
+            "X-API-Key",
+            "x_api_key",
+            "XApiKey",
+            "AWSAccessKeyId",
+            "proxy-authorization",
+            "%2561pi_key",
+            "api%255fkey",
+            "X%252dAmz%252dSignature",
+            "sig",
+        ):
+            sensitive_value = f"hidden-{credential_key}-value"
+            with self.subTest(credential_key=credential_key):
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "credential-like key"
+                ) as raised:
+                    _validate_stage2_public_receipt_privacy(
+                        {
+                            "registered_artifact": {
+                                "nested_metadata": {
+                                    credential_key: sensitive_value,
+                                }
+                            }
+                        },
+                        label="fixture public material",
+                    )
+                self.assertNotIn(sensitive_value, str(raised.exception))
+
+        benign_material = (
+            "See https://doi.org/10.1016/j.jfineco.2022.08.003.",
+            "The documented API route is /api/qt/stock/kline/get.",
+            "The versioned API route is /v1/research/items.",
+            "The public endpoint is https://example.test/oauth/token.",
+            "Ratios 1/2 and date 2026/09/02 are public metadata.",
+            "A generic key identifies each table row.",
+        )
+        for value in benign_material:
+            with self.subTest(benign=value):
+                _validate_stage2_public_receipt_privacy(
+                    {"review_reference": value},
+                    label="fixture public material",
+                )
+        _validate_stage2_public_receipt_privacy(
+            {"key": "public-row-id"},
+            label="fixture public material",
+        )
+
+    def test_stage2_runner_embeds_only_registered_data_declaration_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _bind_stage2_gate_artifacts(
@@ -1710,25 +2752,79 @@ class ConfirmatoryStudyTest(unittest.TestCase):
 
             self.assertIn("declaration", receipt["data"])
             package = receipt["data"]["declaration"]
+            self.assertEqual(
+                package["projection_schema_version"],
+                "stage2_public_data_declaration_projection_v3",
+            )
             expected = json.loads(
                 paths["data_declaration_path"].read_text(encoding="utf-8")
             )
-            self.assertEqual(package["content"], expected)
+            expected_projection = {
+                field: expected[field]
+                for field in STAGE2_PUBLIC_DECLARATION_FIELDS
+            }
+            self.assertEqual(package["content"], expected_projection)
+            self.assertNotIn("source_text", package)
+            self.assertNotIn("source_name", receipt["data"])
+            self.assertNotIn("rights_review", receipt["data"])
             self.assertEqual(
-                package["source_text"],
-                paths["data_declaration_path"].read_bytes().decode("utf-8"),
+                package["content"]["dataset_source_mappings"],
+                expected["dataset_source_mappings"],
             )
+            for source in expected["dataset_source_mappings"]["datasets"].values():
+                self.assertIn(source["source_name"], json.dumps(receipt))
+            self.assertNotIn(expected["rights_review"], json.dumps(receipt))
             self.assertEqual(
                 package["source_file_sha256"],
                 _sha256(paths["data_declaration_path"]),
             )
             canonical = (
-                json.dumps(expected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                json.dumps(
+                    expected_projection,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
                 + "\n"
             ).encode("utf-8")
             self.assertEqual(
-                package["canonical_sha256"], hashlib.sha256(canonical).hexdigest()
+                package["projection_sha256"], hashlib.sha256(canonical).hexdigest()
             )
+            self.assertEqual(
+                receipt["registration_evidence"]["design_manifest"]
+                ["public_receipt_projection_sha256"]["data_declaration"],
+                package["projection_sha256"],
+            )
+
+    def test_stage2_rights_packet_must_authorize_the_exact_declared_source_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            rights_path = paths["data_rights_attestation_path"]
+            rights = json.loads(rights_path.read_text(encoding="utf-8"))
+            review = json.loads(
+                paths["review_attestation_path"].read_text(encoding="utf-8")
+            )
+            declaration = json.loads(
+                paths["data_declaration_path"].read_text(encoding="utf-8")
+            )
+            declaration["dataset_source_mappings"]["datasets"]["quotes"][
+                "source_name"
+            ] = "unlicensed substituted source"
+
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError,
+                "DATA_DECLARATION_PROJECTION_MISMATCH",
+            ):
+                confirmatory_module._validate_stage2_rights_attestation(
+                    rights_attestation=rights,
+                    rights_attestation_bytes=rights_path.read_bytes(),
+                    review_attestation=review,
+                    data_declaration=declaration,
+                )
 
     def test_stage2_runner_embeds_bound_official_calendar_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1753,10 +2849,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 )
             ]
             self.assertEqual(evidence["session_dates"], expected_sessions)
-            self.assertEqual(
-                evidence["source_text"],
-                paths["official_calendar_path"].read_bytes().decode("utf-8"),
-            )
+            self.assertNotIn("source_text", evidence)
             canonical = (
                 json.dumps(expected_sessions, sort_keys=True, separators=(",", ":"))
                 + "\n"
@@ -1768,6 +2861,66 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             self.assertEqual(
                 evidence["source_file_sha256"], _sha256(paths["official_calendar_path"])
             )
+            self.assertEqual(
+                receipt["registration_evidence"]["design_manifest"]
+                ["public_receipt_projection_sha256"]
+                ["official_calendar_session_dates"],
+                evidence["canonical_session_dates_sha256"],
+            )
+
+    def test_stage2_verifier_rejects_rehashed_public_privacy_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = _bind_stage2_gate_artifacts(
+                _write_fixture(root, source_classification="synthetic_fixture"),
+                _stage2_plan(),
+            )
+            with patch(
+                "a_share_quant_agent.confirmatory_study._validate_stage2_data_bindings"
+            ):
+                run_stage2_confirmatory_study(**paths, output_dir=root / "out")
+            original = json.loads(
+                (root / "out" / "receipt.json").read_text(encoding="utf-8")
+            )
+            cases = (
+                (
+                    "credential key",
+                    lambda receipt, value: receipt["method"].__setitem__(
+                        "api_token", value
+                    ),
+                    "credential-like key",
+                    "receipt-secret-value-1902",
+                ),
+                (
+                    "reintroduced declaration source",
+                    lambda receipt, value: receipt["data"]["declaration"].__setitem__(
+                        "source_text", value
+                    ),
+                    "unreviewed fields",
+                    "private declaration body 1903",
+                ),
+            )
+            for label, mutate, pattern, sensitive_value in cases:
+                with self.subTest(label=label):
+                    changed = json.loads(json.dumps(original))
+                    mutate(changed, sensitive_value)
+                    _rewrite_receipt_integrity(changed)
+                    changed_path = root / f"tampered-{label.replace(' ', '-')}.json"
+                    changed_path.write_text(
+                        json.dumps(
+                            changed,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ConfirmatoryStudyError, pattern
+                    ) as raised:
+                        verify_stage2_study_receipt(changed_path)
+                    self.assertNotIn(sensitive_value, str(raised.exception))
 
     def test_stage2_verifier_rejects_nonfirst_session_rebalance_date_after_rehash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1921,10 +3074,13 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ConfirmatoryStudyError, "source text"):
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError,
+                "projection is not bound to the registered design manifest",
+            ):
                 verify_stage2_study_receipt(forged_path)
 
-    def test_stage2_verifier_rejects_rehashed_calendar_list_without_source_change(self) -> None:
+    def test_stage2_verifier_rejects_rehashed_calendar_projection_without_manifest_change(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _bind_stage2_gate_artifacts(
@@ -1968,7 +3124,10 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ConfirmatoryStudyError, "raw CSV"):
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError,
+                "session projection is not bound to the registered design manifest",
+            ):
                 verify_stage2_study_receipt(changed_path)
 
     def test_stage2_report_period_baseline_keeps_rows_without_publication_dates(self) -> None:
@@ -1999,8 +3158,8 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "reportPeriodEnd": [pd.Timestamp("2019-12-31")] * 6,
         })
 
-        observations = run_stage2_registered_cells(
-            prepared=base,
+        observations = _run_stage2_registered_cells(
+            prepared=_stage2_prepared_with_close_types(base),
             stock_master=stock_master,
             fundamentals=fundamentals,
             rebalance_dates=[day],
@@ -2029,7 +3188,10 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             )
             paths["plan_path"].write_text(json.dumps(changed, indent=2) + "\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(ConfirmatoryStudyError, "coverage report hash"):
+            with self.assertRaisesRegex(
+                ConfirmatoryStudyError,
+                "coverage_report_sha256 differs from the locked research artifact",
+            ):
                 run_stage2_confirmatory_study(**paths, output_dir=root / "out")
 
     def test_stage2_coverage_probe_receipt_is_strictly_validated(self) -> None:
@@ -2099,6 +3261,30 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     + "\n",
                     encoding="utf-8",
                 )
+
+            def refresh_timestamp_subject(receipt: dict[str, object]) -> None:
+                receipt["external_timestamp_proof"]["subject_sha256"] = hashlib.sha256(
+                    (
+                        json.dumps(
+                            receipt["timestamp_package"],
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode("utf-8")
+                ).hexdigest()
+
+            def replace_agent_commit(receipt: dict[str, object], value: str) -> None:
+                receipt["repository_state"]["agent_commit"] = value
+                receipt["timestamp_package"]["agent_commit"] = value
+                refresh_timestamp_subject(receipt)
+
+            def replace_inventory_hash(receipt: dict[str, object], value: str) -> None:
+                receipt["timestamp_package"][
+                    "prior_specification_inventory_sha256"
+                ] = value
+                refresh_timestamp_subject(receipt)
 
             cases = (
                 (
@@ -2188,6 +3374,36 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     "rights",
                 ),
                 (
+                    "rights review hash",
+                    lambda item: item.__setitem__(
+                        "rights_review_sha256", "0" * 63
+                    ),
+                    True,
+                    "rights-review hash",
+                ),
+                (
+                    "missing rights review hash",
+                    lambda item: item.pop("rights_review_sha256"),
+                    True,
+                    "fields differ",
+                ),
+                (
+                    "artifact hash publication consent",
+                    lambda item: item["publication_consent"].__setitem__(
+                        "artifact_hash_publication_allowed", False
+                    ),
+                    True,
+                    "metadata or identity consent",
+                ),
+                (
+                    "route fallback",
+                    lambda item: item["request"]["route_evidence"].__setitem__(
+                        "fallback_attempted", True
+                    ),
+                    True,
+                    "exact-date no-fallback",
+                ),
+                (
                     "claim boundaries",
                     lambda item: item["claim_boundaries"].__setitem__(
                         "factor_outcome_claim_allowed", True
@@ -2204,6 +3420,12 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     "timestamp proof",
                 ),
                 (
+                    "timestamp package inventory binding",
+                    lambda item: replace_inventory_hash(item, "0" * 64),
+                    True,
+                    "does not bind the exact prior specification inventory bytes",
+                ),
+                (
                     "unsupported timestamp proof label",
                     lambda item: item["external_timestamp_proof"].__setitem__(
                         "type", "detached_digital_signature"
@@ -2213,17 +3435,13 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 ),
                 (
                     "nonexistent agent commit",
-                    lambda item: item["repository_state"].__setitem__(
-                        "agent_commit", "0" * 40
-                    ),
+                    lambda item: replace_agent_commit(item, "0" * 40),
                     True,
                     "Git commit object",
                 ),
                 (
                     "uppercase agent commit",
-                    lambda item: item["repository_state"].__setitem__(
-                        "agent_commit", "A" * 40
-                    ),
+                    lambda item: replace_agent_commit(item, "A" * 40),
                     True,
                     "repository state is invalid",
                 ),
@@ -2234,6 +3452,14 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     ),
                     True,
                     "before probe execution",
+                ),
+                (
+                    "timestamp verification after execution",
+                    lambda item: item["external_timestamp_proof"].__setitem__(
+                        "verified_at_utc", "2026-08-31T13:31:00+00:00"
+                    ),
+                    True,
+                    "timestamp verification chronology",
                 ),
             )
             for label, mutate, refresh_id, pattern in cases:
@@ -2268,29 +3494,21 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             root = Path(tmp)
             paths = _write_fixture(root, source_classification="synthetic_fixture")
             paths = _bind_stage2_gate_artifacts(paths, _stage2_plan())
-            coverage_path = paths["coverage_report_path"]
-            claimed = json.loads(coverage_path.read_text(encoding="utf-8"))
-            claimed["gates"] = {
-                "ready_to_lock_stage2_plan": True,
-                "blocking_reason_codes": [],
-            }
-            coverage_path.write_text(
-                json.dumps(claimed, sort_keys=True, separators=(",", ":")) + "\n",
-                encoding="utf-8",
-            )
-            plan = json.loads(paths["plan_path"].read_text(encoding="utf-8"))
-            plan["coverage_report_sha256"] = _sha256(coverage_path)
-            plan["external_registration"]["registered_content_sha256"] = (
-                stage2_registered_content_sha256(plan)
-            )
-            paths["plan_path"].write_text(
-                json.dumps(plan, indent=2) + "\n", encoding="utf-8"
-            )
+            from a_share_quant_agent.study_v2_coverage import StudyV2CoverageError
 
-            with self.assertRaisesRegex(
+            consumption_dir = root / "consumed"
+            paths["authorization_consumption_dir"] = consumption_dir
+            with patch(
+                "a_share_quant_agent.study_v2_coverage.validate_coverage_report",
+                side_effect=StudyV2CoverageError("raw audit mismatch"),
+            ), self.assertRaisesRegex(
                 ConfirmatoryStudyError, "recomputed raw-input coverage"
             ):
-                run_stage2_confirmatory_study(**paths, output_dir=root / "out")
+                run_stage2_confirmatory_study(
+                    **paths,
+                    output_dir=root / "out",
+                )
+            self.assertEqual(len(list(consumption_dir.iterdir())), 1)
 
     def test_stage2_fundamental_adapter_enforces_source_field_and_timing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2391,12 +3609,28 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     run_stage2_confirmatory_study(**paths, output_dir=root / "out")
 
     def test_stage2_inventory_must_be_final_and_chronologically_bound(self) -> None:
+        temporary_repository = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_repository.cleanup)
+        audited_base, current_head = _two_commit_fixture_repository(
+            Path(temporary_repository.name)
+        )
+        repository_patch = patch(
+            "a_share_quant_agent.confirmatory_study._git_repository_root",
+            return_value=Path(temporary_repository.name),
+        )
+        repository_patch.start()
+        self.addCleanup(repository_patch.stop)
         entries = [{
             "inventory_id": "fixture-prior-specification",
             "artifact_type": "locked_confirmatory_study_plan",
             "primary_path": "fixture/prior-plan.json",
+            "related_paths": [],
             "present_in_repository": True,
             "repository_state": "tracked_at_head",
+            "introduced_in_commit": audited_base,
+            "commit_semantics": (
+                "Fixture commit introducing the prior locked study specification."
+            ),
             "specification_ids": ["fixture-prior-specification"],
             "outcome_exposure_known": "unknown",
             "outcome_exposure_basis": (
@@ -2418,8 +3652,28 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             "purpose": (
                 "Enumerate every prior fixture specification without reporting outcome values."
             ),
+            "chronology_contract": {
+                "required_order": (
+                    "Repository inspection precedes the inventory cutoff and generation."
+                ),
+                "timestamp_rule": (
+                    "Every inventory chronology timestamp is finite and timezone aware."
+                ),
+                "snapshot_commit_rule": (
+                    "The audited repository snapshot is an ancestor of the bound code commit."
+                ),
+                "cutoff_rule": (
+                    "Every in-scope artifact known by the cutoff is included in the inventory."
+                ),
+                "entries_hash_rule": (
+                    "The entries hash binds the canonical JSON representation of every entry."
+                ),
+                "manifest_gate": (
+                    "Only a complete outcome-blind inventory may enter the design manifest."
+                ),
+            },
             "repository_snapshot": {
-                "head_commit": _current_git_sha(),
+                "head_commit": audited_base,
                 "inspected_at": "2026-08-31T22:05:00+08:00",
                 "working_tree_state": "clean",
             },
@@ -2432,8 +3686,137 @@ class ConfirmatoryStudyTest(unittest.TestCase):
         _validate_prior_specification_inventory(
             inventory,
             study_id=inventory["study_id"],
-            expected_code_commit=_current_git_sha(),
+            expected_code_commit=current_head,
         )
+
+        def rehash_entries(value: dict[str, object]) -> None:
+            value["entry_count"] = len(value["entries"])
+            value["entries_sha256"] = hashlib.sha256(
+                (
+                    json.dumps(
+                        value["entries"],
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode()
+            ).hexdigest()
+
+        for location, key, expected_pattern in (
+            ("root", "outcome_values", "top-level schema"),
+            ("root", "mean_ic", "top-level schema"),
+            ("chronology_contract", "outcome_values", "chronology contract schema"),
+            ("repository_snapshot", "mean_ic", "repository snapshot"),
+        ):
+            with self.subTest(outcome_bearing_location=location, key=key):
+                changed = json.loads(json.dumps(inventory))
+                target = changed if location == "root" else changed[location]
+                target[key] = [0.123]
+                with self.assertRaisesRegex(ConfirmatoryStudyError, expected_pattern):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        for key in ("mean_ic", "outcome_values"):
+            with self.subTest(outcome_bearing_entry_key=key):
+                changed = json.loads(json.dumps(inventory))
+                changed["entries"][0][key] = [0.123]
+                rehash_entries(changed)
+                with self.assertRaisesRegex(ConfirmatoryStudyError, "entry .* schema"):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        malformed_entries = (
+            "not-an-entry-object",
+            {key: value for key, value in entries[0].items() if key != "artifact_type"},
+            {key: value for key, value in entries[0].items() if key != "related_paths"},
+            {
+                key: value
+                for key, value in entries[0].items()
+                if key != "specification_ids"
+            },
+        )
+        for malformed_entry in malformed_entries:
+            with self.subTest(malformed_entry=malformed_entry):
+                changed = json.loads(json.dumps(inventory))
+                changed["entries"] = [malformed_entry]
+                rehash_entries(changed)
+                with self.assertRaisesRegex(ConfirmatoryStudyError, "entry .* schema"):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        for array_key, malformed_value in (
+            ("specification_ids", True),
+            ("specification_ids", 1),
+            ("related_paths", False),
+            ("related_paths", 1),
+        ):
+            with self.subTest(array_key=array_key, malformed_value=malformed_value):
+                changed = json.loads(json.dumps(inventory))
+                changed["entries"][0][array_key] = [malformed_value]
+                rehash_entries(changed)
+                with self.assertRaisesRegex(ConfirmatoryStudyError, array_key):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        for key, integer_alias in (
+            ("outcome_blind_inventory", 1),
+            ("contains_outcome_values", 0),
+        ):
+            with self.subTest(key=key, integer_alias=integer_alias):
+                changed = json.loads(json.dumps(inventory))
+                changed[key] = integer_alias
+                with self.assertRaisesRegex(ConfirmatoryStudyError, "contains outcomes"):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        for integer_alias in (0, 1):
+            with self.subTest(present_in_repository=integer_alias):
+                changed = json.loads(json.dumps(inventory))
+                changed["entries"][0]["present_in_repository"] = integer_alias
+                changed["entries_sha256"] = hashlib.sha256(
+                    (
+                        json.dumps(
+                            changed["entries"],
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    ).encode()
+                ).hexdigest()
+                with self.assertRaisesRegex(
+                    ConfirmatoryStudyError, "entry .* is incomplete"
+                ):
+                    _validate_prior_specification_inventory(
+                        changed,
+                        study_id=inventory["study_id"],
+                        expected_code_commit=current_head,
+                    )
+
+        changed = json.loads(json.dumps(inventory))
+        changed["entry_count"] = True
+        with self.assertRaisesRegex(
+            ConfirmatoryStudyError, "entry count is inconsistent"
+        ):
+            _validate_prior_specification_inventory(
+                changed,
+                study_id=inventory["study_id"],
+                expected_code_commit=current_head,
+            )
 
         for key, value, pattern in (
             ("status", "draft_incomplete_not_manifest_eligible", "manifest eligible"),
@@ -2447,7 +3830,7 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                     _validate_prior_specification_inventory(
                         changed,
                         study_id=inventory["study_id"],
-                        expected_code_commit=_current_git_sha(),
+                        expected_code_commit=current_head,
                     )
 
         changed = json.loads(json.dumps(inventory))
@@ -2456,7 +3839,19 @@ class ConfirmatoryStudyTest(unittest.TestCase):
             _validate_prior_specification_inventory(
                 changed,
                 study_id=inventory["study_id"],
-                expected_code_commit=_current_git_sha(),
+                expected_code_commit=current_head,
+            )
+
+        # The snapshot identifies a pre-inventory base commit. Requiring an
+        # ancestor permits later exact-hash bindings without embedding the
+        # containing commit's own id in the inventory bytes.
+        changed = json.loads(json.dumps(inventory))
+        changed["repository_snapshot"]["head_commit"] = current_head
+        with self.assertRaisesRegex(ConfirmatoryStudyError, "ancestor"):
+            _validate_prior_specification_inventory(
+                changed,
+                study_id=inventory["study_id"],
+                expected_code_commit=audited_base,
             )
 
     def test_stage2_coverage_probe_spec_freezes_superseded_v1_and_design_boundary(self) -> None:
@@ -2482,6 +3877,20 @@ class ConfirmatoryStudyTest(unittest.TestCase):
                 "superseded v1 hash",
                 lambda item: item["supersedes"].__setitem__("sha256", "A" * 64),
                 "fixed v1 supersession",
+            ),
+            (
+                "close-observation field scope",
+                lambda item: item.__setitem__(
+                    "field_scope_boundary", "legacy adjusted-close-only boundary"
+                ),
+                "field-scope boundary",
+            ),
+            (
+                "close-observation endpoint contract",
+                lambda item: item["stage2_design_boundary"].__setitem__(
+                    "endpoint_adapter", "exact_official_session_adjusted_close_only"
+                ),
+                "design boundary",
             ),
             (
                 "variant boundary",
@@ -2897,6 +4306,39 @@ def _current_git_sha() -> str:
     ).strip()
 
 
+def _two_commit_fixture_repository(root: Path) -> tuple[str, str]:
+    """Create an isolated ancestry fixture without assuming the checkout has HEAD^."""
+
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    marker = root / "inventory-state.txt"
+    commits: list[str] = []
+    for index, value in enumerate(("audited base\n", "bound descendant\n"), start=1):
+        marker.write_text(value, encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", marker.name], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Inventory Fixture",
+                "-c",
+                "user.email=inventory-fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                f"inventory fixture {index}",
+            ],
+            check=True,
+        )
+        commits.append(
+            subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+        )
+    return commits[0], commits[1]
+
+
 def _make_fixture_probe_commit(spec_path: Path, inventory_path: Path) -> str:
     """Create a sparse, unreferenced commit containing the fixture probe blobs."""
 
@@ -2936,11 +4378,27 @@ def _make_fixture_probe_commit(spec_path: Path, inventory_path: Path) -> str:
     return subprocess.check_output(
         [
             "git", "-C", str(repository), "commit-tree", root_tree,
-            "-p", _current_git_sha(),
+            "-p", _current_git_sha(), "-m", "fixture probe",
         ],
         env=environment,
         text=True,
     ).strip()
+
+
+def _stage2_prepared_with_close_types(frame: pd.DataFrame) -> pd.DataFrame:
+    prepared = frame.copy()
+    prepared["close_observation_type"] = prepared["is_suspended"].map(
+        lambda suspended: (
+            "suspension_valuation" if bool(suspended) else "traded_close"
+        )
+    )
+    if "close" not in prepared:
+        prepared["close"] = 1.0
+    prepared["close_raw"] = prepared["close"]
+    prepared["adjustment_factor"] = 1.0
+    prepared["price_adjustment_method"] = STAGE2_PRICE_ADJUSTMENT_METHOD
+    prepared["price_adjustment_convention"] = STAGE2_PRICE_ADJUSTMENT_CONVENTION
+    return prepared
 
 
 def _stage2_plan() -> dict[str, object]:
@@ -2996,6 +4454,10 @@ def _stage2_plan() -> dict[str, object]:
         "design_frozen_at": "2026-08-31T22:45:00+08:00",
         "locked_at": "2026-09-01T00:00:00+08:00",
         "runner_scope": "ic_core_only",
+        "public_receipt_embedding": _expected_stage2_public_embedding_consent(
+            "execution_plan",
+            scope="full_artifact",
+        ),
         "runtime_contract": {
             "python_version": "3.12.12",
             "numpy_version": "2.0.2",
@@ -3071,6 +4533,7 @@ def _stage2_plan() -> dict[str, object]:
         "rebalance_frequency": "monthly",
         "forward_horizon_sessions": 20,
         "minimum_amount": 5_000_000,
+        "minimum_amount_unit": "CNY",
         "minimum_symbols": 1000,
         "minimum_oos_rebalances": 156,
         "minimum_significance_months": 120,
@@ -3081,46 +4544,30 @@ def _stage2_plan() -> dict[str, object]:
         "fundamental_contract": {
             "roe_source_field": "roeDiluted",
             "normalized_field": "roe",
+            "mapping_cardinality": "one_to_one",
             "unit": "decimal",
+            "publication_date_field": "publishDate",
+            "publication_date_semantics": (
+                "actual_recorded_disclosure_date_not_scheduled_or_update_date"
+            ),
             "maximum_staleness_months": 18,
             "same_day_publication_usable": False,
             "duplicate_symbol_report_period_rule": "fail_closed",
         },
-        "ic_outcome_clock": {
-            "no_lag": "adjusted close t to adjusted close t+20 on official exchange sessions",
-            "one_session_lag": "adjusted close t+1 to adjusted close t+21 on official exchange sessions",
-            "missing_symbol_session_rule": "cell_non_estimable_do_not_shift_carry_forward_or_assign_default_recovery",
-        },
-        "endpoint_resolution": {
-            "signal_eligible_denominator_fixed_before_outcome_lookup": True,
-            "current_supported_method": "exact_adjusted_close_quote_on_each_required_official_session_only",
-            "required_sessions": {
-                "no_lag": ["t", "t+20"],
-                "one_session_lag": ["t+1", "t+21"],
-            },
-            "maximum_unresolved_required_endpoints_per_cell": 0,
-            "unresolved_rule": "cell_non_estimable_and_global_insufficient_evidence",
-            "forbidden_fallbacks": [
-                "next_observed_quote",
-                "post_endpoint_reopening_quote",
-                "unattested_last_price_carry_forward",
-                "zero_or_other_default_recovery",
-            ],
-            "unimplemented_adapters": [
-                "calendarized_suspension_valuation",
-                "delisting_or_terminal_wealth",
-            ],
-            "unresolved_reason_codes": [
-                "MISSING_EXACT_FORWARD_EXIT",
-                "MISSING_EXACT_LAG_ENTRY",
-                "MISSING_EXACT_LAG_EXIT",
-            ],
-            "receipt_contract": (
-                "Record aggregate endpoint reason-code counts, bind the complete private "
-                "per-security endpoint-reason ledger by SHA-256, and assert exact coverage "
-                "of every signal-eligible security-month-factor-variant record."
-            ),
-        },
+        "security_identifier_contract": json.loads(
+            json.dumps(STAGE2_SECURITY_IDENTIFIER_CONTRACT)
+        ),
+        "universe_contract": json.loads(json.dumps(STAGE2_UNIVERSE_CONTRACT)),
+        "rank_group_contract": json.loads(
+            json.dumps(STAGE2_RANK_GROUP_CONTRACT)
+        ),
+        "quote_price_adjustment_contract": json.loads(
+            json.dumps(STAGE2_PRICE_ADJUSTMENT_CONTRACT)
+        ),
+        "ic_outcome_clock": json.loads(json.dumps(STAGE2_IC_OUTCOME_CLOCK)),
+        "endpoint_resolution": json.loads(
+            json.dumps(STAGE2_ENDPOINT_RESOLUTION_CONTRACT)
+        ),
         "inference": {
             "primary_estimand": "P1_roe_publication_signed_decrement",
             "primary_directional_prediction": "mean_less_than_zero",
@@ -3241,18 +4688,7 @@ def _stage2_plan() -> dict[str, object]:
             "plan.draft.json, freeze their order in the plan core, and do not add, delete, "
             "or rename cells after design_frozen_at."
         ),
-        "reporting_rule": (
-            "Report every registered IC cell and exactly 29 inferential estimands (one "
-            "primary plus 28 secondary family members), including the three ordered ROE "
-            "common-support components, with their efficiency identity at absolute tolerance "
-            "1e-12 and two deterministic timing-isolation checks reported separately. Also "
-            "report aggregate signal-missingness/common-support counts and no-return "
-            "publication-exposure diagnostics. Cell-level means, Newey-West t-statistics, "
-            "and top-minus-universe spreads are descriptive only and cannot support "
-            "cell-specific discovery claims; do not select or headline a best result. The "
-            "result receipt binds the complete per-security endpoint-reason ledger and "
-            "verifies signal-eligible-denominator coverage."
-        ),
+        "reporting_rule": STAGE2_REPORTING_RULE,
         "claim_boundaries": {
             "authorized_accounting_timing_claim": (
                 "recorded-publication-date specification effect in a single-version "
@@ -3277,8 +4713,15 @@ def _stage2_plan() -> dict[str, object]:
 def _bind_stage2_gate_artifacts(
     paths: dict[str, Path],
     plan: dict[str, object],
+    *,
+    public_consent_overrides: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, Path]:
     root = paths["plan_path"].parent
+    consent_overrides = public_consent_overrides or {}
+    plan["public_receipt_embedding"] = consent_overrides.get(
+        "execution_plan",
+        plan["public_receipt_embedding"],
+    )
     symbols = [f"{index:06d}.SZ" for index in range(1, 9)]
     sessions: list[date] = []
     current = date(2009, 1, 1)
@@ -3286,6 +4729,15 @@ def _bind_stage2_gate_artifacts(
         if current.weekday() < 5:
             sessions.append(current)
         current += timedelta(days=1)
+    signal_sessions: set[date] = set()
+    for session in sessions:
+        if date(2010, 1, 1) <= session <= date(2022, 12, 31):
+            month_key = (session.year, session.month)
+            if not any(
+                (known.year, known.month) == month_key
+                for known in signal_sessions
+            ):
+                signal_sessions.add(session)
 
     official_calendar_path = root / "official_calendar.csv"
     with official_calendar_path.open("w", newline="", encoding="utf-8") as handle:
@@ -3297,18 +4749,36 @@ def _bind_stage2_gate_artifacts(
     quotes_path = root / "stage2_quotes.csv"
     with quotes_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=(
-            "date", "symbol", "close", "amount", "is_st", "is_suspended",
+            "date", "symbol", "close_raw", "adjustment_factor", "close",
+            "price_adjustment_method", "price_adjustment_convention", "amount",
+            "is_st", "is_suspended", "close_observation_type", "amount_unit",
         ))
         writer.writeheader()
         for day_index, session in enumerate(sessions):
             for symbol_index, symbol in enumerate(symbols):
+                suspension_valuation = (
+                    session in signal_sessions and symbol_index == len(symbols) - 1
+                )
                 writer.writerow({
                     "date": session.isoformat(),
                     "symbol": symbol,
+                    "close_raw": f"{10 + symbol_index + day_index * (0.002 + symbol_index * 0.0002):.6f}",
+                    "adjustment_factor": "1",
                     "close": f"{10 + symbol_index + day_index * (0.002 + symbol_index * 0.0002):.6f}",
+                    "price_adjustment_method": STAGE2_PRICE_ADJUSTMENT_METHOD,
+                    "price_adjustment_convention": STAGE2_PRICE_ADJUSTMENT_CONVENTION,
                     "amount": 10_000_000 + symbol_index * 1_000_000,
-                    "is_st": "False",
-                    "is_suspended": "False",
+                    "amount_unit": "CNY",
+                    "is_st": str(
+                        session in signal_sessions
+                        and symbol_index == len(symbols) - 2
+                    ),
+                    "is_suspended": str(suspension_valuation),
+                    "close_observation_type": (
+                        "suspension_valuation"
+                        if suspension_valuation
+                        else "traded_close"
+                    ),
                 })
 
     fundamentals_path = root / "stage2_fundamentals.csv"
@@ -3335,7 +4805,58 @@ def _bind_stage2_gate_artifacts(
         "quote_date_rule": (
             "Every quote date must be a member of the bound official calendar"
         ),
+        "quote_price_adjustment_contract": {
+            **STAGE2_PRICE_ADJUSTMENT_CONTRACT,
+            "provider_close_raw_definition_sha256": "1" * 64,
+            "provider_adjustment_factor_definition_sha256": "2" * 64,
+            "normalization_or_adapter_evidence_sha256": "3" * 64,
+        },
+        "quote_amount_contract": {
+            "canonical_amount_unit": "CNY",
+            "normalization_stage": (
+                "provider_native_amount_normalized_before_raw_input_hash_binding"
+            ),
+            "provider_raw_amount_unit": "CNY",
+            "normalization_method": "identity conversion from provider CNY",
+            "normalization_provenance_sha256": "0" * 64,
+        },
+        "security_identifier_contract": {
+            **STAGE2_SECURITY_IDENTIFIER_CONTRACT,
+            "provider_identifier_definition_sha256": "4" * 64,
+            "code_change_mapping_evidence_sha256": "5" * 64,
+        },
     })
+    declaration.pop("source_name", None)
+    declaration["dataset_source_mappings"] = {
+        "schema_version": "stage2_public_dataset_source_mappings_v1",
+        "datasets": {
+            role: {
+                "dataset_role": role,
+                "source_name": f"licensed fixture source for {role}",
+                "field_mapping": {
+                    field: f"fixture_{role}_{field}"
+                    for field in STAGE2_REQUIRED_FIELDS[role]
+                },
+            }
+            for role in (
+                "quotes",
+                "stock_master",
+                "fundamentals",
+                "official_calendar",
+            )
+        },
+    }
+    declaration.setdefault(
+        "public_receipt_embedding",
+        consent_overrides.get(
+            "data_declaration",
+            _expected_stage2_public_embedding_consent(
+                "data_declaration",
+                scope="fixed_public_projection",
+                public_fields=STAGE2_PUBLIC_DECLARATION_FIELDS,
+            ),
+        ),
+    )
     paths["data_declaration_path"].write_text(
         json.dumps(declaration, indent=2) + "\n", encoding="utf-8"
     )
@@ -3378,12 +4899,27 @@ def _bind_stage2_gate_artifacts(
         coverage_probe_spec["public_receipt_schema"]["properties"]
         ["claim_boundaries"]["required"]
     )
+    publication_consent_keys = list(
+        coverage_probe_spec["public_receipt_schema"]["properties"]
+        ["publication_consent"]["required"]
+    )
+    timestamp_package = {
+        "schema_version": "stage2_coverage_probe_timestamp_package_v1",
+        "study_id": plan["study_id"],
+        "probe_id": coverage_probe_spec["probe_id"],
+        "spec_path": "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json",
+        "spec_sha256": coverage_probe_spec_sha256,
+        "prior_specification_inventory_path": "studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json",
+        "prior_specification_inventory_sha256": "a" * 64,
+        "agent_commit": paths["code_revision"],
+    }
     coverage_probe_receipt = {
         "schema_version": "stage2_coverage_probe_receipt_v2",
         "study_id": plan["study_id"],
         "probe_id": coverage_probe_spec["probe_id"],
         "receipt_id": "sha256:" + "0" * 64,
         "spec_sha256": coverage_probe_spec_sha256,
+        "timestamp_package": timestamp_package,
         "status": "PASSED",
         "executed_at_utc": "2026-08-31T13:30:00+00:00",
         "external_timestamp_proof": {
@@ -3393,15 +4929,26 @@ def _bind_stage2_gate_artifacts(
             "timestamped_at_utc": "2026-08-31T13:00:00+00:00",
             "verification_uri": "https://example.test/fixture-probe-timestamp",
             "evidence_sha256": "9" * 64,
-            "subject_type": "coverage_probe_spec_sha256",
-            "subject_sha256": coverage_probe_spec_sha256,
+            "subject_type": "coverage_probe_package_manifest_sha256",
+            "subject_sha256": hashlib.sha256(
+                (
+                    json.dumps(
+                        timestamp_package,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                ).encode("utf-8")
+            ).hexdigest(),
             "verifier": "fixture independent reviewer",
-            "verified_at_utc": "2026-08-31T13:40:00+00:00",
+            "verified_at_utc": "2026-08-31T13:05:00+00:00",
             "trust_boundary": (
                 "The timestamp record has no offline-verifiable signature; authenticity "
                 "requires independent human verification."
             ),
         },
+        "rights_review_sha256": "7" * 64,
         "repository_state": {
             "agent_commit": paths["code_revision"],
             "qdata_commit": coverage_probe_spec["request_protocol"]["locked_runtime"]
@@ -3418,7 +4965,17 @@ def _bind_stage2_gate_artifacts(
             ["provider_adapter"],
             "provider_interface": coverage_probe_spec["request_protocol"]
             ["provider_interface"],
-            "upstream_provider_identity": "fixture upstream daily-bar service",
+            "upstream_provider_identity": "eastmoney.com",
+            "route_evidence": {
+                "request_count": 24,
+                "requested_https_host": "push2his.eastmoney.com",
+                "final_https_host": "push2his.eastmoney.com",
+                "endpoint_path": "/api/qt/stock/kline/get",
+                "redirect_count": 0,
+                "all_requests_exact_single_date": True,
+                "fallback_attempted": False,
+                "lookback_applied": False,
+            },
             "dates": coverage_probe_spec["request_protocol"]["dates"],
             "symbols": probe_symbols,
             "price_mode": coverage_probe_spec["request_protocol"]["price_mode"],
@@ -3435,23 +4992,46 @@ def _bind_stage2_gate_artifacts(
                 "symbol_count": 12,
                 "minimum_date": "2016-06-30",
                 "maximum_date": "2018-06-29",
-                "schema_sha256": "7" * 64,
-            }
+                "schema_sha256": "f4ef631a1654c78bca5130c72b9b9226dd3d646c5e001304f315b25a2a2d9f09",
+            },
+            {
+                "kind": "request_log_private",
+                "relative_path": "request-log.private.json",
+                "sha256": "6" * 64,
+                "size_bytes": 2048,
+                "row_count": 24,
+                "symbol_count": 12,
+                "minimum_date": "2016-06-30",
+                "maximum_date": "2018-06-29",
+                "schema_sha256": "254c5a543c4aef4b3e796f954ec58826f6a20489fd80c14648d2dd4f4480255d",
+            },
         ],
         "coverage": {
             "expected_symbol_date_cells": 24,
             "observed_symbol_date_cells": 24,
-            "missing_symbol_date_cells": [],
+            "missing_symbol_date_cell_count": 0,
             "duplicate_symbol_date_cells": 0,
             "extra_symbol_date_cells": 0,
         },
-        "field_quality": {"all_required_raw_bar_fields_valid": True},
-        "failures": [],
+        "field_quality": {
+            "all_required_raw_bar_fields_valid": True,
+            "scope_and_cell_identity_valid": True,
+        },
+        "failures": {
+            "empty_response": 0,
+            "validation_error": 0,
+            "provider_error": 0,
+            "network_error": 0,
+        },
         "gates": {gate_id: True for gate_id in probe_gate_ids},
         "rights": {
             "review_status": "verified",
             "raw_redistribution_allowed": False,
             "aggregate_receipt_publication_allowed": True,
+        },
+        "publication_consent": {
+            key: ("verified" if key == "review_status" else True)
+            for key in publication_consent_keys
         },
         "claim_boundaries": {key: False for key in claim_boundary_keys},
     }
@@ -3482,8 +5062,13 @@ def _bind_stage2_gate_artifacts(
         "inventory_id": "fixture-prior-specification",
         "artifact_type": "locked_confirmatory_study_plan",
         "primary_path": "fixture/prior-plan.json",
+        "related_paths": [],
         "present_in_repository": True,
         "repository_state": "tracked_at_head",
+        "introduced_in_commit": paths["code_revision"],
+        "commit_semantics": (
+            "Fixture commit introducing the prior locked study specification."
+        ),
         "specification_ids": ["fixture-prior-specification"],
         "outcome_exposure_known": "unknown",
         "outcome_exposure_basis": "The fixture does not establish whether prior outcomes were inspected.",
@@ -3494,8 +5079,8 @@ def _bind_stage2_gate_artifacts(
         "inventory_id": "fixture-prior-inventory",
         "study_id": plan["study_id"],
         "status": "manifest_eligible_outcome_blind",
-        "inventory_cutoff_at": "2026-08-31T22:10:00+08:00",
-        "generated_at": "2026-08-31T22:15:00+08:00",
+        "inventory_cutoff_at": "2026-08-31T20:50:00+08:00",
+        "generated_at": "2026-08-31T20:55:00+08:00",
         "prepared_by": "fixture preparer",
         "preparer_role": "fixture methods reviewer",
         "outcome_blind_inventory": True,
@@ -3503,7 +5088,7 @@ def _bind_stage2_gate_artifacts(
         "purpose": "Enumerate every prior fixture specification without reporting outcome values.",
         "repository_snapshot": {
             "head_commit": paths["code_revision"],
-            "inspected_at": "2026-08-31T22:05:00+08:00",
+            "inspected_at": "2026-08-31T20:45:00+08:00",
             "working_tree_state": "clean",
         },
         "entry_count": len(entries),
@@ -3528,6 +5113,27 @@ def _bind_stage2_gate_artifacts(
         coverage_probe_receipt_path.read_text(encoding="utf-8")
     )
     coverage_probe_receipt["repository_state"]["agent_commit"] = fixture_probe_commit
+    coverage_probe_receipt["timestamp_package"].update(
+        {
+            "prior_specification_inventory_sha256": _sha256(
+                prior_specification_inventory_path
+            ),
+            "agent_commit": fixture_probe_commit,
+        }
+    )
+    coverage_probe_receipt["external_timestamp_proof"]["subject_sha256"] = (
+        hashlib.sha256(
+            (
+                json.dumps(
+                    coverage_probe_receipt["timestamp_package"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     coverage_probe_receipt.pop("receipt_id", None)
     canonical_without_id = (
         json.dumps(
@@ -3567,6 +5173,98 @@ def _bind_stage2_gate_artifacts(
         "fundamentals": _sha256(fundamentals_path),
         "official_calendar": _sha256(official_calendar_path),
     }
+    rights_datasets = {
+        role: {
+            "source_reference": "contract:fixture-stage2",
+            "license_or_contract_scope": (
+                "private research, permitted aggregate publication, and "
+                "controlled reviewer rerun"
+            ),
+            "terms_evidence_sha256": "b" * 64,
+            "local_storage_permitted": True,
+            "local_analysis_permitted": True,
+            "aggregate_publication_permitted": True,
+            "raw_redistribution_permitted": False,
+            "hash_publication_permitted": True,
+            "controlled_reviewer_rerun_permitted": True,
+            "source_identity_publication_permitted": True,
+            "field_mapping_citation_permitted": True,
+            "authorized_public_projection": json.loads(json.dumps(
+                declaration["dataset_source_mappings"]["datasets"][role]
+            )),
+            "authorized_public_projection_sha256": (
+                stage2_public_source_projection_sha256(
+                    declaration["dataset_source_mappings"]["datasets"][role]
+                )
+            ),
+            "restrictions": [],
+            "conditional_permission_reviews": [],
+            **(
+                {"calendar_dates_publication_permitted": True}
+                if role == "official_calendar"
+                else {}
+            ),
+        }
+        for role in (
+            "quotes",
+            "stock_master",
+            "fundamentals",
+            "official_calendar",
+        )
+    }
+    rights_attestation = {
+        "schema_version": "stage2_data_rights_attestation_v2",
+        "study_id": plan["study_id"],
+        "status": "attested",
+        "attested_at": "2026-08-31T21:50:00+08:00",
+        "attestor": "fixture-rights-reviewer",
+        "attestor_role": "authorized fixture data custodian",
+        "contract_reference": "contract:fixture-stage2",
+        "contract_effective_at": "2026-01-01T00:00:00+08:00",
+        "contract_expiry_at": None,
+        "contract_has_no_expiry_confirmed": True,
+        "post_expiry_research_publication_and_controlled_review_rights_survive": False,
+        "post_expiry_survival_evidence_sha256": None,
+        "contract_evidence_sha256": "c" * 64,
+        "datasets": rights_datasets,
+        "private_endpoint_reason_ledger": {
+            "retention_permitted": True,
+            "hash_binding_permitted": True,
+            "row_redistribution_permitted": False,
+            "terms_evidence_sha256": "d" * 64,
+        },
+        "public_outputs": {
+            "aggregate_coverage_permitted": True,
+            "aggregate_missingness_permitted": True,
+            "aggregate_reason_counts_permitted": True,
+            "cryptographic_hashes_permitted": True,
+            "exact_official_calendar_dates_permitted": True,
+            "raw_rows_permitted": False,
+        },
+        "evidence_index": [
+            {
+                "kind": "contract_terms",
+                "reference": "contract:fixture-stage2",
+                "sha256": "e" * 64,
+            }
+        ],
+        "signature": {
+            "type": "human_verified_evidence",
+            "evidence_sha256": "f" * 64,
+            "signer_identity": "fixture-rights-reviewer",
+            "verification_uri": "https://example.test/fixture-rights-review",
+            "trust_boundary": (
+                "A human reviewer must verify the contract and the exact permitted outputs."
+            ),
+        },
+    }
+    rights_attestation_path = root / "data_rights_attestation.json"
+    rights_attestation_path.write_text(
+        json.dumps(rights_attestation, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+    paths["data_rights_attestation_path"] = rights_attestation_path
     attestation = {
         "schema_version": "stage2_data_review_attestation_v1",
         "study_id": plan["study_id"],
@@ -3579,7 +5277,14 @@ def _bind_stage2_gate_artifacts(
         "execution_semantics_verified": True,
         "tradability_fields_verified": True,
         "exact_endpoint_resolution_semantics_verified": True,
+        "suspension_valuation_semantics_verified": True,
+        "price_adjustment_semantics_verified": True,
+        "amount_unit_normalization_semantics_verified": True,
         "endpoint_reason_ledger_rights_verified": True,
+        "historical_membership_completeness_verified": True,
+        "terminal_survivor_comparator_verified": True,
+        "security_identifier_semantics_verified": True,
+        "fundamental_publication_semantics_verified": True,
         "data_rights_verified": True,
         "official_calendar_verified": True,
         "reviewed_at": "2026-08-31T22:00:00+08:00",
@@ -3591,20 +5296,42 @@ def _bind_stage2_gate_artifacts(
             "execution_semantics": "1" * 64,
             "tradability_fields": "2" * 64,
             "exact_endpoint_resolution": "6" * 64,
+            "suspension_valuation_semantics": "b" * 64,
+            "provider_close_raw_definition": "c" * 64,
+            "provider_adjustment_factor_convention": "d" * 64,
+            "price_adjustment_normalization": "e" * 64,
+            "amount_unit_normalization": "0" * 64,
             "endpoint_reason_ledger_rights": "7" * 64,
-            "data_rights": "3" * 64,
+            "historical_membership_completeness": "9" * 64,
+            "terminal_survivor_comparator": "8" * 64,
+            "security_identifier_semantics": "7" * 64,
+            "code_change_mapping": "6" * 64,
+            "fundamental_publication_semantics": "a" * 64,
+            "data_rights": _sha256(rights_attestation_path),
             "official_calendar": "4" * 64,
         },
         "review_assertions": {
             "adjusted_close_return_semantics_and_corporate_action_handling_are_documented": True,
             "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core": True,
             "amount_units_and_cutoff_timing_are_documented": True,
+            "provider_raw_amount_unit_and_normalization_to_exact_cny_before_input_binding_are_documented": True,
             "st_and_suspension_fields_are_non_degenerate_and_historically_effective": True,
             "signal_eligible_denominator_is_fixed_before_outcome_lookup": True,
-            "current_ic_core_resolves_only_exact_adjusted_close_quotes_on_required_official_sessions": True,
+            "current_ic_core_resolves_only_exact_provider_recorded_close_observations_on_required_official_sessions": True,
+            "close_observation_type_matches_suspension_state_on_every_quote_row": True,
+            "suspension_valuation_is_provider_recorded_or_published_for_the_exact_official_session_and_never_researcher_forward_filled": True,
+            "price_adjustment_method_and_convention_tokens_match_the_fixed_contract_on_every_quote_row": True,
+            "close_equals_close_raw_times_adjustment_factor_within_the_fixed_tolerance_on_every_quote_row": True,
+            "provider_close_raw_adjustment_factor_and_no_rebasing_definitions_are_hash_evidenced": True,
+            "all_signal_session_candidates_have_exact_t_t1_t20_t21_endpoints_before_design_freeze": True,
             "unresolved_endpoints_cannot_be_dropped_shifted_carried_forward_or_assigned_default_recovery": True,
-            "suspension_valuation_and_delisting_terminal_wealth_adapters_are_not_claimed_by_the_current_ic_core": True,
+            "delisting_terminal_wealth_adapter_is_not_claimed_by_the_current_ic_core": True,
             "private_endpoint_reason_ledger_hash_and_public_aggregate_counts_are_permitted": True,
+            "stock_master_covers_every_strict_sh_sz_a_share_active_at_any_time_from_2009_01_through_2023_01_and_is_not_latest_only": True,
+            "terminal_survivor_comparator_uses_delist_date_null_or_strictly_after_2023_01_31_independent_of_acquisition_date": True,
+            "provider_stable_security_identifier_semantics_are_identical_across_quotes_stock_master_and_fundamentals": True,
+            "historical_security_code_changes_and_reassignments_have_a_documented_reviewed_mapping_before_input_hash_binding": True,
+            "roe_diluted_mapping_is_one_to_one_decimal_and_publish_date_is_actual_recorded_disclosure_date_not_scheduled_or_update_date": True,
             "licensed_local_analysis_is_permitted": True,
             "public_aggregate_outputs_metadata_and_hashes_are_permitted": True,
             "public_official_calendar_session_dates_are_permitted": True,
@@ -3685,7 +5412,7 @@ def _bind_stage2_gate_artifacts(
             "knowledge_cutoff_not_after_attestation": True,
             "data_review_completed_not_after_attestation": True,
             "attestation_will_precede_design_freeze": True,
-            "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": True,
+            "no_factor_return_ic_rank_or_variant_outcome_was_computed_released_or_human_inspected_through_attested_at": True,
             "registered_publication_exposure_diagnostic_values_not_inspected_through_attested_at": True,
         },
         "statement": "Fixture attestation that no Stage-2 outcomes were inspected.",
@@ -3727,6 +5454,34 @@ def _bind_stage2_gate_artifacts(
     expected_artifacts["prior_exposure_log_sha256"] = _sha256(
         prior_exposure_log_path
     )
+    declaration_projection = {
+        field: json.loads(json.dumps(declaration[field]))
+        for field in STAGE2_PUBLIC_DECLARATION_FIELDS
+    }
+    public_projection_hashes = {
+        "data_declaration": hashlib.sha256(
+            (
+                json.dumps(
+                    declaration_projection,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest(),
+        "official_calendar_session_dates": hashlib.sha256(
+            (
+                json.dumps(
+                    [session.isoformat() for session in sessions],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        ).hexdigest(),
+    }
     design_manifest = {
         "schema_version": "stage2_design_manifest_v1",
         "study_id": plan["study_id"],
@@ -3735,24 +5490,18 @@ def _bind_stage2_gate_artifacts(
         "plan_core_sha256": plan["external_registration"]["registered_content_sha256"],
         "artifacts": expected_artifacts,
         "input_file_sha256": input_hashes,
+        "public_receipt_projection_sha256": public_projection_hashes,
         "code_commit": plan["code_commit"],
-        "registered_design_assertions": {
-            "variant_count": 18,
-            "factor_variant_cell_count": 72,
-            "primary_estimand_count": 1,
-            "secondary_estimand_count": 28,
-            "total_inferential_estimand_count": 29,
-            "roe_common_support_component_count": 3,
-            "timing_decomposition_tolerance_source": (
-                "execution_plan.inference.timing_decomposition."
-                "efficiency_absolute_tolerance"
+        "public_receipt_embedding": consent_overrides.get(
+            "design_manifest",
+            _expected_stage2_public_embedding_consent(
+                "design_manifest",
+                scope="full_artifact",
             ),
-            "endpoint_resolution_method": "exact_official_session_adjusted_close_only",
-            "result_receipt_binds_complete_endpoint_reason_ledger": True,
-            "single_version_claim_boundary": (
-                "recorded_publication_date_specification_effect_only"
-            ),
-        },
+        ),
+        "registered_design_assertions": json.loads(
+            json.dumps(STAGE2_REGISTERED_DESIGN_ASSERTIONS)
+        ),
     }
     design_manifest_path = root / "design_manifest.json"
     design_manifest_path.write_text(
@@ -3780,21 +5529,9 @@ def _bind_stage2_gate_artifacts(
         "coverage_probe_receipt_sha256": plan[
             "coverage_probe_receipt_sha256"
         ],
-        "registered_scope_summary": {
-            "variants": 18,
-            "factor_variant_cells": 72,
-            "primary_estimands": 1,
-            "secondary_estimands": 28,
-            "total_inferential_estimands": 29,
-            "roe_common_support_components": 3,
-            "timing_decomposition_tolerance_source": (
-                "design_manifest.registered_design_assertions."
-                "timing_decomposition_tolerance_source"
-            ),
-            "claim_boundary": (
-                "single_version_recorded_publication_date_specification_effect_only"
-            ),
-        },
+        "registered_scope_summary": json.loads(
+            json.dumps(STAGE2_REGISTERED_SCOPE_SUMMARY)
+        ),
         "proof": {
             "type": "human_verified_registry_record",
             "evidence_sha256": "5" * 64,
@@ -3805,6 +5542,13 @@ def _bind_stage2_gate_artifacts(
                 "requires independent human verification."
             ),
         },
+        "public_receipt_embedding": consent_overrides.get(
+            "registration_receipt",
+            _expected_stage2_public_embedding_consent(
+                "registration_receipt",
+                scope="full_artifact",
+            ),
+        ),
     }
     registration_receipt_path = root / "registration_receipt.json"
     registration_receipt_path.write_text(
@@ -3819,6 +5563,9 @@ def _bind_stage2_gate_artifacts(
         "study_id": plan["study_id"],
         "status": "authorized",
         "authorized_at": plan["locked_at"],
+        "authorizer_authority_basis": (
+            "Authorized fixture data custodian under the reviewed contract."
+        ),
         "design_manifest_sha256": plan["external_registration"][
             "design_manifest_sha256"
         ],
@@ -3828,7 +5575,11 @@ def _bind_stage2_gate_artifacts(
         "plan_core_sha256": plan["external_registration"][
             "registered_content_sha256"
         ],
-        "bound_artifacts": {**expected_artifacts, "code_commit": plan["code_commit"]},
+        "bound_artifacts": {
+            **expected_artifacts,
+            "data_rights_attestation_sha256": _sha256(rights_attestation_path),
+            "code_commit": plan["code_commit"],
+        },
         "chronology": {
             "prior_inventory_cutoff_at": inventory["inventory_cutoff_at"],
             "prior_inventory_generated_at": inventory["generated_at"],
@@ -3850,7 +5601,8 @@ def _bind_stage2_gate_artifacts(
             "external_registration_not_after_receipt_recording": True,
             "receipt_recording_not_after_receipt_verification": True,
             "receipt_verification_not_after_authorization": True,
-            "blind_2010_2022_outcome_data_not_released_or_inspected_before_authorization": True,
+            "data_rights_active_at_authorization_and_post_expiry_publication_review_survival_confirmed": True,
+            "no_factor_return_ic_rank_or_variant_outcome_was_computed_released_or_human_inspected_before_authorization": True,
             "all_bound_hashes_recomputed_and_equal": True,
         },
         "release_scope": {
@@ -3858,6 +5610,10 @@ def _bind_stage2_gate_artifacts(
             "authorized_analysis_period": plan["test_period"],
             "authorized_code_commit": plan["code_commit"],
             "outcome_data_release_permitted_after_authorized_at": True,
+            "quote_price_adjustment_contract": STAGE2_PRICE_ADJUSTMENT_CONTRACT,
+            "security_identifier_contract": STAGE2_SECURITY_IDENTIFIER_CONTRACT,
+            "universe_contract": STAGE2_UNIVERSE_CONTRACT,
+            "rank_group_contract": STAGE2_RANK_GROUP_CONTRACT,
             "authorized_core_outputs": [
                 "18_variant_72_cell_ic_lattice",
                 "one_primary_and_28_secondary_inferential_estimands",
@@ -3866,12 +5622,7 @@ def _bind_stage2_gate_artifacts(
                 "no_return_publication_exposure_diagnostics",
                 "per_security_endpoint_reason_ledger_hash_and_aggregate_receipt_counts",
             ],
-            "endpoint_boundary": (
-                "The current core supports exact adjusted-close quotes on required official "
-                "sessions only. Any unresolved endpoint makes the cell non-estimable and "
-                "the study INSUFFICIENT_EVIDENCE; suspension-valuation and "
-                "delisting-terminal-wealth adapters are not authorized."
-            ),
+            "endpoint_boundary": STAGE2_AUTHORIZATION_ENDPOINT_BOUNDARY,
             "claim_boundary": (
                 "The strongest authorized accounting-timing claim is a "
                 "recorded-publication-date specification effect in a single-version provider "
@@ -3909,6 +5660,13 @@ def _bind_stage2_gate_artifacts(
                 "Identity and evidence authenticity require independent human verification."
             ),
         },
+        "public_receipt_embedding": consent_overrides.get(
+            "execution_authorization",
+            _expected_stage2_public_embedding_consent(
+                "execution_authorization",
+                scope="full_artifact",
+            ),
+        ),
     }
     execution_authorization_path = root / "execution_authorization.json"
     execution_authorization_path.write_text(
@@ -3928,6 +5686,7 @@ def _bind_stage2_gate_artifacts(
         "design_manifest_path": design_manifest_path,
         "registration_receipt_path": registration_receipt_path,
         "execution_authorization_path": execution_authorization_path,
+        "authorization_consumption_dir": root / "private-consumption-store",
         "protocol_source_path": protocol_source_path,
         "statistical_analysis_plan_path": statistical_analysis_plan_path,
         "prior_specification_inventory_path": prior_specification_inventory_path,
@@ -3966,7 +5725,7 @@ def _forge_stage2_receipt_as_real(
     if rewrite_declaration:
         declaration = data["declaration"]["content"]
         declaration["source_classification"] = "real_market_data"
-        data["declaration"]["canonical_sha256"] = hashlib.sha256(
+        data["declaration"]["projection_sha256"] = hashlib.sha256(
             (
                 json.dumps(
                     declaration,

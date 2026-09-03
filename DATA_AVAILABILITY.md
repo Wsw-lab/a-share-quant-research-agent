@@ -6,7 +6,7 @@
 
 fixture 的实验 verdict 固定为 `INSUFFICIENT_EVIDENCE`。它不证明真实行情正确、可获得、可交易、完整或有权再分发，也不提供策略表现证据。
 
-真实市场 pilot receipt 保留历史 schema 标签 `REAL_MARKET_OOS_STATISTICS`，这里只解释为仓库内锁定测试窗统计，不解释为第三方预注册、长期真实样本外验证或此前未接触数据；`performance_claim`、`generalization_claim` 和 `usable_for_trading_decisions` 均为 false。`evidence/PUBLIC_EVIDENCE_STATUS.json` 由验证后的 pilot receipt 派生，是当前已运行证据的唯一公开状态；旧 registry/readiness 文件不作为状态来源。Stage-2 期刊研究尚未运行，当前为 `BLOCKED_FOR_STAGE2`，也没有可替代这一缺口的候选 registry 或 readiness 结果。
+真实市场 pilot receipt 保留历史 schema 标签 `REAL_MARKET_OOS_STATISTICS`，这里只解释为仓库内锁定测试窗统计，不解释为第三方预注册、长期真实样本外验证或此前未接触数据；`performance_claim`、`generalization_claim` 和 `usable_for_trading_decisions` 均为 false。它是既有公开历史证据，但现有声明不足以独立证明供应商明确允许公开输入哈希及全部聚合输出；该权限仍需许可方或获授权机构管理员复核，且不能作为 Stage-2 权利先例。`evidence/PUBLIC_EVIDENCE_STATUS.json` 由验证后的 pilot receipt 派生，是当前已运行证据的唯一公开状态；旧 registry/readiness 文件不作为状态来源。Stage-2 期刊研究尚未运行，当前为 `BLOCKED_FOR_STAGE2`，也没有可替代这一缺口的候选 registry 或 readiness 结果。
 
 ## 一并提供的材料
 
@@ -29,4 +29,4 @@ fixture 的实验 verdict 固定为 `INSUFFICIENT_EVIDENCE`。它不证明真实
 
 QData 仓库记录的有界本地 selector/迁移测试只是其自身的限定证据；Agent 的离线路径不启动数据库，`cross-store transactions` 仍未验证。
 
-公开 receipt 允许审阅者核对方案范围、代码 commit、输入身份、全部结果和主张边界。Stage-2 若获授权执行，公开 receipt 还会给出端点 reason-code 汇总，并以 SHA-256 绑定保留在受控环境中的逐证券私有端点账本；公开文件不披露证券级缺失记录。公开模式只能验证 receipt 与账本元数据，只有在受控审阅中另行提供私有账本时，验证器才会检查账本哈希、排序、唯一性、逐 cell 基数和汇总计数。由于省略的授权数据无法从 checkout 恢复，它仍不是第三方独立重算。参见 [README](README.md) 与[历史证据说明](docs/legacy-evidence.md)。
+从技术上，公开 receipt 允许审阅者核对方案范围、代码 commit、输入身份、全部结果和主张边界；这种可核验性不替代上述许可复核。Stage-2 只有在数据权利明确允许相应公开字段且完成件经过公开嵌入审查后才能生成公开 receipt。届时 receipt 会给出端点 reason-code 汇总，并以 SHA-256 绑定保留在受控环境中的逐证券私有端点账本；公开文件不披露证券级缺失记录。公开模式只能验证 receipt 与账本元数据，只有在受控审阅中另行提供私有账本时，验证器才会检查账本哈希、排序、唯一性、逐 cell 基数和汇总计数。由于省略的授权数据无法从 checkout 恢复，它仍不是第三方独立重算。参见 [README](README.md) 与[历史证据说明](docs/legacy-evidence.md)。

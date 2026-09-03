@@ -36,9 +36,12 @@ the repository tooling.
 
 ## Human handoff procedure
 
-1. Complete the outcome-blind probe, historical data/rights review, prior-
-   exposure attestation, and design manifest. Compute and record the manifest
-   SHA-256 over exact bytes.
+1. Confirm that the completed outcome-blind inventory used by the probe is
+   unchanged: its exact file hash must remain the one bound by the probe
+   timestamp package, and its audited pre-inventory base commit must be an
+   ancestor of the later plan code commit. Then complete the historical
+   data/rights review, prior-exposure attestation, and design manifest. Compute
+   and record the manifest SHA-256 over exact bytes.
 2. Have the owner submit that exact artifact to the chosen provider. Record
    provider name, submission time, identifier, and URL in a private working
    copy of `external_registration_handoff.template.json`.
@@ -54,7 +57,11 @@ the repository tooling.
    data be released to the runner.
 
 At the runner release boundary, the completed authorization is consumed once
-in a private custodian-controlled directory. The runner atomically creates
+in an explicitly supplied private custodian-controlled directory. Both that
+directory and the fresh Stage-2 result directory must resolve outside every
+Git worktree, including an unrelated repository, linked checkout, or QData
+checkout; an ignored directory inside a worktree is not acceptable. The runner enforces this location gate
+before claiming authorization and atomically creates
 `<sha256(canonical execution_authorization bytes)>.consumed.json` (directory
 mode `0700`, marker mode `0600`) before loading any quote or fundamental
 outcome rows. A second claim for the same authorization hash fails closed, and
@@ -63,6 +70,13 @@ local exclusive-create control, not an external registry, cryptographic
 signature, revocation service, or substitute for the human/provider trust
 boundaries above; the custodian must preserve the sidecar and protect it from
 deletion or replacement.
+
+Pre-consumption validation recomputes control-artifact hashes and cross-checks
+their declared raw-input digests, but it does not open or hash the raw inputs.
+Immediately after the atomic claim, the runner reads each of the four raw
+inputs exactly once, checks the captured-byte digests against those registered
+declarations, and reuses the same bytes for coverage, loading, and receipt
+evidence. Any digest mismatch leaves the claim consumed and produces no result.
 
 ## Stop conditions
 

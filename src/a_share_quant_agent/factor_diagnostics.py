@@ -186,7 +186,7 @@ def _factor_score(values: pd.Series, factor: FactorSpec) -> pd.Series:
 
 def _long_short_spread(cross_section: pd.DataFrame) -> float:
     ranks = cross_section["score"].rank(pct=True, method="first")
-    top = cross_section.loc[ranks >= 0.8, "forward_return"]
+    top = cross_section.loc[ranks > 0.8, "forward_return"]
     bottom = cross_section.loc[ranks <= 0.2, "forward_return"]
     if top.empty or bottom.empty:
         return 0.0

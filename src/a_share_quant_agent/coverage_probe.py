@@ -3,9 +3,10 @@
 The Stage-2 protocol deliberately separates a bounded source probe from the
 factor study.  This module is the small operational bridge between the two:
 it performs the pre-request checks, optionally executes *only* the twelve
-fixed symbols on the two fixed dates through the pinned QData AkShare
-adapter, and emits a redacted receipt.  It never computes a factor, return,
-rank, IC, portfolio statistic, or variant comparison.
+fixed symbols on the two fixed dates through a pinned, exact-date AkShare
+transport adapter, and emits a redacted receipt. QData remains a historical
+provenance input but is never imported or called by the probe. It never
+computes a factor, return, rank, IC, portfolio statistic, or variant comparison.
 
 The module is intentionally fail-closed.  A missing external timestamp,
 unclean checkout, reused output directory, missing rights evidence, provider
@@ -22,6 +23,7 @@ from datetime import datetime, timezone
 import argparse
 import csv
 import hashlib
+import importlib
 from importlib import metadata as importlib_metadata
 import json
 import math
@@ -34,6 +36,20 @@ import sys
 import tempfile
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
+
+from a_share_quant_agent.public_receipt_privacy import (
+    absolute_local_path_like as _absolute_local_path_like,
+    credential_like_public_key as _credential_like_public_key,
+    public_string_privacy_reason as _public_string_privacy_reason,
+    unsafe_public_url_reason as _unsafe_public_url_reason,
+)
+from a_share_quant_agent.private_artifact_paths import (
+    PrivateArtifactPathError,
+    containing_git_worktree,
+    publish_private_directory_atomic_exclusive,
+    require_outside_any_git_worktree,
+    resolve_artifact_path,
+)
 
 
 STUDY_ID = "a-share-factor-timing-bias-decomposition-v2"
@@ -53,6 +69,16 @@ V1_SPEC_SHA256 = "35e63a90dacd412868345e051031af52801ea91c22e6bd181baa482364d102
 QDATA_COMMIT = "19b2dd1df8cfbe875809179a4772e4656dce01bd"
 PYTHON_VERSION = "3.12.12"
 AKSHARE_VERSION = "1.18.81"
+AKSHARE_HISTORY_MODULE_SHA256 = (
+    "749a94a192bcd79ee76867fb8dfc7c563613cf08afb1dd72ca5a97c471bcd3d8"
+)
+EXACT_DATE_ADAPTER = (
+    "a_share_quant_agent.coverage_probe.ExactDateAkShareProbeAdapter"
+)
+PROVIDER_INTERFACE = "akshare.stock_zh_a_hist"
+UPSTREAM_HOST = "push2his.eastmoney.com"
+UPSTREAM_PATH = "/api/qt/stock/kline/get"
+UPSTREAM_IDENTITY = "eastmoney.com"
 DATES = ("2016-06-30", "2018-06-29")
 SYMBOLS = (
     "600601.SH",
@@ -75,6 +101,17 @@ RAW_SCHEMA_SHA256 = hashlib.sha256(RAW_SCHEMA_BYTES).hexdigest()
 REQUEST_LOG_FIELDS = ("symbol", "date", "status")
 REQUEST_LOG_SCHEMA_BYTES = (json.dumps(list(REQUEST_LOG_FIELDS), separators=(",", ":")) + "\n").encode()
 REQUEST_LOG_SCHEMA_SHA256 = hashlib.sha256(REQUEST_LOG_SCHEMA_BYTES).hexdigest()
+TIMESTAMP_PACKAGE_SCHEMA_VERSION = "stage2_coverage_probe_timestamp_package_v1"
+TIMESTAMP_PACKAGE_FIELDS = frozenset({
+    "schema_version",
+    "study_id",
+    "probe_id",
+    "spec_path",
+    "spec_sha256",
+    "prior_specification_inventory_path",
+    "prior_specification_inventory_sha256",
+    "agent_commit",
+})
 TIMESTAMP_TRUST_BOUNDARY = (
     "The timestamp record has no offline-verifiable signature; authenticity requires "
     "independent human verification."
@@ -89,6 +126,7 @@ GATE_IDS = (
     "COMPLETE_CELL_COVERAGE",
     "PROBE_SPECIFIC_RAW_BAR_FIELDS",
     "BASIC_VALUE_INTEGRITY",
+    "ROUTE_AND_UPSTREAM_VERIFIED",
     "RAW_MODE_ATTESTED",
     "FAILURES_ACCOUNTED_FOR",
     "ARTIFACT_HASHES_VERIFIED",
@@ -99,9 +137,11 @@ RECEIPT_FIELDS = frozenset({
     "probe_id",
     "receipt_id",
     "spec_sha256",
+    "timestamp_package",
     "status",
     "executed_at_utc",
     "external_timestamp_proof",
+    "rights_review_sha256",
     "repository_state",
     "request",
     "artifacts",
@@ -110,7 +150,41 @@ RECEIPT_FIELDS = frozenset({
     "failures",
     "gates",
     "rights",
+    "publication_consent",
     "claim_boundaries",
+})
+RIGHTS_REVIEW_SCHEMA_VERSION = "stage2_coverage_probe_rights_review_v3"
+PRIVATE_MANIFEST_SCHEMA_VERSION = "stage2_coverage_probe_private_manifest_v2"
+RIGHTS_REVIEW_FIELDS = frozenset({
+    "schema_version",
+    "status",
+    "reviewed_at_utc",
+    "reviewer",
+    "authority_basis",
+    "approved_timestamp_proof_sha256",
+    "contract_effective_at",
+    "contract_expiry_at",
+    "contract_has_no_expiry_confirmed",
+    "post_expiry_private_probe_artifact_retention_allowed",
+    "post_expiry_aggregate_receipt_and_metadata_publication_allowed",
+    "post_expiry_survival_evidence_sha256",
+    "local_storage_allowed",
+    "aggregate_receipt_publication_allowed",
+    "aggregate_coverage_publication_allowed",
+    "artifact_hash_publication_allowed",
+    "artifact_filename_publication_allowed",
+    "artifact_size_publication_allowed",
+    "artifact_row_count_publication_allowed",
+    "artifact_symbol_count_and_date_range_publication_allowed",
+    "timestamp_provider_and_identifier_publication_allowed",
+    "timestamp_evidence_hash_publication_allowed",
+    "timestamp_verifier_identity_publication_allowed",
+    "timestamp_verification_uri_publication_allowed",
+    "request_route_metadata_publication_allowed",
+    "raw_redistribution_allowed",
+    "scope",
+    "evidence_sha256",
+    "statement",
 })
 ARTIFACT_FIELDS = frozenset({
     "kind",
@@ -123,8 +197,30 @@ ARTIFACT_FIELDS = frozenset({
     "maximum_date",
     "schema_sha256",
 })
-
-
+ROUTE_EVIDENCE_FIELDS = frozenset({
+    "request_count",
+    "requested_https_host",
+    "final_https_host",
+    "endpoint_path",
+    "redirect_count",
+    "all_requests_exact_single_date",
+    "fallback_attempted",
+    "lookback_applied",
+})
+PUBLICATION_CONSENT_FIELDS = frozenset({
+    "review_status",
+    "aggregate_coverage_publication_allowed",
+    "artifact_hash_publication_allowed",
+    "artifact_filename_publication_allowed",
+    "artifact_size_publication_allowed",
+    "artifact_row_count_publication_allowed",
+    "artifact_symbol_count_and_date_range_publication_allowed",
+    "timestamp_provider_and_identifier_publication_allowed",
+    "timestamp_evidence_hash_publication_allowed",
+    "timestamp_verifier_identity_publication_allowed",
+    "timestamp_verification_uri_publication_allowed",
+    "request_route_metadata_publication_allowed",
+})
 class CoverageProbeError(RuntimeError):
     """Raised when the bounded probe cannot be safely prepared or verified."""
 
@@ -176,6 +272,49 @@ def _git_sha(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) is not None
 
 
+def _validate_public_receipt_privacy(value: Any, *, label: str) -> None:
+    """Reject unsafe public material without echoing a sensitive value."""
+
+    def visit(item: Any, path: str) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                key_text = str(key)
+                if _credential_like_public_key(key_text):
+                    raise CoverageProbeError(
+                        f"{label} privacy check rejected a credential-like key at "
+                        "<redacted-path>.<redacted-key>"
+                    )
+                key_privacy_reason = _public_string_privacy_reason(key_text)
+                if key_privacy_reason is not None:
+                    raise CoverageProbeError(
+                        f"{label} privacy check rejected {key_privacy_reason} "
+                        "in a key at <redacted-path>.<redacted-key>"
+                    )
+                child_path = f"{path}.{key_text}"
+                visit(child, child_path)
+            return
+        if isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                visit(child, f"{path}[{index}]")
+            return
+        if not isinstance(item, str):
+            return
+        fixed_network_endpoint_path = (
+            path.endswith(".request.route_evidence.endpoint_path")
+            and item == UPSTREAM_PATH
+        )
+        privacy_reason = (
+            None if fixed_network_endpoint_path else _public_string_privacy_reason(item)
+        )
+        if privacy_reason is not None:
+            raise CoverageProbeError(
+                f"{label} privacy check rejected {privacy_reason} at "
+                "<redacted-path>"
+            )
+
+    visit(value, "$")
+
+
 def _timestamp(value: Any, label: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise CoverageProbeError(f"{label} is required")
@@ -213,7 +352,7 @@ def _load_json(path: str | Path, label: str) -> tuple[dict[str, Any], bytes]:
 def validate_external_timestamp_proof(
     proof: Mapping[str, Any],
     *,
-    spec_sha256: str,
+    package_manifest_sha256: str,
     before: datetime | None = None,
     require_verified_before: bool = True,
 ) -> dict[str, Any]:
@@ -223,6 +362,10 @@ def validate_external_timestamp_proof(
     hash identity, URL and chronology, while a human must inspect the
     provider-controlled record represented by ``evidence_sha256``.
     """
+
+    _validate_public_receipt_privacy(
+        proof, label="external timestamp proof"
+    )
 
     fields = {
         "type",
@@ -246,10 +389,12 @@ def validate_external_timestamp_proof(
             raise CoverageProbeError(f"external timestamp proof {key} is invalid")
     if not _sha256(proof.get("evidence_sha256")):
         raise CoverageProbeError("external timestamp proof evidence hash is invalid")
-    if proof.get("subject_type") != "coverage_probe_spec_sha256":
+    if proof.get("subject_type") != "coverage_probe_package_manifest_sha256":
         raise CoverageProbeError("external timestamp proof subject type is invalid")
-    if proof.get("subject_sha256") != spec_sha256:
-        raise CoverageProbeError("external timestamp proof does not bind the spec hash")
+    if proof.get("subject_sha256") != package_manifest_sha256:
+        raise CoverageProbeError(
+            "external timestamp proof does not bind the package manifest hash"
+        )
     if proof.get("trust_boundary") != TIMESTAMP_TRUST_BOUNDARY:
         raise CoverageProbeError("external timestamp proof trust boundary is invalid")
     uri = proof.get("verification_uri")
@@ -266,6 +411,43 @@ def validate_external_timestamp_proof(
         if require_verified_before and verified > before:
             raise CoverageProbeError("timestamp verification is after the preflight time")
     return dict(proof)
+
+
+def _validate_timestamp_package(
+    value: Mapping[str, Any],
+    *,
+    raw: bytes,
+    spec_sha256: str,
+    inventory_sha256: str,
+    agent_commit: str,
+) -> dict[str, Any]:
+    """Validate the exact package which receives the external timestamp.
+
+    The package deliberately has no self-hash.  Its canonical byte hash is the
+    timestamp subject and binds the two frozen control blobs to the exact
+    Agent commit which contains them.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != TIMESTAMP_PACKAGE_FIELDS:
+        raise CoverageProbeError("coverage probe timestamp package fields are invalid")
+    if raw != canonical_json_bytes(value):
+        raise CoverageProbeError("coverage probe timestamp package must be canonical JSON")
+    expected = {
+        "schema_version": TIMESTAMP_PACKAGE_SCHEMA_VERSION,
+        "study_id": STUDY_ID,
+        "probe_id": PROBE_ID,
+        "spec_path": SPEC_REPOSITORY_PATH,
+        "spec_sha256": spec_sha256,
+        "prior_specification_inventory_path": INVENTORY_REPOSITORY_PATH,
+        "prior_specification_inventory_sha256": inventory_sha256,
+        "agent_commit": agent_commit,
+    }
+    if dict(value) != expected:
+        raise CoverageProbeError(
+            "coverage probe timestamp package does not bind the fixed spec, inventory, "
+            "and Agent commit"
+        )
+    return dict(value)
 
 
 def _git_root(path: Path) -> Path:
@@ -383,14 +565,6 @@ def _verify_qdata_checkout(path: str | Path) -> tuple[Path, bool]:
     return root, _git_clean(root)
 
 
-def _is_within(path: Path, parent: Path) -> bool:
-    try:
-        path.resolve(strict=False).relative_to(parent.resolve())
-    except ValueError:
-        return False
-    return True
-
-
 def _entry_exists(path: Path) -> bool:
     """Return true for files, directories, and dangling symlink entries."""
 
@@ -434,59 +608,127 @@ def _validate_spec_shape(spec: Mapping[str, Any]) -> None:
         raise CoverageProbeError("coverage probe specification differs from the fixed contract") from exc
 
 
-def _validate_inventory_shape(inventory: Mapping[str, Any]) -> None:
-    if (
-        inventory.get("schema_version") != "prior_specification_inventory_v1"
-        or inventory.get("study_id") != STUDY_ID
-        or inventory.get("status")
-        not in {"draft_incomplete_not_manifest_eligible", "manifest_eligible_outcome_blind"}
-        or inventory.get("outcome_blind_inventory") is not True
-        or inventory.get("contains_outcome_values") is not False
-    ):
-        raise CoverageProbeError("prior specification inventory is not an outcome-blind inventory")
-    entries = inventory.get("entries")
-    if not isinstance(entries, list) or not entries:
-        raise CoverageProbeError("prior specification inventory has no entries")
-    if inventory.get("entry_count") != len(entries):
-        raise CoverageProbeError("prior specification inventory entry count is inconsistent")
-    if inventory.get("entries_sha256") != sha256_bytes(canonical_json_bytes(entries)):
-        # Older maintained inventories use canonical JSON plus LF; this branch
-        # intentionally does not accept a second serialization.
-        raise CoverageProbeError("prior specification inventory entries hash is inconsistent")
+def _validate_inventory_shape(
+    inventory: Mapping[str, Any], *, expected_code_commit: str
+) -> dict[str, Any]:
+    """Apply the same final-inventory gate used by the Stage-2 runner.
+
+    A probe timestamp must not legitimize a draft inventory that the later
+    design manifest would reject.  Import lazily to avoid a module-level
+    dependency and keep this command outcome-blind; the maintained validator
+    reads only control metadata and Git ancestry.
+    """
+
+    try:
+        from .confirmatory_study import _validate_prior_specification_inventory
+
+        return _validate_prior_specification_inventory(
+            inventory,
+            study_id=STUDY_ID,
+            expected_code_commit=expected_code_commit,
+        )
+    except Exception as exc:
+        if isinstance(exc, CoverageProbeError):
+            raise
+        raise CoverageProbeError(
+            "prior specification inventory is not finalized, complete, or compatible "
+            "with the bound Agent commit"
+        ) from exc
 
 
 def _validate_rights_review(
-    value: Mapping[str, Any], *, before: datetime | None = None
+    value: Mapping[str, Any],
+    *,
+    timestamp_proof_sha256: str,
+    active_at: datetime,
+    phase: str,
 ) -> dict[str, Any]:
-    """Validate the minimal, non-identifying rights record for the probe."""
+    """Validate the exact proof-bound and time-active probe rights record.
 
-    required = {
-        "schema_version",
-        "status",
-        "reviewed_at_utc",
-        "reviewer",
-        "authority_basis",
-        "local_storage_allowed",
-        "aggregate_receipt_publication_allowed",
-        "raw_redistribution_allowed",
-        "scope",
-        "evidence_sha256",
-    }
-    if not isinstance(value, Mapping) or not required.issubset(set(value)):
+    The review is not a timeless boolean. It approves one exact raw timestamp
+    proof and must be in force at every operational checkpoint. Callers use
+    this function at preflight, immediately before the first provider request,
+    and immediately before receipt publication.
+    """
+
+    if not isinstance(value, Mapping) or set(value) != RIGHTS_REVIEW_FIELDS:
         raise CoverageProbeError("probe rights review record is incomplete")
-    if value.get("schema_version") != "stage2_coverage_probe_rights_review_v1":
+    if value.get("schema_version") != RIGHTS_REVIEW_SCHEMA_VERSION:
         raise CoverageProbeError("unsupported probe rights review schema")
     if value.get("status") != "verified":
         raise CoverageProbeError("probe rights review is not verified")
+    if active_at.tzinfo is None or active_at.utcoffset() is None:
+        raise CoverageProbeError("probe rights checkpoint must be timezone-aware")
+    if not _meaningful(phase):
+        raise CoverageProbeError("probe rights checkpoint phase is invalid")
     if not _meaningful(value.get("reviewer")) or not _meaningful(value.get("authority_basis"), minimum=12):
         raise CoverageProbeError("probe rights reviewer fields are incomplete")
     reviewed_at = _timestamp(value.get("reviewed_at_utc"), "rights review timestamp")
-    if before is not None and reviewed_at > before:
-        raise CoverageProbeError("rights review was recorded after probe preflight")
+    effective_at = _timestamp(
+        value.get("contract_effective_at"), "rights contract effective timestamp"
+    )
+    if reviewed_at > active_at:
+        raise CoverageProbeError(f"rights review was recorded after {phase}")
+    if effective_at > reviewed_at or effective_at > active_at:
+        raise CoverageProbeError(f"probe rights contract was not effective at {phase}")
+    no_expiry = value.get("contract_has_no_expiry_confirmed")
+    expiry_raw = value.get("contract_expiry_at")
+    if expiry_raw is None:
+        if no_expiry is not True:
+            raise CoverageProbeError(
+                "null probe rights expiry requires explicit no-expiry confirmation"
+            )
+        if (
+            value.get("post_expiry_private_probe_artifact_retention_allowed")
+            is not False
+            or value.get(
+                "post_expiry_aggregate_receipt_and_metadata_publication_allowed"
+            )
+            is not False
+            or value.get("post_expiry_survival_evidence_sha256") is not None
+        ):
+            raise CoverageProbeError(
+                "no-expiry probe rights must not assert a post-expiry survival clause"
+            )
+    else:
+        if no_expiry is not False:
+            raise CoverageProbeError(
+                "finite probe rights expiry requires no-expiry confirmation to be false"
+            )
+        expiry_at = _timestamp(expiry_raw, "rights contract expiry timestamp")
+        if expiry_at < reviewed_at or expiry_at < active_at:
+            raise CoverageProbeError(f"probe rights contract expired before {phase}")
+        if (
+            value.get("post_expiry_private_probe_artifact_retention_allowed")
+            is not True
+            or value.get(
+                "post_expiry_aggregate_receipt_and_metadata_publication_allowed"
+            )
+            is not True
+            or not _sha256(value.get("post_expiry_survival_evidence_sha256"))
+        ):
+            raise CoverageProbeError(
+                "finite probe rights require hash-evidenced post-expiry private "
+                "retention and continued aggregate receipt publication rights"
+            )
+    approved_proof_sha = value.get("approved_timestamp_proof_sha256")
+    if (
+        not _sha256(timestamp_proof_sha256)
+        or not _sha256(approved_proof_sha)
+        or approved_proof_sha != timestamp_proof_sha256
+    ):
+        raise CoverageProbeError(
+            "probe rights review does not approve the exact timestamp proof bytes"
+        )
     if value.get("local_storage_allowed") is not True:
         raise CoverageProbeError("rights review does not permit private local storage")
     if value.get("aggregate_receipt_publication_allowed") is not True:
         raise CoverageProbeError("rights review does not permit aggregate receipt publication")
+    consent_fields = PUBLICATION_CONSENT_FIELDS - {"review_status"}
+    if any(value.get(field) is not True for field in consent_fields):
+        raise CoverageProbeError(
+            "rights review lacks a required public receipt metadata or identity consent"
+        )
     # Raw rows are never redistributed by this module, even if a vendor would
     # permit it.  Keeping this false avoids accidentally widening the public
     # receipt boundary.
@@ -497,6 +739,8 @@ def _validate_rights_review(
         raise CoverageProbeError("rights review scope does not cover the fixed probe")
     if not _sha256(value.get("evidence_sha256")):
         raise CoverageProbeError("rights review evidence hash is invalid")
+    if not _meaningful(value.get("statement"), minimum=40):
+        raise CoverageProbeError("rights review statement is invalid")
     return dict(value)
 
 
@@ -504,6 +748,7 @@ def preflight_probe(
     *,
     spec_path: str | Path,
     prior_inventory_path: str | Path,
+    timestamp_package_path: str | Path,
     timestamp_proof_path: str | Path,
     rights_review_path: str | Path,
     output_dir: str | Path,
@@ -521,37 +766,65 @@ def preflight_probe(
 
     spec_file = _regular_file(spec_path, "coverage probe specification")
     inventory_file = _regular_file(prior_inventory_path, "prior specification inventory")
+    package_file = _regular_file(timestamp_package_path, "coverage probe timestamp package")
     timestamp_file = _regular_file(timestamp_proof_path, "external timestamp proof")
     rights_file = _regular_file(rights_review_path, "rights review")
     output_entry = Path(output_dir).expanduser()
     output_entry_exists = _entry_exists(output_entry)
-    output = output_entry.resolve(strict=False)
+    try:
+        output = resolve_artifact_path(
+            output_entry, label="probe private output directory"
+        )
+        output_outside_worktrees = containing_git_worktree(output) is None
+    except PrivateArtifactPathError as exc:
+        raise CoverageProbeError(str(exc)) from exc
     spec, spec_bytes = _load_json(spec_file, "coverage probe specification")
     inventory, inventory_bytes = _load_json(inventory_file, "prior specification inventory")
+    package, package_bytes = _load_json(package_file, "coverage probe timestamp package")
     proof, proof_bytes = _load_json(timestamp_file, "external timestamp proof")
     rights, rights_bytes = _load_json(rights_file, "rights review")
     _validate_spec_shape(spec)
-    _validate_inventory_shape(inventory)
     spec_sha = sha256_bytes(spec_bytes)
+    inventory_sha = sha256_bytes(inventory_bytes)
     check_time = now or datetime.now(timezone.utc)
     if check_time.tzinfo is None or check_time.utcoffset() is None:
         raise CoverageProbeError("preflight time must be timezone-aware")
-    validate_external_timestamp_proof(
-        proof,
-        spec_sha256=spec_sha,
-        before=check_time,
-        require_verified_before=False,
-    )
-    _validate_rights_review(rights, before=check_time)
-
     if agent_commit is None:
         agent_commit = _git_head(_git_root(spec_file.parent))
+    inventory_state = _validate_inventory_shape(
+        inventory, expected_code_commit=str(agent_commit)
+    )
     root, agent_clean = _verify_committed_inputs(
         spec_bytes=spec_bytes,
         inventory_bytes=inventory_bytes,
         spec_path=spec_file,
         inventory_path=inventory_file,
         agent_commit=agent_commit,
+    )
+    timestamp_package = _validate_timestamp_package(
+        package,
+        raw=package_bytes,
+        spec_sha256=spec_sha,
+        inventory_sha256=inventory_sha,
+        agent_commit=str(agent_commit).lower(),
+    )
+    timestamp_proof = validate_external_timestamp_proof(
+        proof,
+        package_manifest_sha256=sha256_bytes(package_bytes),
+        before=check_time,
+        require_verified_before=True,
+    )
+    if inventory_state["generated_at"] > _timestamp(
+        timestamp_proof["timestamped_at_utc"], "timestamped_at_utc"
+    ):
+        raise CoverageProbeError(
+            "prior specification inventory was finalized after the package timestamp"
+        )
+    _validate_rights_review(
+        rights,
+        timestamp_proof_sha256=sha256_bytes(proof_bytes),
+        active_at=check_time,
+        phase="probe preflight",
     )
     qdata_clean = None
     qdata_head = None
@@ -560,11 +833,6 @@ def preflight_probe(
         qdata_head = _git_head(qdata_root)
     runtime = _runtime_snapshot()
 
-    output_outside_worktrees = not _is_within(output, root)
-    if qdata_checkout is not None:
-        output_outside_worktrees = output_outside_worktrees and not _is_within(
-            output, qdata_root
-        )
     gates = {
         "SPEC_COMMITTED": True,
         "SPEC_EXTERNALLY_TIMESTAMPED": True,
@@ -584,7 +852,8 @@ def preflight_probe(
         "probe_id": PROBE_ID,
         "checked_at_utc": check_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "spec_sha256": spec_sha,
-        "inventory_sha256": sha256_bytes(inventory_bytes),
+        "inventory_sha256": inventory_sha,
+        "timestamp_package_sha256": sha256_bytes(package_bytes),
         # Bind the exact evidence files, not merely their parsed JSON values.
         # A formatting-only substitution is still a changed evidence artifact
         # and must be caught by the preflight/run TOCTOU check.
@@ -601,8 +870,9 @@ def preflight_probe(
             "dates": list(DATES),
             "symbols": list(SYMBOLS),
             "expected_symbol_date_cells": EXPECTED_CELLS,
-            "provider_adapter": "qdata.sources.providers.akshare_provider.AkShareProvider",
-            "provider_interface": "akshare.stock_zh_a_hist",
+            "provider_adapter": EXACT_DATE_ADAPTER,
+            "provider_interface": PROVIDER_INTERFACE,
+            "qdata_execution_role": "provenance_only_no_import_no_call",
             "price_mode": "raw_unadjusted",
             "adjust_argument": "",
         },
@@ -648,13 +918,18 @@ def _bar_value(bar: Any, name: str) -> Any:
 
 def _normalise_bar(bar: Any, *, expected_symbol: str, expected_date: str) -> dict[str, Any]:
     values = {name: _bar_value(bar, name) for name in RAW_FIELDS}
-    # Accept the qdata model's ``trade_date`` and a provider mapping's
-    # ``date`` alias, but never infer a different date.
+    # Accept a provider mapping's ``date`` alias, but never truncate a
+    # timestamp or otherwise coerce a different date into the fixed scope.
     if values["trade_date"] in (None, ""):
         values["trade_date"] = _bar_value(bar, "date")
     values["symbol"] = str(values["symbol"] or "").strip()
-    values["trade_date"] = str(values["trade_date"] or "")[:10]
-    if values["symbol"] != expected_symbol or values["trade_date"] != expected_date:
+    values["trade_date"] = str(values["trade_date"] or "").strip()
+    if (
+        values["symbol"] != expected_symbol
+        or values["trade_date"] != expected_date
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", values["trade_date"])
+        is None
+    ):
         raise CoverageProbeError("provider response contains an out-of-scope bar")
     for name in RAW_FIELDS[2:]:
         if not _finite_number(values[name]):
@@ -674,21 +949,170 @@ def _normalise_bar(bar: Any, *, expected_symbol: str, expected_date: str) -> dic
     return values
 
 
-def _provider_factory(qdata_checkout: Path):
-    """Load the pinned QData AkShare provider without a hard dependency."""
+class ExactDateAkShareProbeAdapter:
+    """Single-endpoint adapter which cannot invoke QData fallback/lookback code.
 
-    checkout = str(qdata_checkout)
-    if checkout not in sys.path:
-        sys.path.insert(0, checkout)
-    try:
-        from qdata.sources.providers.akshare_provider import AkShareProvider
+    The pinned QData checkout remains in the package provenance because the
+    superseded probe named it, but this adapter never imports or calls QData.
+    It invokes one pinned AkShare function and wraps that function's transport
+    call so the exact date bounds and actual final HTTPS host are observed and
+    verified at runtime.
+    """
 
-        # qdata imports some model modules lazily while requests are made, so
-        # the checkout stays on ``sys.path`` for the provider lifetime.  The
-        # CLI runs in a subprocess, which supplies a clean boundary.
-        return AkShareProvider(adjust="", lookup_names=False, allow_full_market=False)
-    except Exception as exc:
-        raise CoverageProbeError("pinned QData AkShare provider is unavailable") from exc
+    def __init__(self) -> None:
+        try:
+            module = importlib.import_module("akshare.stock_feature.stock_hist_em")
+        except Exception as exc:
+            raise CoverageProbeError("pinned AkShare history module is unavailable") from exc
+        module_file = getattr(module, "__file__", None)
+        if not isinstance(module_file, str):
+            raise CoverageProbeError("pinned AkShare history module has no source file")
+        source = Path(module_file).resolve(strict=False)
+        if not source.is_file() or sha256_file(source) != AKSHARE_HISTORY_MODULE_SHA256:
+            raise CoverageProbeError("AkShare history module bytes differ from the fixed probe")
+        function = getattr(module, "stock_zh_a_hist", None)
+        if not callable(function) or getattr(function, "__module__", None) != module.__name__:
+            raise CoverageProbeError("AkShare history function identity is invalid")
+        requests_module = getattr(module, "requests", None)
+        if requests_module is None or not callable(getattr(requests_module, "get", None)):
+            raise CoverageProbeError("AkShare history transport is unavailable")
+        self._module = module
+        self._function = function
+        self._requests = requests_module
+
+    @staticmethod
+    def _expected_secid(symbol: str) -> str:
+        market = "1" if symbol.endswith(".SH") else "0"
+        return f"{market}.{symbol[:6]}"
+
+    def _fetch_exact_history(self, *, symbol: str, trade_date: str) -> tuple[Any, dict[str, Any]]:
+        compact = trade_date.replace("-", "")
+        original_get = self._requests.get
+        observations: list[dict[str, Any]] = []
+
+        def audited_get(url: Any, *args: Any, **kwargs: Any) -> Any:
+            if args or set(kwargs) != {"params", "timeout"}:
+                raise CoverageProbeError("AkShare exact-date transport arguments changed")
+            parsed = urlparse(url) if isinstance(url, str) else None
+            params = kwargs.get("params")
+            if (
+                len(observations) != 0
+                or parsed is None
+                or parsed.scheme != "https"
+                or parsed.hostname != UPSTREAM_HOST
+                or parsed.path != UPSTREAM_PATH
+                or not isinstance(params, Mapping)
+                or set(params)
+                != {"fields1", "fields2", "ut", "klt", "fqt", "secid", "beg", "end"}
+                or str(params.get("beg")) != compact
+                or str(params.get("end")) != compact
+                or str(params.get("secid")) != self._expected_secid(symbol)
+                or str(params.get("klt")) != "101"
+                or str(params.get("fqt")) != "0"
+            ):
+                raise CoverageProbeError(
+                    "AkShare request is not the fixed exact-date raw daily route"
+                )
+            try:
+                response = original_get(
+                    url,
+                    params=dict(params),
+                    timeout=kwargs.get("timeout"),
+                    allow_redirects=False,
+                )
+            except TypeError as exc:
+                raise CoverageProbeError(
+                    "AkShare transport cannot enforce the no-redirect contract"
+                ) from exc
+            final_url = getattr(response, "url", None)
+            final = urlparse(final_url) if isinstance(final_url, str) else None
+            history = getattr(response, "history", None)
+            status_code = getattr(response, "status_code", None)
+            if (
+                final is None
+                or final.scheme != "https"
+                or final.hostname != UPSTREAM_HOST
+                or final.path != UPSTREAM_PATH
+                or history not in (None, [])
+                or status_code != 200
+            ):
+                raise CoverageProbeError(
+                    "AkShare response route is redirected or has an unexpected upstream"
+                )
+            observations.append(
+                {
+                    "requested_https_host": parsed.hostname,
+                    "final_https_host": final.hostname,
+                    "endpoint_path": final.path,
+                    "redirect_count": 0,
+                    "exact_single_date": True,
+                    "fallback_attempted": False,
+                    "lookback_applied": False,
+                }
+            )
+            return response
+
+        self._module.requests.get = audited_get
+        try:
+            frame = self._function(
+                symbol=symbol[:6],
+                period="daily",
+                start_date=compact,
+                end_date=compact,
+                adjust="",
+            )
+        finally:
+            self._module.requests.get = original_get
+        if len(observations) != 1:
+            raise CoverageProbeError(
+                "AkShare exact-date function did not use exactly one verified request"
+            )
+        return frame, observations[0]
+
+    def fetch_daily_market(
+        self, *, trade_date: str, symbols: list[str]
+    ) -> dict[str, Any]:
+        if (
+            trade_date not in DATES
+            or not isinstance(symbols, list)
+            or len(symbols) != 1
+            or symbols[0] not in SYMBOLS
+        ):
+            raise CoverageProbeError("exact-date adapter request is outside the fixed scope")
+        symbol = symbols[0]
+        frame, route = self._fetch_exact_history(
+            symbol=symbol, trade_date=trade_date
+        )
+        rows: list[dict[str, Any]] = []
+        if frame is not None and not getattr(frame, "empty", True):
+            columns = set(getattr(frame, "columns", ()))
+            required = {"日期", "开盘", "最高", "最低", "收盘", "成交量", "成交额"}
+            if not required.issubset(columns):
+                raise CoverageProbeError("AkShare exact-date response schema is invalid")
+            for _, item in frame.iterrows():
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "trade_date": str(item["日期"]).strip(),
+                        "open": item["开盘"],
+                        "high": item["最高"],
+                        "low": item["最低"],
+                        "close": item["收盘"],
+                        "volume": item["成交量"],
+                        "amount": item["成交额"],
+                    }
+                )
+        return {
+            "provider": UPSTREAM_IDENTITY,
+            "daily_bars": rows,
+            "route_evidence": route,
+        }
+
+
+def _provider_factory(_qdata_checkout: Path) -> ExactDateAkShareProbeAdapter:
+    """Load the dedicated adapter; QData is intentionally not imported."""
+
+    return ExactDateAkShareProbeAdapter()
 
 
 def _extract_bars(bundle: Any) -> list[Any]:
@@ -774,6 +1198,7 @@ def run_probe(
     *,
     spec_path: str | Path,
     prior_inventory_path: str | Path,
+    timestamp_package_path: str | Path,
     timestamp_proof_path: str | Path,
     rights_review_path: str | Path,
     qdata_checkout: str | Path,
@@ -783,13 +1208,14 @@ def run_probe(
 ) -> dict[str, Any]:
     """Execute the exact 24-cell source probe and publish a redacted receipt.
 
-    The implementation always uses the pinned QData checkout and its AkShare
-    adapter; callers cannot substitute another provider implementation.
+    The implementation always uses the Agent's pinned exact-date AkShare
+    adapter.  The QData checkout is provenance-only and is never imported.
     """
 
     preflight = preflight_probe(
         spec_path=spec_path,
         prior_inventory_path=prior_inventory_path,
+        timestamp_package_path=timestamp_package_path,
         timestamp_proof_path=timestamp_proof_path,
         rights_review_path=rights_review_path,
         output_dir=output_dir,
@@ -805,7 +1231,12 @@ def run_probe(
     output_entry = Path(output_dir).expanduser()
     if _entry_exists(output_entry):
         raise CoverageProbeError("probe output target already exists")
-    output = output_entry.resolve(strict=False)
+    try:
+        output = require_outside_any_git_worktree(
+            output_entry, label="probe private output directory"
+        )
+    except PrivateArtifactPathError as exc:
+        raise CoverageProbeError(str(exc)) from exc
     parent = output.parent
     parent.mkdir(parents=True, exist_ok=True)
     # Re-check immediately before the first provider request to close the
@@ -814,6 +1245,12 @@ def run_probe(
     # absent until a complete receipt is ready.
     if _entry_exists(output):
         raise CoverageProbeError("probe output target already exists")
+    try:
+        output = require_outside_any_git_worktree(
+            output, label="probe private output directory"
+        )
+    except PrivateArtifactPathError as exc:
+        raise CoverageProbeError(str(exc)) from exc
     qdata_root, qdata_clean = _verify_qdata_checkout(qdata_checkout)
     agent_root = _git_root(Path(spec_path).expanduser().resolve(strict=False).parent)
     if not qdata_clean or not _git_clean(agent_root):
@@ -823,11 +1260,16 @@ def run_probe(
     # inventory between preflight and the first request (TOCTOU closure).
     spec_now = _regular_file(spec_path, "coverage probe specification")
     inventory_now = _regular_file(prior_inventory_path, "prior specification inventory")
+    package_now, package_now_bytes = _load_json(
+        timestamp_package_path, "coverage probe timestamp package"
+    )
     proof_now, proof_now_bytes = _load_json(timestamp_proof_path, "external timestamp proof")
     rights_now, rights_now_bytes = _load_json(rights_review_path, "rights review")
     if (
         sha256_file(spec_now) != preflight["spec_sha256"]
         or sha256_file(inventory_now) != preflight["inventory_sha256"]
+        or sha256_bytes(package_now_bytes)
+        != preflight["timestamp_package_sha256"]
         or sha256_bytes(proof_now_bytes)
         != preflight["timestamp_proof_sha256"]
         or sha256_bytes(rights_now_bytes)
@@ -835,54 +1277,71 @@ def run_probe(
     ):
         raise CoverageProbeError("a bound probe control file changed after preflight")
     request_time = datetime.now(timezone.utc)
+    _validate_timestamp_package(
+        package_now,
+        raw=package_now_bytes,
+        spec_sha256=preflight["spec_sha256"],
+        inventory_sha256=preflight["inventory_sha256"],
+        agent_commit=preflight["agent_commit"],
+    )
     validate_external_timestamp_proof(
         proof_now,
-        spec_sha256=preflight["spec_sha256"],
+        package_manifest_sha256=preflight["timestamp_package_sha256"],
         before=request_time,
-        require_verified_before=False,
+        require_verified_before=True,
     )
-    _validate_rights_review(rights_now, before=request_time)
+    _validate_rights_review(
+        rights_now,
+        timestamp_proof_sha256=sha256_bytes(proof_now_bytes),
+        active_at=request_time,
+        phase="first provider request",
+    )
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=parent))
     # Never let a caller back-date the public receipt through the optional
     # deterministic ``now`` argument used by pure preflight tests.
-    execution_time = datetime.now(timezone.utc)
+    execution_time = request_time
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     request_log: list[dict[str, Any]] = []
+    route_observations: list[dict[str, Any]] = []
+    scope_violation = False
     provider = None
     try:
         provider = _provider_factory(qdata_root)
-        # The adapter must be explicitly configured for raw/unadjusted mode;
-        # never trust a default that could silently change across versions.
-        provider_module = sys.modules.get(
-            "qdata.sources.providers.akshare_provider"
-        )
-        provider_file = getattr(provider_module, "__file__", None)
-        provider_from_checkout = False
-        if isinstance(provider_file, str):
-            try:
-                Path(provider_file).resolve().relative_to(qdata_root.resolve())
-                provider_from_checkout = True
-            except ValueError:
-                provider_from_checkout = False
-        if (
-            type(provider).__module__ != "qdata.sources.providers.akshare_provider"
-            or type(provider).__name__ != "AkShareProvider"
-            or not provider_from_checkout
-            or getattr(provider, "adjust", None) != ""
-            or getattr(provider, "lookup_names", None) is not False
-            or getattr(provider, "allow_full_market", None) is not False
-        ):
+        if type(provider) is not ExactDateAkShareProbeAdapter:
             raise CoverageProbeError("provider object differs from the fixed adapter contract")
         for trade_date in DATES:
             for symbol in SYMBOLS:
                 request_log.append({"symbol": symbol, "date": trade_date, "status": "started"})
                 try:
                     bundle = provider.fetch_daily_market(trade_date=trade_date, symbols=[symbol])
-                    if str(_bar_value(bundle, "provider") or "").strip() != "akshare":
+                    route = _bar_value(bundle, "route_evidence")
+                    if (
+                        str(_bar_value(bundle, "provider") or "").strip()
+                        != UPSTREAM_IDENTITY
+                        or not isinstance(route, Mapping)
+                        or set(route)
+                        != {
+                            "requested_https_host",
+                            "final_https_host",
+                            "endpoint_path",
+                            "redirect_count",
+                            "exact_single_date",
+                            "fallback_attempted",
+                            "lookback_applied",
+                        }
+                        or route.get("requested_https_host") != UPSTREAM_HOST
+                        or route.get("final_https_host") != UPSTREAM_HOST
+                        or route.get("endpoint_path") != UPSTREAM_PATH
+                        or route.get("redirect_count") != 0
+                        or route.get("exact_single_date") is not True
+                        or route.get("fallback_attempted") is not False
+                        or route.get("lookback_applied") is not False
+                    ):
                         raise CoverageProbeError(
-                            "provider response identity differs from the fixed upstream"
+                            "provider response route or upstream identity is not verified"
                         )
+                    route_observations.append(dict(route))
                     bars = _extract_bars(bundle)
                     identities = {
                         (
@@ -891,17 +1350,20 @@ def run_probe(
                                 _bar_value(bar, "trade_date")
                                 or _bar_value(bar, "date")
                                 or ""
-                            )[:10],
+                            ).strip(),
                         )
                         for bar in bars
                     }
                     expected_cell = (symbol, trade_date)
                     if any(identity != expected_cell for identity in identities):
+                        scope_violation = True
                         raise CoverageProbeError(
                             "provider response contains an extra symbol-date cell"
                         )
-                    exact = [bar for bar in bars if str(_bar_value(bar, "symbol") or "").strip() == symbol and str(_bar_value(bar, "trade_date") or _bar_value(bar, "date") or "")[:10] == trade_date]
+                    exact = [bar for bar in bars if str(_bar_value(bar, "symbol") or "").strip() == symbol and str(_bar_value(bar, "trade_date") or _bar_value(bar, "date") or "").strip() == trade_date]
                     if len(exact) != 1:
+                        if len(exact) > 1:
+                            scope_violation = True
                         category = "empty_response" if not exact else "validation_error"
                         failures.append(_redacted_failure(symbol, trade_date, category))
                         request_log[-1] = {"symbol": symbol, "date": trade_date, "status": category}
@@ -928,11 +1390,41 @@ def run_probe(
         extra = sorted(observed_set - expected_cells)
         complete = not failures and not missing and not extra and duplicate_count == 0 and len(cells) == EXPECTED_CELLS
         values_valid = complete  # every row passed _normalise_bar
-        scope_valid = not extra and all(cell in expected_cells for cell in observed_set)
+        scope_valid = (
+            not scope_violation
+            and not extra
+            and all(cell in expected_cells for cell in observed_set)
+        )
         failures_accounted = len(request_log) == EXPECTED_CELLS and all(
             item.get("status") in {"success", "empty_response", "validation_error", "provider_error", "network_error"}
             for item in request_log
         )
+        route_valid = len(route_observations) == EXPECTED_CELLS and all(
+            route.get("requested_https_host") == UPSTREAM_HOST
+            and route.get("final_https_host") == UPSTREAM_HOST
+            and route.get("endpoint_path") == UPSTREAM_PATH
+            and route.get("redirect_count") == 0
+            and route.get("exact_single_date") is True
+            and route.get("fallback_attempted") is False
+            and route.get("lookback_applied") is False
+            for route in route_observations
+        )
+        route_evidence = {
+            "request_count": len(route_observations),
+            "requested_https_host": UPSTREAM_HOST if route_observations else None,
+            "final_https_host": UPSTREAM_HOST if route_observations else None,
+            "endpoint_path": UPSTREAM_PATH if route_observations else None,
+            "redirect_count": sum(
+                int(route["redirect_count"]) for route in route_observations
+            ),
+            "all_requests_exact_single_date": route_valid,
+            "fallback_attempted": any(
+                route["fallback_attempted"] for route in route_observations
+            ),
+            "lookback_applied": any(
+                route["lookback_applied"] for route in route_observations
+            ),
+        }
         gates = {gate: True for gate in GATE_IDS}
         gates.update(
             {
@@ -940,7 +1432,8 @@ def run_probe(
                 "COMPLETE_CELL_COVERAGE": complete,
                 "PROBE_SPECIFIC_RAW_BAR_FIELDS": values_valid,
                 "BASIC_VALUE_INTEGRITY": values_valid,
-                "RAW_MODE_ATTESTED": getattr(provider, "adjust", "") == "",
+                "ROUTE_AND_UPSTREAM_VERIFIED": route_valid,
+                "RAW_MODE_ATTESTED": route_valid,
                 "FAILURES_ACCOUNTED_FOR": failures_accounted,
                 "ARTIFACT_HASHES_VERIFIED": False,
             }
@@ -982,16 +1475,47 @@ def run_probe(
             _verify_artifact_metadata(staging, artifact) for artifact in artifacts
         )
         status = "PASSED" if all(gates.values()) else "BLOCKED"
-        proof, rights = proof_now, rights_now
+        # Re-read and revalidate the exact rights chain immediately before
+        # publishing the receipt. This catches both a mid-run proof/review
+        # substitution and a finite contract that expired during collection.
+        publication_time = datetime.now(timezone.utc)
+        proof_publish, proof_publish_bytes = _load_json(
+            timestamp_proof_path, "external timestamp proof"
+        )
+        rights_publish, rights_publish_bytes = _load_json(
+            rights_review_path, "rights review"
+        )
+        if (
+            sha256_bytes(proof_publish_bytes) != preflight["timestamp_proof_sha256"]
+            or sha256_bytes(rights_publish_bytes) != preflight["rights_review_sha256"]
+        ):
+            raise CoverageProbeError(
+                "a bound probe rights-chain file changed before receipt publication"
+            )
+        validate_external_timestamp_proof(
+            proof_publish,
+            package_manifest_sha256=preflight["timestamp_package_sha256"],
+            before=publication_time,
+            require_verified_before=True,
+        )
+        _validate_rights_review(
+            rights_publish,
+            timestamp_proof_sha256=sha256_bytes(proof_publish_bytes),
+            active_at=publication_time,
+            phase="receipt publication",
+        )
+        proof, rights = proof_publish, rights_publish
         receipt: dict[str, Any] = {
             "schema_version": RECEIPT_SCHEMA_VERSION,
             "study_id": STUDY_ID,
             "probe_id": PROBE_ID,
             "receipt_id": None,
             "spec_sha256": preflight["spec_sha256"],
+            "timestamp_package": package_now,
             "status": status,
             "executed_at_utc": execution_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "external_timestamp_proof": proof,
+            "rights_review_sha256": preflight["rights_review_sha256"],
             "repository_state": {
                 "agent_commit": preflight["agent_commit"],
                 "qdata_commit": preflight["qdata_commit"],
@@ -1001,9 +1525,12 @@ def run_probe(
                 "akshare_version": preflight["runtime_contract"]["actual"]["akshare_version"],
             },
             "request": {
-                "provider_adapter": "qdata.sources.providers.akshare_provider.AkShareProvider",
-                "provider_interface": "akshare.stock_zh_a_hist",
-                "upstream_provider_identity": "akshare",
+                "provider_adapter": EXACT_DATE_ADAPTER,
+                "provider_interface": PROVIDER_INTERFACE,
+                "upstream_provider_identity": (
+                    UPSTREAM_IDENTITY if route_observations else "not_verified"
+                ),
+                "route_evidence": route_evidence,
                 "dates": list(DATES),
                 "symbols": list(SYMBOLS),
                 "price_mode": "raw_unadjusted",
@@ -1013,7 +1540,7 @@ def run_probe(
             "coverage": {
                 "expected_symbol_date_cells": EXPECTED_CELLS,
                 "observed_symbol_date_cells": len(observed_set),
-                "missing_symbol_date_cells": [f"{symbol}|{date}" for symbol, date in missing],
+                "missing_symbol_date_cell_count": len(missing),
                 "duplicate_symbol_date_cells": duplicate_count,
                 "extra_symbol_date_cells": len(extra),
             },
@@ -1021,23 +1548,45 @@ def run_probe(
                 "all_required_raw_bar_fields_valid": bool(values_valid),
                 "scope_and_cell_identity_valid": bool(scope_valid),
             },
-            "failures": failures,
+            "failures": {
+                category: sum(
+                    failure["category"] == category for failure in failures
+                )
+                for category in (
+                    "empty_response",
+                    "validation_error",
+                    "provider_error",
+                    "network_error",
+                )
+            },
             "gates": gates,
             "rights": {
                 "review_status": rights.get("status"),
                 "raw_redistribution_allowed": False,
                 "aggregate_receipt_publication_allowed": rights.get("aggregate_receipt_publication_allowed") is True,
             },
+            "publication_consent": {
+                "review_status": rights.get("status"),
+                **{
+                    field: rights.get(field) is True
+                    for field in PUBLICATION_CONSENT_FIELDS - {"review_status"}
+                },
+            },
             "claim_boundaries": _all_false_claim_boundaries(),
         }
+        _validate_public_receipt_privacy(
+            receipt, label="coverage probe public receipt"
+        )
         unsigned = dict(receipt)
         unsigned.pop("receipt_id")
         receipt["receipt_id"] = _build_receipt_id(unsigned)
         # Manifest is deliberately written last among private files.  It does
         # not contain its own hash, avoiding a cycle.
         manifest = {
-            "schema_version": "stage2_coverage_probe_private_manifest_v1",
+            "schema_version": PRIVATE_MANIFEST_SCHEMA_VERSION,
             "spec_sha256": preflight["spec_sha256"],
+            "timestamp_package_sha256": preflight["timestamp_package_sha256"],
+            "rights_review_sha256": preflight["rights_review_sha256"],
             "agent_commit": preflight["agent_commit"],
             "qdata_commit": preflight["qdata_commit"],
             "request_scope": receipt["request"],
@@ -1061,7 +1610,20 @@ def run_probe(
             raise CoverageProbeError("private probe control-file permissions could not be restricted") from exc
         if _entry_exists(output):
             raise CoverageProbeError("probe output target appeared during execution")
-        os.replace(staging, output)
+        try:
+            require_outside_any_git_worktree(
+                output, label="probe private output directory"
+            )
+        except PrivateArtifactPathError as exc:
+            raise CoverageProbeError(str(exc)) from exc
+        try:
+            publish_private_directory_atomic_exclusive(
+                staging,
+                output,
+                label="probe private output directory",
+            )
+        except PrivateArtifactPathError as exc:
+            raise CoverageProbeError(str(exc)) from exc
         return receipt
     except Exception:
         # Keep no partial output.  The caller receives a fail-closed error and
@@ -1193,7 +1755,7 @@ def _verify_private_artifact_content(
                     if row is None or None in row:
                         raise CoverageProbeError("private normalized-bar CSV row is malformed")
                     symbol = str(row.get("symbol") or "")
-                    date = str(row.get("trade_date") or "")[:10]
+                    date = str(row.get("trade_date") or "").strip()
                     normalized = _normalise_bar(
                         row,
                         expected_symbol=symbol,
@@ -1251,6 +1813,9 @@ def verify_probe_artifacts(
     receipt, raw = _load_json(receipt_file, "coverage probe receipt")
     if raw != canonical_json_bytes(receipt):
         raise CoverageProbeError("coverage probe receipt must be canonical JSON")
+    _validate_public_receipt_privacy(
+        receipt, label="coverage probe public receipt"
+    )
     if set(receipt) != RECEIPT_FIELDS:
         raise CoverageProbeError("coverage probe receipt fields differ from the fixed schema")
     if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION:
@@ -1269,18 +1834,35 @@ def verify_probe_artifacts(
     executed_at = _timestamp(
         receipt.get("executed_at_utc"), "coverage probe execution timestamp"
     )
+    timestamp_package = receipt.get("timestamp_package")
+    if (
+        not isinstance(timestamp_package, Mapping)
+        or set(timestamp_package) != TIMESTAMP_PACKAGE_FIELDS
+        or timestamp_package.get("schema_version")
+        != TIMESTAMP_PACKAGE_SCHEMA_VERSION
+        or timestamp_package.get("study_id") != STUDY_ID
+        or timestamp_package.get("probe_id") != PROBE_ID
+        or timestamp_package.get("spec_path") != SPEC_REPOSITORY_PATH
+        or timestamp_package.get("spec_sha256") != spec_sha
+        or timestamp_package.get("prior_specification_inventory_path")
+        != INVENTORY_REPOSITORY_PATH
+        or not _sha256(
+            timestamp_package.get("prior_specification_inventory_sha256")
+        )
+        or not _git_sha(timestamp_package.get("agent_commit"))
+    ):
+        raise CoverageProbeError("coverage probe timestamp package is invalid")
+    timestamp_package_sha = sha256_bytes(canonical_json_bytes(timestamp_package))
     proof = receipt.get("external_timestamp_proof")
-    # The provider timestamp itself must precede the first request.  Human
-    # verification may be completed after execution (the retained evidence
-    # still binds the same hash), matching the frozen v2 specification and
-    # preserving an auditable chronology without pretending to have a
-    # cryptographic signature.
     validate_external_timestamp_proof(
         proof,
-        spec_sha256=spec_sha,
+        package_manifest_sha256=timestamp_package_sha,
         before=executed_at,
-        require_verified_before=False,
+        require_verified_before=True,
     )
+    rights_review_sha256 = receipt.get("rights_review_sha256")
+    if not _sha256(rights_review_sha256):
+        raise CoverageProbeError("coverage probe receipt rights-review hash is invalid")
     request = receipt.get("request")
     if (
         not isinstance(request, Mapping)
@@ -1289,14 +1871,15 @@ def verify_probe_artifacts(
             "provider_adapter",
             "provider_interface",
             "upstream_provider_identity",
+            "route_evidence",
             "dates",
             "symbols",
             "price_mode",
             "adjust_argument",
         }
         or request.get("provider_adapter")
-        != "qdata.sources.providers.akshare_provider.AkShareProvider"
-        or request.get("provider_interface") != "akshare.stock_zh_a_hist"
+        != EXACT_DATE_ADAPTER
+        or request.get("provider_interface") != PROVIDER_INTERFACE
         or request.get("dates") != list(DATES)
         or request.get("symbols") != list(SYMBOLS)
         or request.get("price_mode") != "raw_unadjusted"
@@ -1304,6 +1887,40 @@ def verify_probe_artifacts(
         or not _meaningful(request.get("upstream_provider_identity"))
     ):
         raise CoverageProbeError("coverage probe receipt request scope is invalid")
+    route = request.get("route_evidence")
+    if (
+        not isinstance(route, Mapping)
+        or set(route) != ROUTE_EVIDENCE_FIELDS
+        or isinstance(route.get("request_count"), bool)
+        or not isinstance(route.get("request_count"), int)
+        or not 0 <= route["request_count"] <= EXPECTED_CELLS
+        or route.get("requested_https_host") not in {None, UPSTREAM_HOST}
+        or route.get("final_https_host") not in {None, UPSTREAM_HOST}
+        or route.get("endpoint_path") not in {None, UPSTREAM_PATH}
+        or isinstance(route.get("redirect_count"), bool)
+        or not isinstance(route.get("redirect_count"), int)
+        or route["redirect_count"] < 0
+        or any(
+            not isinstance(route.get(key), bool)
+            for key in (
+                "all_requests_exact_single_date",
+                "fallback_attempted",
+                "lookback_applied",
+            )
+        )
+    ):
+        raise CoverageProbeError("coverage probe route evidence is invalid")
+    if receipt.get("status") == "PASSED" and route != {
+        "request_count": EXPECTED_CELLS,
+        "requested_https_host": UPSTREAM_HOST,
+        "final_https_host": UPSTREAM_HOST,
+        "endpoint_path": UPSTREAM_PATH,
+        "redirect_count": 0,
+        "all_requests_exact_single_date": True,
+        "fallback_attempted": False,
+        "lookback_applied": False,
+    }:
+        raise CoverageProbeError("passed coverage probe route is not exact and fail-closed")
     repository_state = receipt.get("repository_state")
     if (
         not isinstance(repository_state, Mapping)
@@ -1324,6 +1941,10 @@ def verify_probe_artifacts(
         or not _meaningful(repository_state.get("akshare_version"))
     ):
         raise CoverageProbeError("coverage probe receipt repository state is invalid")
+    if timestamp_package.get("agent_commit") != repository_state.get("agent_commit"):
+        raise CoverageProbeError(
+            "coverage probe timestamp package does not bind the receipt Agent commit"
+        )
     artifacts = receipt.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         raise CoverageProbeError("coverage probe receipt artifacts are missing")
@@ -1378,7 +1999,7 @@ def verify_probe_artifacts(
         != {
             "expected_symbol_date_cells",
             "observed_symbol_date_cells",
-            "missing_symbol_date_cells",
+            "missing_symbol_date_cell_count",
             "duplicate_symbol_date_cells",
             "extra_symbol_date_cells",
         }
@@ -1386,8 +2007,9 @@ def verify_probe_artifacts(
         or not isinstance(coverage.get("observed_symbol_date_cells"), int)
         or isinstance(coverage.get("observed_symbol_date_cells"), bool)
         or not 0 <= coverage["observed_symbol_date_cells"] <= EXPECTED_CELLS
-        or not isinstance(coverage.get("missing_symbol_date_cells"), list)
-        or len(coverage.get("missing_symbol_date_cells", [])) > EXPECTED_CELLS
+        or not isinstance(coverage.get("missing_symbol_date_cell_count"), int)
+        or isinstance(coverage.get("missing_symbol_date_cell_count"), bool)
+        or not 0 <= coverage["missing_symbol_date_cell_count"] <= EXPECTED_CELLS
         or not isinstance(coverage.get("duplicate_symbol_date_cells"), int)
         or isinstance(coverage.get("duplicate_symbol_date_cells"), bool)
         or coverage["duplicate_symbol_date_cells"] < 0
@@ -1396,21 +2018,11 @@ def verify_probe_artifacts(
         or coverage["extra_symbol_date_cells"] < 0
     ):
         raise CoverageProbeError("coverage probe receipt coverage accounting is invalid")
-    missing_cells: set[tuple[str, str]] = set()
-    for encoded in coverage["missing_symbol_date_cells"]:
-        if (
-            not isinstance(encoded, str)
-            or encoded.count("|") != 1
-            or tuple(encoded.split("|", 1)) not in {
-                (symbol, date) for date in DATES for symbol in SYMBOLS
-            }
-        ):
-            raise CoverageProbeError("coverage probe missing-cell accounting is invalid")
-        cell = tuple(encoded.split("|", 1))
-        if cell in missing_cells:
-            raise CoverageProbeError("coverage probe missing-cell accounting is duplicated")
-        missing_cells.add(cell)
-    if coverage["observed_symbol_date_cells"] + len(missing_cells) != EXPECTED_CELLS:
+    if (
+        coverage["observed_symbol_date_cells"]
+        + coverage["missing_symbol_date_cell_count"]
+        != EXPECTED_CELLS
+    ):
         raise CoverageProbeError("coverage probe observed/missing cell accounting is inconsistent")
     if coverage["extra_symbol_date_cells"] and receipt.get("status") == "PASSED":
         raise CoverageProbeError("passed coverage probe receipt reports extra cells")
@@ -1427,25 +2039,27 @@ def verify_probe_artifacts(
     if any(not isinstance(value, bool) for value in field_quality.values()):
         raise CoverageProbeError("coverage probe receipt field-quality evidence is invalid")
     failures = receipt.get("failures")
-    if not isinstance(failures, list):
+    failure_categories = {
+        "empty_response",
+        "validation_error",
+        "provider_error",
+        "network_error",
+    }
+    if (
+        not isinstance(failures, Mapping)
+        or set(failures) != failure_categories
+        or any(
+            isinstance(failures.get(category), bool)
+            or not isinstance(failures.get(category), int)
+            or failures[category] < 0
+            for category in failure_categories
+        )
+    ):
         raise CoverageProbeError("coverage probe receipt failure evidence is invalid")
-    failure_cells: set[tuple[str, str]] = set()
-    for failure in failures:
-        if (
-            not isinstance(failure, Mapping)
-            or set(failure) != {"symbol", "date", "category"}
-            or failure.get("symbol") not in SYMBOLS
-            or failure.get("date") not in DATES
-            or failure.get("category")
-            not in {"empty_response", "validation_error", "provider_error", "network_error"}
-        ):
-            raise CoverageProbeError("coverage probe receipt failure evidence is invalid")
-        cell = (failure["symbol"], failure["date"])
-        if cell in failure_cells:
-            raise CoverageProbeError("coverage probe receipt failure evidence is duplicated")
-        failure_cells.add(cell)
-    if not failure_cells.issubset(missing_cells):
-        raise CoverageProbeError("coverage probe failures must correspond to missing cells")
+    if sum(failures.values()) != coverage["missing_symbol_date_cell_count"]:
+        raise CoverageProbeError(
+            "coverage probe aggregate failures must account for every missing cell"
+        )
     gates = receipt.get("gates")
     if not isinstance(gates, Mapping) or set(gates) != set(GATE_IDS) or any(
         not isinstance(gates[key], bool) for key in GATE_IDS
@@ -1470,11 +2084,54 @@ def verify_probe_artifacts(
         or not isinstance(rights.get("aggregate_receipt_publication_allowed"), bool)
     ):
         raise CoverageProbeError("coverage probe receipt rights evidence is invalid")
+    publication_consent = receipt.get("publication_consent")
+    if (
+        not isinstance(publication_consent, Mapping)
+        or set(publication_consent) != PUBLICATION_CONSENT_FIELDS
+        or publication_consent.get("review_status")
+        not in {"verified", "pending", "blocked"}
+        or any(
+            not isinstance(publication_consent.get(field), bool)
+            for field in PUBLICATION_CONSENT_FIELDS - {"review_status"}
+        )
+    ):
+        raise CoverageProbeError(
+            "coverage probe publication consent boundary is invalid"
+        )
     if receipt.get("status") == "PASSED" and (
-        not all(gates.values()) or failures or rights.get("review_status") != "verified"
+        not all(gates.values())
+        or any(failures.values())
+        or rights.get("review_status") != "verified"
+        or rights.get("aggregate_receipt_publication_allowed") is not True
+        or publication_consent.get("review_status") != "verified"
+        or any(
+            publication_consent.get(field) is not True
+            for field in PUBLICATION_CONSENT_FIELDS - {"review_status"}
+        )
     ):
         raise CoverageProbeError("passed coverage probe receipt contains a failed gate")
-    if receipt.get("status") in {"BLOCKED", "ERROR"} and all(gates.values()) and not failures:
+    if receipt.get("status") == "PASSED" and coverage != {
+        "expected_symbol_date_cells": EXPECTED_CELLS,
+        "observed_symbol_date_cells": EXPECTED_CELLS,
+        "missing_symbol_date_cell_count": 0,
+        "duplicate_symbol_date_cells": 0,
+        "extra_symbol_date_cells": 0,
+    }:
+        raise CoverageProbeError(
+            "passed coverage probe receipt does not establish canonical complete coverage"
+        )
+    if receipt.get("status") == "PASSED" and field_quality != {
+        "all_required_raw_bar_fields_valid": True,
+        "scope_and_cell_identity_valid": True,
+    }:
+        raise CoverageProbeError(
+            "passed coverage probe receipt field-quality evidence is not fully true"
+        )
+    if (
+        receipt.get("status") in {"BLOCKED", "ERROR"}
+        and all(gates.values())
+        and not any(failures.values())
+    ):
         raise CoverageProbeError("blocked coverage probe receipt has no blocking evidence")
     if spec_path is not None:
         spec_file = _regular_file(spec_path, "coverage probe specification")
@@ -1483,6 +2140,16 @@ def verify_probe_artifacts(
             raise CoverageProbeError("coverage probe receipt spec hash differs from supplied spec")
     else:
         spec_file = None
+    if prior_inventory_path is not None:
+        inventory_file = _regular_file(
+            prior_inventory_path, "prior specification inventory"
+        )
+        if sha256_file(inventory_file) != timestamp_package.get(
+            "prior_specification_inventory_sha256"
+        ):
+            raise CoverageProbeError(
+                "coverage probe timestamp package inventory hash differs from supplied inventory"
+            )
     if artifact_root is not None:
         root_entry = Path(artifact_root).expanduser()
         if root_entry.is_symlink():
@@ -1499,6 +2166,10 @@ def verify_probe_artifacts(
             if not _verify_artifact_metadata(root, artifact):
                 raise CoverageProbeError("private probe artifact hash or size mismatch")
             private_evidence.append(_verify_private_artifact_content(root, artifact))
+        if not {"normalized_private", "request_log_private"}.issubset(seen_kinds):
+            raise CoverageProbeError(
+                "private probe audit requires normalized bars and the exact request log"
+            )
         expected = paths | {"receipt.json", "private_manifest.json"}
         actual: set[str] = set()
         actual_dirs: set[str] = set()
@@ -1530,6 +2201,8 @@ def verify_probe_artifacts(
             != {
                 "schema_version",
                 "spec_sha256",
+                "timestamp_package_sha256",
+                "rights_review_sha256",
                 "agent_commit",
                 "qdata_commit",
                 "request_scope",
@@ -1539,8 +2212,11 @@ def verify_probe_artifacts(
                 "raw_rows_private",
             }
             or
-            manifest.get("schema_version") != "stage2_coverage_probe_private_manifest_v1"
+            manifest.get("schema_version") != PRIVATE_MANIFEST_SCHEMA_VERSION
             or manifest.get("spec_sha256") != spec_sha
+            or manifest.get("timestamp_package_sha256")
+            != sha256_bytes(canonical_json_bytes(receipt["timestamp_package"]))
+            or manifest.get("rights_review_sha256") != rights_review_sha256
             or manifest.get("agent_commit") != repository_state.get("agent_commit")
             or manifest.get("qdata_commit") != repository_state.get("qdata_commit")
             or manifest.get("request_scope") != request
@@ -1562,27 +2238,33 @@ def verify_probe_artifacts(
             expected_observed = coverage["observed_symbol_date_cells"]
             if len(normalized_cells) != expected_observed:
                 raise CoverageProbeError("private normalized bars disagree with receipt coverage")
-            receipt_failure_cells = {
-                (failure["symbol"], failure["date"])
-                for failure in failures
-            }
-            if normalized_cells & receipt_failure_cells:
-                raise CoverageProbeError("private normalized bars include a failed request cell")
         if request_statuses:
-            receipt_failure_cells = {
-                (failure["symbol"], failure["date"])
-                for failure in failures
-            }
             log_failure_cells = {
                 cell for cell, status in request_statuses.items() if status != "success"
             }
-            if log_failure_cells != receipt_failure_cells or private_failures != receipt_failure_cells:
-                raise CoverageProbeError("private request log failures disagree with receipt")
+            if private_failures != log_failure_cells:
+                raise CoverageProbeError("private request-log failure identities are inconsistent")
             log_success_cells = {
                 cell for cell, status in request_statuses.items() if status == "success"
             }
             if log_success_cells != normalized_cells:
                 raise CoverageProbeError("private request log successes disagree with normalized bars")
+            private_category_counts = {
+                category: sum(
+                    status == category for status in request_statuses.values()
+                )
+                for category in failures
+            }
+            if (
+                private_category_counts != dict(failures)
+                or len(log_failure_cells)
+                != coverage["missing_symbol_date_cell_count"]
+                or len(log_success_cells)
+                != coverage["observed_symbol_date_cells"]
+            ):
+                raise CoverageProbeError(
+                    "private exact-cell request log disagrees with public aggregate receipt"
+                )
     # For a passed receipt, invoke the authoritative Stage-2 validator.  This
     # additionally checks commit binding and all fixed claim/gate fields.
     if receipt.get("status") == "PASSED":
@@ -1651,6 +2333,7 @@ def _write_blocked_preflight_report(path: str | Path, reason: str) -> Path:
         "checked_at_utc": now,
         "spec_sha256": None,
         "inventory_sha256": None,
+        "timestamp_package_sha256": None,
         "timestamp_proof_sha256": None,
         "rights_review_sha256": None,
         "agent_commit": None,
@@ -1681,13 +2364,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     pre = sub.add_parser("preflight", help="check fixed probe gates without network requests")
-    for option in ("spec", "prior-inventory", "timestamp-proof", "rights-review", "output-dir"):
+    for option in (
+        "spec",
+        "prior-inventory",
+        "timestamp-package",
+        "timestamp-proof",
+        "rights-review",
+        "output-dir",
+    ):
         pre.add_argument(f"--{option}", required=True)
     pre.add_argument("--qdata-checkout", required=True)
     pre.add_argument("--agent-commit")
     pre.add_argument("--report", required=True)
     run = sub.add_parser("run", help="execute the exact 24-cell probe")
-    for option in ("spec", "prior-inventory", "timestamp-proof", "rights-review", "output-dir"):
+    for option in (
+        "spec",
+        "prior-inventory",
+        "timestamp-package",
+        "timestamp-proof",
+        "rights-review",
+        "output-dir",
+    ):
         run.add_argument(f"--{option}", required=True)
     run.add_argument("--qdata-checkout", required=True)
     run.add_argument("--agent-commit")
@@ -1702,6 +2399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             report = preflight_probe(
                 spec_path=args.spec,
                 prior_inventory_path=args.prior_inventory,
+                timestamp_package_path=args.timestamp_package,
                 timestamp_proof_path=args.timestamp_proof,
                 rights_review_path=args.rights_review,
                 output_dir=args.output_dir,
@@ -1716,6 +2414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             receipt = run_probe(
                 spec_path=args.spec,
                 prior_inventory_path=args.prior_inventory,
+                timestamp_package_path=args.timestamp_package,
                 timestamp_proof_path=args.timestamp_proof,
                 rights_review_path=args.rights_review,
                 qdata_checkout=args.qdata_checkout,

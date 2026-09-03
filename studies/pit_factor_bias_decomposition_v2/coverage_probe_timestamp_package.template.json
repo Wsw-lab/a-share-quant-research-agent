@@ -1,0 +1,10 @@
+{
+  "schema_version": "stage2_coverage_probe_timestamp_package_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "probe_id": "stage2-akshare-raw-coverage-2016-2018-v2",
+  "spec_path": "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json",
+  "spec_sha256": null,
+  "prior_specification_inventory_path": "studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json",
+  "prior_specification_inventory_sha256": null,
+  "agent_commit": null
+}

@@ -7,13 +7,27 @@
     "sessions_per_month": 15,
     "publish_date_non_null_rate": 0.95,
     "complete_per_symbol_quote_contracts_per_target_month": 1000,
+    "nonstale_fundamentals_on_the_same_complete_quote_contract_symbols_per_target_month": 1000,
     "target_primary_interval": [
       "2010-01-01",
       "2022-12-31"
     ],
     "warmup_start": "2009-01-01",
     "required_quote_outcome_end": "2023-01-31",
-    "required_fundamental_publication_start": "2009-01-01"
+    "required_fundamental_publication_start": "2009-01-01",
+    "terminal_survivor_cutoff": "2023-01-31",
+    "security_identifier_contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1"
+  },
+  "canonical_input_integrity": {
+    "row_width_rule": "No canonical CSV may contain a short or over-wide row.",
+    "logical_key_rule": "Normalized logical keys must be unique: quotes=(symbol,date), stock_master=(symbol), fundamentals=(symbol,reportPeriodEnd), official_calendar=(date).",
+    "date_format_rule": "Every non-blank canonical date value must be an exact, valid YYYY-MM-DD token within the runner-safe inclusive range 1677-09-22 through 2262-04-11. Provider-native compact dates, timestamps, timezone suffixes, trailing text, and out-of-range dates must be normalized or rejected by the private adapter before the authoritative coverage audit.",
+    "numeric_format_rule": "Canonical close_raw, adjustment_factor, close, amount, and roeDiluted values must use ASCII decimal notation with an optional sign, fraction, and base-10 exponent. Underscores, locale separators, hexadecimal notation, NaN, and infinity are invalid.",
+    "price_adjustment_rule": "Every quote row must carry exact price_adjustment_method=close_equals_close_raw_times_adjustment_factor and price_adjustment_convention=provider_cumulative_backward_adjusted_hfq_no_rebasing. close_raw, adjustment_factor, and close must be finite and strictly positive; close must equal close_raw multiplied by adjustment_factor within fixed relative and absolute tolerances of 1e-12. The factor is aligned on exact symbol and official session with no fill and is used as delivered without rebasing.",
+    "amount_unit_rule": "Every canonical quote row must carry amount_unit exactly equal to CNY. Provider-native thousand-CNY or other units must be normalized before the canonical raw input is hash-bound, audited, registered, or executed; the provider unit, conversion, and provenance remain human-reviewed evidence.",
+    "symbol_format_rule": "Every canonical quotes, stock_master, and fundamentals row must use exactly six ASCII digits followed by uppercase .SH or .SZ; blanks, whitespace-padded values, and pandas-default NA-like tokens are invalid. Format validity is necessary but not sufficient: a human-reviewed provider definition and code-change mapping must bind the fixed provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1 token across all three files before hashing.",
+    "required_non_null_rule": "Every mandatory field is non-blank except publishDate, whose otherwise eligible in-scope coverage threshold is 0.95, and delistDate, whose nullability follows lifecycle status.",
+    "binding": "The recomputable coverage report records only aggregate integrity counts and is hash-bound with the human review attestation by the design manifest."
   },
   "post_execution_evidence_eligibility": {
     "minimum_finite_signal_outcome_pairs_per_registered_factor_variant_month": 1000,
@@ -25,19 +39,40 @@
     "failure_status": "INSUFFICIENT_EVIDENCE",
     "failure_rule": "Any unresolved required endpoint makes the affected cell non-estimable; do not drop the security, shorten the interval, or relax the threshold."
   },
+  "rank_group_contract": {
+    "rank_method": "average percentile rank",
+    "bottom_quintile_rule": "percentile rank <= 0.2",
+    "top_quintile_rule": "percentile rank > 0.8",
+    "tie_rule": "Every equal signal value receives the same average percentile rank and remains in one group. Consequently, group sizes may differ from 20 percent when a tie spans a cutoff; no identifier-order tie break is allowed.",
+    "boundary_check": "With 1,000 distinct values, the bottom and top rules select exactly 200 observations each."
+  },
   "daily_quotes": {
     "required": [
       "date",
       "symbol",
+      "close_raw",
+      "adjustment_factor",
       "close",
+      "price_adjustment_method",
+      "price_adjustment_convention",
+      "close_observation_type",
       "amount",
+      "amount_unit",
       "is_st",
       "is_suspended"
     ],
     "coverage_gates": [
+      "every delivered close is non-blank, finite numeric, and strictly positive; every delivered amount is non-blank, finite numeric, and non-negative; the coverage report discloses only aggregate invalid counts and any invalid row blocks readiness",
+      "every delivered close_raw and adjustment_factor is non-blank, finite numeric, and strictly positive; the exact fixed method and convention tokens are present without case or whitespace normalization; close=close_raw*adjustment_factor is verified row by row within fixed 1e-12 relative and absolute tolerances",
+      "a completed human review binds distinct SHA-256 evidence for the provider close_raw definition, the cumulative adjustment-factor and hfq convention, and the exact normalization or adapter record; method tokens and arithmetic alone cannot prove provider semantics",
+      "amount_unit is exactly the case-sensitive token CNY on every row; missing, whitespace-padded, differently cased, thousand-CNY, or other unit tokens fail closed before the CNY 5,000,000 liquidity threshold can be evaluated",
       "every target month contains at least 15 distinct quote dates that are members of the bound official calendar",
       "duplicate security rows cannot increase the distinct-session count",
+      "close_observation_type is exactly traded_close when is_suspended is false and exactly suspension_valuation when is_suspended is true; blanks, other values, whitespace-padded values, and mismatches fail closed",
+      "both traded_close and suspension_valuation occur among active-master identifiers carrying a quote on the 156 fixed signal sessions; global or non-signal rows cannot satisfy this non-degeneracy gate",
+      "for every target month, every potential candidate in active strict A-share master intersected with signal-session quote identifiers has exact quote rows at t, t+1, t+20, and t+21; exact_endpoint_symbol_count must equal signal_session_candidate_symbol_count, in addition to the separate minimum of 1,000",
       "for each of all 156 target rebalances, at least 1,000 strict SH/SZ A-share identifiers jointly have quote rows at every official session t-60 through t for the implemented 60-session momentum history, at every official session t-20 through t for 20 daily returns, at every official session t-19 through t for the 20-session amount mean, and at t, t+1, t+20, and t+21 for both exact outcome clocks",
+      "the same set intersection—not a separate group of securities—must contain at least 1,000 identifiers with an available nonstale fundamental observation at each target rebalance",
       "the scoped quote universe for each target rebalance is restricted to strict A-shares satisfying listDate <= signal date <= delistDate (with a missing delistDate treated as open-ended)",
       "the per-symbol contract is derived only from identifier/date presence; a dense rebalance date, aggregate monthly symbol count, or file-level minimum and maximum dates cannot substitute for the warm-up and endpoint rows",
       "every quote date is a member of the bound official calendar"
@@ -50,25 +85,25 @@
       "previous_close",
       "upper_limit",
       "lower_limit",
-      "adjustment_factor",
       "float_market_cap"
     ],
-    "semantics": "The adjusted close return series, amount units and cutoff timing, official-session calendar, adjustment convention, exact per-symbol endpoint behavior, and missing-session behavior must be documented and hash-bound for the IC core. Under the current adapter only an exact adjusted-close quote on the required official session resolves an endpoint. Unadjusted open, price-limit, volume, and nonfill semantics are inputs to a planned portfolio module and are not required or claimed by the current runner."
+    "semantics": "The canonical IC-core price contract is machine-readable: close_raw is the supplier-recorded same-session traded close or suspension valuation named by close_observation_type; adjustment_factor is the supplier cumulative corporate-action factor on the exact symbol/session; price_adjustment_method and price_adjustment_convention use the two fixed tokens; and close=close_raw*adjustment_factor within the frozen tolerance. The factor is used as delivered without rebasing. Per-symbol positive constant rescaling leaves return ratios unchanged, and cross-sectional price levels are not estimands. Provider definitions and the exact adapter/normalization are separately hash-bound in human review. Provider-native amount unit, normalization into exact CNY before input binding, amount cutoff timing, official-session calendar, exact per-symbol endpoint behavior, and missing-session behavior must also be documented. A non-suspended row is a traded_close. A suspended row is a suspension_valuation recorded or published by the supplier for that exact official session; research code may not construct it by carrying forward a last price. The resulting returns and ICs are valuation diagnostics, not executable trade returns. Unadjusted open, price-limit, volume, and nonfill semantics are inputs to a planned portfolio module and are not required or claimed by the current runner."
   },
   "endpoint_resolution": {
     "required_sessions": {
       "no_lag": ["t", "t+20"],
       "one_session_lag": ["t+1", "t+21"]
     },
-    "currently_supported_method": "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE",
+    "currently_supported_method": "EXACT_OFFICIAL_SESSION_PROVIDER_RECORDED_TRADED_CLOSE_OR_SUSPENSION_VALUATION",
+    "suspension_valuation_rule": "A suspension valuation must be recorded or published by the supplier for the exact official session and identified by close_observation_type=suspension_valuation with is_suspended=true. Research-code forward-fill is forbidden.",
     "unsupported_without_a_separately_validated_and_frozen_adapter": [
-      "suspension_valuation_or_last_price_carry_forward",
       "delisting_return_cash_settlement_or_terminal_wealth"
     ],
     "forbidden_fallbacks": [
       "advance_to_next_observed_quote",
       "use_a_post_endpoint_reopening_quote",
       "use_last_observed_price",
+      "researcher_generated_forward_fill",
       "assign_zero_or_other_default_recovery"
     ],
     "unresolved_codes": [
@@ -76,7 +111,14 @@
       "MISSING_EXACT_LAG_ENTRY",
       "MISSING_EXACT_LAG_EXIT"
     ],
-    "evidence_boundary": "A bound official calendar establishes the target session position but does not establish a per-security price on that session. The current exact-quote adapter records which required endpoint is missing but does not infer whether suspension, delisting, or another economic cause produced the absence. Any unresolved per-security endpoint remains blocking."
+    "evidence_boundary": "A bound official calendar establishes the target session position but does not establish a per-security close observation on that session. Mechanical mapping checks cannot prove supplier provenance, so a bound human review must cite evidence that each suspension valuation was supplier-recorded or published for that exact session. Any unresolved per-security endpoint remains blocking, and delisting terminal wealth is not implemented."
+  },
+  "pre_registration_suspension_fallback": {
+    "current_registered_target": "retain all 18 variants and 72 factor-variant cells",
+    "default_if_supplier_evidence_is_unavailable": "BLOCKED",
+    "only_permitted_change_window": "prospective amendment before external registration and before any Stage-2 outcome access",
+    "fallback_design": "remove every variant that includes the suspension component, leaving 10 variants and 40 factor-variant cells",
+    "required_actions": "amend, timestamp, and re-freeze the plan, statistical analysis plan, design manifest, estimand inventory, multiplicity family, and execution authorization; never switch to the fallback after registration or outcome access"
   },
   "official_calendar": {
     "required": true,
@@ -108,10 +150,13 @@
       "stockType"
     ],
     "semantic_gates": [
+      "the master is a complete historical census of every strict SH/SZ A-share active at any time from January 2009 through January 2023, including delisted securities; a latest-only list is forbidden",
       "every scoped SH/SZ A-share row has a valid listDate",
       "every scoped delisted row has a valid delistDate on or after listDate",
       "active rows have no delistDate and delisted rows are not represented as active",
       "monthly coverage counts use only securities active on that month's first official signal session; future listings and already-delisted securities cannot contribute",
+      "the A0 terminal-survivor comparator is fixed at 2023-01-31, the required quote/outcome cutoff: for each historical signal session it first requires listDate <= signal date, then retains delistDate null or strictly after 2023-01-31; extraction-time listStatus and acquisition date cannot redefine the comparator",
+      "the provider-stable identifier contract token is provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1 across quotes, stock_master, and fundamentals; provider identifier semantics and every historical code change or reassignment mapping require separate human-reviewed hash evidence before input binding",
       "listStatus uses a documented active or delisted value",
       "the scoped master contains at least one delisted A-share"
     ],
@@ -132,15 +177,20 @@
     ],
     "primary_roe_contract": {
       "source_field": "roeDiluted mapped to roe",
+      "mapping_cardinality": "one-to-one",
       "unit": "decimal",
+      "publication_date_field": "publishDate",
+      "publication_date_semantics": "actual recorded disclosure date, not a scheduled, appointment, update, ingestion, or revision timestamp",
+      "numeric_value_rule": "Every non-missing roeDiluted value must parse as a finite number; non-numeric, NaN, and infinite values are aggregate-counted and fail closed without publication of the values.",
       "transformation": "latest disclosed cumulative interim or annual observation; no analyst annualization",
       "maximum_staleness_months": 18,
       "duplicate_symbol_report_period_rule": "fail closed without a separately validated vintage schema",
-      "publication_order_rule": "a usable roeDiluted record with publishDate earlier than reportPeriodEnd is invalid and blocks readiness",
+      "publication_order_rule": "any delivered row with valid non-blank publishDate and reportPeriodEnd where publishDate is earlier than reportPeriodEnd is invalid and blocks readiness; the scoped eligible-record check is retained as a separate diagnostic",
       "required_evidence": [
         "provider_field_dictionary_sha256",
         "endpoint_mapping_sha256",
-        "unit_reconciliation_sha256"
+        "unit_reconciliation_sha256",
+        "actual_recorded_publication_date_semantics_sha256"
       ]
     },
     "reconstructed_roe_module": {
@@ -184,16 +234,22 @@
   },
   "rights_and_identity": {
     "required": [
-      "source_name",
+      "exact_four_role_dataset_source_mappings",
+      "per_role_source_name",
+      "complete_canonical_to_provider_field_mapping",
+      "per_role_authorized_public_projection_sha256",
+      "rights_and_declaration_projection_exact_match",
       "license_or_contract_scope",
       "redistribution_status",
       "field_definitions",
+      "source_identity_publication_permission_true_for_each_required_dataset",
+      "field_mapping_citation_permission_true_for_each_required_dataset",
       "raw_file_sha256",
       "row_count",
       "symbol_count",
       "minimum_and_maximum_dates"
     ],
-    "public_release": "Publish code, schemas, synthetic fixtures, hashes, aggregate coverage, aggregate missingness/common-support diagnostics, and aggregate endpoint reason-code counts only. The complete per-security endpoint-reason ledger remains private but is bound in the result receipt by SHA-256. The receipt may embed the exact official-calendar session dates only when that publication right is explicitly attested, and no licensed market or fundamental row may be published without separate explicit rights."
+    "public_release": "Publish code, schemas, synthetic fixtures, hashes, the fixed four-role data-declaration source/mapping projection, aggregate coverage, aggregate missingness/common-support diagnostics, and aggregate endpoint reason-code counts only. Source-identity publication and field-mapping citation permissions must both be true for every required dataset before Stage 2. The private v2 rights packet must authorize and hash the exact per-role source name and complete canonical-to-provider mapping embedded by the declaration; generic compliance text, a role/field difference, or a hash mismatch fails closed. Private contract text, source references, signatures, and verification URIs are not published. The complete per-security endpoint-reason ledger remains private but is bound in the result receipt by SHA-256. The receipt may embed the exact official-calendar session dates only when that publication right is explicitly attested, and no licensed market or fundamental row may be published without separate explicit rights."
   },
   "execution_environment": {
     "python_version": "3.12.12",
@@ -209,7 +265,7 @@
     "allowed_before_registration": [
       "schema and field dictionary review",
       "aggregate date, row, symbol, session, and non-null coverage",
-      "fixed-symbol fixed-date source probes",
+      "fixed-symbol fixed-date source probes only after the exact probe specification receives an independently reviewable external timestamp",
       "hashing and rights review",
       "generic exact-session quote coverage and endpoint-adapter semantic review that contains no factor signal, forward return, IC, or variant ranking"
     ],

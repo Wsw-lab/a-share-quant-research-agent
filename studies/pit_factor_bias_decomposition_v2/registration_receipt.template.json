@@ -18,6 +18,11 @@
     "total_inferential_estimands": 29,
     "roe_common_support_components": 3,
     "timing_decomposition_tolerance_source": "design_manifest.registered_design_assertions.timing_decomposition_tolerance_source",
+    "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+    "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+    "terminal_survivor_cutoff": "2023-01-31",
+    "security_identifier_contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+    "top_quintile_rule": "percentile_rank_strictly_greater_than_0.8",
     "claim_boundary": "single_version_recorded_publication_date_specification_effect_only"
   },
   "proof": {
@@ -36,5 +41,21 @@
     "identity_rule": "provider, identifier, verification_uri, registered_at, and registered_artifact_sha256 must agree with the retained provider record."
   },
   "human_trust_boundary": "The current verifier does not implement cryptographic signature or registry-inclusion-proof validation. The manifest hash establishes artifact identity but not timestamp authenticity. A named human verifier must inspect the provider-controlled record, preserve and hash the evidence, and accept responsibility for that verification; a future cryptographic path requires a new tested protocol.",
-  "completion_gate": "Do not populate this template unless an external provider has actually accepted the exact design-manifest artifact. Null, placeholder, unverified, or self-issued evidence cannot authorize execution."
+  "public_receipt_embedding": {
+    "schema_version": "stage2_public_receipt_embedding_consent_v1",
+    "approved": false,
+    "artifact_type": "registration_receipt",
+    "scope": "full_artifact",
+    "receipt_schema_version": "confirmatory_study_receipt_v2",
+    "public_fields": [
+      "*"
+    ],
+    "privacy_assertions": {
+      "sensitive_material_excluded": false,
+      "local_filesystem_locations_excluded": false,
+      "identities_and_verification_uris_approved_for_publication": false
+    },
+    "statement": "The specified artifact scope is approved for embedding in the public Stage-2 receipt."
+  },
+  "completion_gate": "Do not populate this template unless an external provider has actually accepted the exact design-manifest artifact. Null, placeholder, unverified, self-issued evidence, or incomplete public-receipt consent cannot authorize execution."
 }

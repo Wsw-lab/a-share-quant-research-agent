@@ -33,10 +33,13 @@
     "minimum_sessions_per_month": 15,
     "minimum_publish_date_non_null_rate": 0.95,
     "minimum_complete_per_symbol_quote_contracts_per_target_month": 1000,
+    "terminal_survivor_cutoff": "2023-01-31",
+    "security_identifier_contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
     "per_symbol_quote_contract": "At every one of the 156 first-official-session rebalances, at least 1,000 strict SH/SZ A-share identifiers must jointly have quote rows at every t-60 through t session; every t-20 through t session; every t-19 through t session; and t, t+1, t+20, and t+21. This is an outcome-free identifier/date-presence gate; monthly aggregates and file endpoints are insufficient.",
     "owner_attestation_that_primary_sample_outcomes_were_not_previously_inspected": true,
     "coverage_audit_must_pass": true,
     "execution_semantics_tradability_and_rights_attestation_required": true,
+    "machine_verified_adjusted_close_formula_and_human_evidence_required": true,
     "official_calendar_schema_and_sha256_required": true,
     "execution_plan_must_be_materialized_as_a_separate_flat_file": true,
     "design_manifest_must_bind_the_frozen_plan_before_external_registration": true,
@@ -77,6 +80,25 @@
     "momentum_60d": 0.3,
     "low_vol_20d": 0.2
   },
+  "security_identifier_contract": {
+    "contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+    "canonical_format": "six_ascii_digits_dot_uppercase_SH_or_SZ",
+    "cross_input_join_rule": "the_same_provider_stable_identifier_semantics_apply_to_quotes_stock_master_and_fundamentals",
+    "provider_stability_rule": "identifier_identity_must_not_depend_on_extraction_or_acquisition_date",
+    "code_change_rule": "every_historical_code_change_or_reassignment_is_resolved_by_a_documented_provider_mapping_before_input_hash_binding"
+  },
+  "universe_contract": {
+    "terminal_survivor_cutoff": "2023-01-31",
+    "terminal_survivor_rule": "A0 includes a security at a signal session only if listDate is on or before that session and delistDate is null or strictly after 2023-01-31; extraction-time listStatus and acquisition date never redefine this fixed comparator.",
+    "point_in_time_rule": "A1 and I variants include a security only from listDate through delistDate inclusive.",
+    "lifecycle_consistency_rule": "Active status requires null delistDate; delisted status requires a valid delistDate on or after listDate."
+  },
+  "rank_group_contract": {
+    "rank_method": "average percentile ranks",
+    "bottom_quintile_rule": "rank <= 0.2",
+    "top_quintile_rule": "rank > 0.8",
+    "tie_rule": "All equal signal values receive the same average percentile rank and remain together; tail group sizes may differ from 20 percent."
+  },
   "robustness_factors": {
     "implementation_status": "planned_unimplemented_excluded_from_current_ic_core",
     "items": {
@@ -92,6 +114,7 @@
     "one_session_lag"
   ],
   "minimum_amount": 5000000,
+  "minimum_amount_unit": "CNY",
   "variants": [
     {
       "id": "A0_final_report_end",
@@ -270,14 +293,32 @@
     "duplicate_rule": "Fail closed on duplicate symbol-reportPeriodEnd records unless a separately validated vintage schema identifies versions.",
     "lock_gate": "The provider field dictionary, formula, units, and endpoint mapping must be hash-bound before registration; otherwise the plan cannot lock."
   },
+  "quote_price_adjustment_contract": {
+    "canonical_close_field": "close",
+    "raw_close_field": "close_raw",
+    "adjustment_factor_field": "adjustment_factor",
+    "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+    "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+    "adjusted_price_formula": "close=close_raw*adjustment_factor",
+    "relative_tolerance": 1e-12,
+    "absolute_tolerance": 1e-12,
+    "factor_alignment_rule": "exact_symbol_and_official_session_no_fill",
+    "factor_domain_rule": "finite_strictly_positive",
+    "normalization_base_rule": "provider_cumulative_factor_as_delivered_no_rebasing",
+    "return_invariance_rule": "per_symbol_positive_constant_factor_rescaling_leaves_return_ratios_unchanged",
+    "cross_sectional_price_level_used_as_estimand": false,
+    "materialization_stage": "adjusted_close_materialized_before_raw_input_hash_binding"
+  },
   "outcome_clocks": {
-    "ic_no_lag": "Signal at exchange close t; adjusted close-to-close return from t to t+20 official exchange sessions.",
-    "ic_one_session_lag": "Same signal definition; adjusted close-to-close return from t+1 to t+21 official exchange sessions.",
+    "ic_no_lag": "Signal at exchange close t; provider close-observation valuation return from t to t+20 official exchange sessions.",
+    "ic_one_session_lag": "Same signal definition; provider close-observation valuation return from t+1 to t+21 official exchange sessions.",
     "portfolio_baseline_planned": "Signal after close t; unadjusted-open entry at t+1 and exit at t+21.",
     "portfolio_lag_planned": "Signal after close t; unadjusted-open entry at t+2 and exit at t+22.",
     "publication_date_rule": "A date-only publishDate becomes usable strictly after that date, never on the same exchange session.",
-    "current_endpoint_adapter": "exact adjusted-close quote on each required official endpoint only",
-    "unresolved_endpoint_rule": "Do not advance to the next quote, carry forward a last price, or assign a default recovery. Mark the cell non-estimable and the study INSUFFICIENT_EVIDENCE."
+    "current_endpoint_adapter": "exact provider-recorded traded close or supplier-recorded/published same-session suspension valuation on each required official endpoint",
+    "close_observation_type_rule": "traded_close iff is_suspended=false; suspension_valuation iff is_suspended=true; the supplier must record or publish the valuation for that exact official session and research code never forward-fills it",
+    "interpretation": "valuation-return and rank-IC diagnostics, not executable trade returns",
+    "unresolved_endpoint_rule": "Do not advance to the next quote, use a reopening quote, construct a research-code forward fill, or assign a default recovery. Mark the cell non-estimable and the study INSUFFICIENT_EVIDENCE."
   },
   "endpoint_resolution_contract": {
     "denominator": "The signal-eligible security set is fixed before outcome availability is examined.",
@@ -286,16 +327,16 @@
       "one_session_lag": ["t+1", "t+21"]
     },
     "currently_supported_resolution_methods": [
-      "EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE"
+      "EXACT_OFFICIAL_SESSION_PROVIDER_RECORDED_TRADED_CLOSE_OR_SUSPENSION_VALUATION"
     ],
     "reserved_unimplemented_resolution_methods": [
-      "ATTESTED_CALENDARIZED_SUSPENSION_VALUATION",
       "VERIFIED_DELISTING_OR_TERMINAL_WEALTH"
     ],
     "forbidden_fallbacks": [
       "advance_to_next_observed_quote",
       "use_post_endpoint_reopening_price",
       "carry_forward_last_price_without_a_separately_validated_and_frozen_adapter",
+      "researcher_generated_forward_fill",
       "assign_zero_or_other_default_recovery"
     ],
     "unresolved_reason_codes": [
@@ -303,8 +344,16 @@
       "MISSING_EXACT_LAG_ENTRY",
       "MISSING_EXACT_LAG_EXIT"
     ],
-    "reason_code_rule": "Every signal-eligible record receives a machine-readable endpoint code. Any code other than EXACT_OFFICIAL_SESSION_ADJUSTED_CLOSE is unresolved under the current core and makes that cell non-estimable.",
+    "pre_lock_candidate_coverage_rule": "For every target month, all identifiers in active strict A-share master intersected with signal-session quote identifiers must have exact t, t+1, t+20, and t+21 rows; exact_endpoint_symbol_count must equal signal_session_candidate_symbol_count, and at least 1,000 complete quote contracts are still required.",
+    "reason_code_rule": "Every signal-eligible record receives a machine-readable endpoint code. A resolved exact-session code covers a provider-recorded traded close or attested same-session suspension valuation; any unresolved code makes that cell non-estimable.",
     "receipt_rule": "The canonical result receipt reports aggregate code counts, binds the complete private per-security endpoint-reason ledger by SHA-256, and verifies exact denominator coverage without redistributing licensed rows."
+  },
+  "pre_registration_suspension_fallback": {
+    "current_design": "18 variants and 72 factor-variant cells remain the target",
+    "default_if_supplier_same_session_valuation_evidence_is_unavailable": "BLOCKED_FOR_STAGE2",
+    "only_permitted_change_window": "before external registration and before Stage-2 outcome access",
+    "prospective_fallback": "remove all eight suspension-component factorial variants, leaving 10 variants and 40 factor-variant cells",
+    "required_refreeze": "new timestamped plan, SAP, manifest, estimand and multiplicity inventory, and authorization; prohibited after registration or outcome access"
   },
   "official_calendar_contract": {
     "schema_version": "stage2_official_calendar_csv_v1",
@@ -415,7 +464,7 @@
       "execution_authorization": "execution_authorization.template.json"
     }
   },
-  "reporting_rule": "Report every registered IC factor-variant cell, exactly 29 inferential estimands (the sole primary plus the fixed 28-member secondary family), the three ordered ROE common-support components, their deterministic efficiency check at absolute tolerance 1e-12, the two deterministic timing-isolation checks, aggregate signal-missingness/common-support counts, and the no-return publication-exposure diagnostics; do not select or headline a best strategy. Cell-level means, Newey-West t-statistics, and top-minus-universe spreads are descriptive completeness outputs only and cannot support cell-specific discovery claims. The result receipt must bind the complete per-security endpoint-reason ledger and verify coverage of the signal-eligible denominator. Percentage attenuation, raw-ratio, robustness, structured deviation-log reporting, portfolio, cost, interaction-test, bootstrap, turnover, nonfill, and announcement-event outputs remain unavailable and excluded until their separately frozen modules exist.",
+  "reporting_rule": "Report every registered IC factor-variant cell, exactly 29 inferential estimands (the sole primary plus the fixed 28-member secondary family), the three ordered ROE common-support components, their deterministic efficiency check at absolute tolerance 1e-12, the two deterministic timing-isolation checks, aggregate signal-missingness/common-support counts, and the no-return publication-exposure diagnostics; do not select or headline a best strategy. Cell-level means, Newey-West t-statistics, and top-minus-universe valuation-return spreads are descriptive completeness outputs only and cannot support cell-specific discovery claims. The result receipt must bind the complete per-security endpoint-reason ledger and verify coverage of the signal-eligible denominator. These outputs are valuation-return and rank-IC diagnostics, not executable trade returns. Percentage attenuation, raw-ratio, robustness, structured deviation-log reporting, portfolio, cost, interaction-test, bootstrap, turnover, nonfill, and announcement-event outputs remain unavailable and excluded until their separately frozen modules exist.",
   "claim_gates": {
     "performance_claim": false,
     "generalization_claim": false,

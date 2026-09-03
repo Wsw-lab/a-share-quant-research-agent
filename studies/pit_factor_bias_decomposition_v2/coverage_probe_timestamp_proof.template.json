@@ -5,7 +5,7 @@
   "timestamped_at_utc": null,
   "verification_uri": null,
   "evidence_sha256": null,
-  "subject_type": "coverage_probe_spec_sha256",
+  "subject_type": "coverage_probe_package_manifest_sha256",
   "subject_sha256": null,
   "verifier": null,
   "verified_at_utc": null,

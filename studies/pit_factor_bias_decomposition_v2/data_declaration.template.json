@@ -1,0 +1,131 @@
+{
+  "source_classification": null,
+  "dataset_source_mappings": {
+    "schema_version": "stage2_public_dataset_source_mappings_v1",
+    "datasets": {
+      "quotes": {
+        "dataset_role": "quotes",
+        "source_name": null,
+        "field_mapping": {
+          "date": null,
+          "symbol": null,
+          "close_raw": null,
+          "adjustment_factor": null,
+          "close": null,
+          "price_adjustment_method": null,
+          "price_adjustment_convention": null,
+          "close_observation_type": null,
+          "amount": null,
+          "amount_unit": null,
+          "is_st": null,
+          "is_suspended": null
+        }
+      },
+      "stock_master": {
+        "dataset_role": "stock_master",
+        "source_name": null,
+        "field_mapping": {
+          "symbol": null,
+          "listDate": null,
+          "delistDate": null,
+          "listStatus": null,
+          "stockType": null
+        }
+      },
+      "fundamentals": {
+        "dataset_role": "fundamentals",
+        "source_name": null,
+        "field_mapping": {
+          "symbol": null,
+          "roeDiluted": null,
+          "publishDate": null,
+          "reportPeriodEnd": null
+        }
+      },
+      "official_calendar": {
+        "dataset_role": "official_calendar",
+        "source_name": null,
+        "field_mapping": {
+          "date": null
+        }
+      }
+    }
+  },
+  "redistributable": false,
+  "price_semantics": null,
+  "rights_review": null,
+  "fundamental_contract": {
+    "roe_source_field": "roeDiluted",
+    "normalized_field": "roe",
+    "mapping_cardinality": "one_to_one",
+    "unit": "decimal",
+    "publication_date_field": "publishDate",
+    "publication_date_semantics": "actual_recorded_disclosure_date_not_scheduled_or_update_date",
+    "maximum_staleness_months": 18,
+    "same_day_publication_usable": false,
+    "duplicate_symbol_report_period_rule": "fail_closed"
+  },
+  "official_calendar_semantics": "Shanghai and Shenzhen common official open sessions; one unique row per session",
+  "quote_date_rule": "Every quote date must be a member of the bound official calendar",
+  "quote_price_adjustment_contract": {
+    "canonical_close_field": "close",
+    "raw_close_field": "close_raw",
+    "adjustment_factor_field": "adjustment_factor",
+    "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+    "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+    "adjusted_price_formula": "close=close_raw*adjustment_factor",
+    "relative_tolerance": 1e-12,
+    "absolute_tolerance": 1e-12,
+    "factor_alignment_rule": "exact_symbol_and_official_session_no_fill",
+    "factor_domain_rule": "finite_strictly_positive",
+    "normalization_base_rule": "provider_cumulative_factor_as_delivered_no_rebasing",
+    "return_invariance_rule": "per_symbol_positive_constant_factor_rescaling_leaves_return_ratios_unchanged",
+    "cross_sectional_price_level_used_as_estimand": false,
+    "materialization_stage": "adjusted_close_materialized_before_raw_input_hash_binding",
+    "provider_close_raw_definition_sha256": null,
+    "provider_adjustment_factor_definition_sha256": null,
+    "normalization_or_adapter_evidence_sha256": null
+  },
+  "quote_amount_contract": {
+    "canonical_amount_unit": "CNY",
+    "normalization_stage": "provider_native_amount_normalized_before_raw_input_hash_binding",
+    "provider_raw_amount_unit": null,
+    "normalization_method": null,
+    "normalization_provenance_sha256": null
+  },
+  "security_identifier_contract": {
+    "contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+    "canonical_format": "six_ascii_digits_dot_uppercase_SH_or_SZ",
+    "cross_input_join_rule": "the_same_provider_stable_identifier_semantics_apply_to_quotes_stock_master_and_fundamentals",
+    "provider_stability_rule": "identifier_identity_must_not_depend_on_extraction_or_acquisition_date",
+    "code_change_rule": "every_historical_code_change_or_reassignment_is_resolved_by_a_documented_provider_mapping_before_input_hash_binding",
+    "provider_identifier_definition_sha256": null,
+    "code_change_mapping_evidence_sha256": null
+  },
+  "public_receipt_embedding": {
+    "schema_version": "stage2_public_receipt_embedding_consent_v1",
+    "approved": false,
+    "artifact_type": "data_declaration",
+    "scope": "fixed_public_projection",
+    "receipt_schema_version": "confirmatory_study_receipt_v2",
+    "public_fields": [
+      "source_classification",
+      "dataset_source_mappings",
+      "redistributable",
+      "price_semantics",
+      "fundamental_contract",
+      "official_calendar_semantics",
+      "quote_date_rule",
+      "quote_price_adjustment_contract",
+      "quote_amount_contract",
+      "security_identifier_contract",
+      "public_receipt_embedding"
+    ],
+    "privacy_assertions": {
+      "sensitive_material_excluded": false,
+      "local_filesystem_locations_excluded": false,
+      "identities_and_verification_uris_approved_for_publication": false
+    },
+    "statement": "The specified artifact scope is approved for embedding in the public Stage-2 receipt."
+  }
+}

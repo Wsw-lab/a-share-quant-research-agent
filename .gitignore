@@ -33,3 +33,38 @@ __pycache__/
 author_identity_package.private.json
 endpoint_reason_ledger.private.json
 **/.stage2-authorization-consumption/
+
+# Completed procurement and delivery records are private. Blank templates stay tracked.
+**/provider_capability_and_field_mapping.completed.xlsx
+**/provider_capability_and_field_mapping.filled.xlsx
+**/provider_rights_confirmation.completed.*
+**/provider_rights_confirmation.signed.*
+**/private_handoff_manifest.json
+**/provider_delivery_acceptance_receipt.json
+**/data_rights_attestation.json
+**/stage2_data_rights_attestation.json
+**/data_review_attestation.json
+**/data_declaration.json
+**/stage2_data_declaration.json
+**/prior_exposure_attestation.json
+**/prior_exposure_attestation.completed.*
+**/prior_exposure_attestation.signed.*
+**/coverage_probe_rights_review.json
+**/coverage_probe_timestamp_proof.json
+**/external_registration_handoff.json
+**/stage2_data_access_audit.json
+**/study_v2_coverage.json
+**/stage2-private-delivery-*/
+**/provider_capability_response.xlsx
+**/provider_rights_confirmation.pdf
+**/contract_or_terms_evidence.pdf
+**/provider_field_dictionary.pdf
+**/extraction_log.json
+**/transfer_record.txt
+# Licensed-data coverage reports stay private until the signed rights packet
+# explicitly permits publication of their hashes and aggregate diagnostics.
+studies/pit_factor_bias_decomposition_v2/current_bundle_coverage.json
+
+# Codex artifact staging; stable public templates live with the study files.
+/outputs/
+*.xlsx.inspect.ndjson

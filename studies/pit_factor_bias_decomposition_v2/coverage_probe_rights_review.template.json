@@ -1,15 +1,33 @@
 {
-  "schema_version": "stage2_coverage_probe_rights_review_v1",
+  "schema_version": "stage2_coverage_probe_rights_review_v3",
   "status": "draft_not_verified",
   "reviewed_at_utc": null,
   "reviewer": null,
   "authority_basis": null,
+  "approved_timestamp_proof_sha256": null,
+  "contract_effective_at": null,
+  "contract_expiry_at": null,
+  "contract_has_no_expiry_confirmed": false,
+  "post_expiry_private_probe_artifact_retention_allowed": false,
+  "post_expiry_aggregate_receipt_and_metadata_publication_allowed": false,
+  "post_expiry_survival_evidence_sha256": null,
   "local_storage_allowed": false,
   "aggregate_receipt_publication_allowed": false,
+  "aggregate_coverage_publication_allowed": false,
+  "artifact_hash_publication_allowed": false,
+  "artifact_filename_publication_allowed": false,
+  "artifact_size_publication_allowed": false,
+  "artifact_row_count_publication_allowed": false,
+  "artifact_symbol_count_and_date_range_publication_allowed": false,
+  "timestamp_provider_and_identifier_publication_allowed": false,
+  "timestamp_evidence_hash_publication_allowed": false,
+  "timestamp_verifier_identity_publication_allowed": false,
+  "timestamp_verification_uri_publication_allowed": false,
+  "request_route_metadata_publication_allowed": false,
   "raw_redistribution_allowed": false,
   "scope": [
     "fixed_symbol_probe"
   ],
   "evidence_sha256": null,
-  "statement": "The reviewer must cite the source terms permitting bounded local retrieval, private storage, and publication of aggregate coverage, metadata, and hashes. Raw or normalized market rows remain non-redistributable."
+  "statement": "TODO: replace this instruction with the reviewer's attestation citing the exact raw timestamp-proof SHA-256, contract effective/expiry evidence, bounded retrieval/private-storage authority, each approved public metadata category, and documented consent from the named timestamp verifier to publish that verifier identity and verification URI. For a finite expiry, set both post-expiry permission booleans true only when a separately retained clause authorizes continued private retention of the probe artifacts and continued public availability of the already-published aggregate receipt/metadata, and bind that clause with post_expiry_survival_evidence_sha256. Use contract_expiry_at=null only when the contract evidence affirmatively establishes no expiry and contract_has_no_expiry_confirmed is true; in that no-expiry case both post-expiry booleans must remain false and the post-expiry evidence hash must remain null. Raw or normalized market rows must remain non-redistributable."
 }

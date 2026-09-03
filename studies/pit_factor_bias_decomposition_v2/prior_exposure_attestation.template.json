@@ -36,10 +36,10 @@
     "knowledge_cutoff_not_after_attestation": false,
     "data_review_completed_not_after_attestation": false,
     "attestation_will_precede_design_freeze": false,
-    "blind_2010_2022_outcome_data_not_released_or_inspected_through_attested_at": false,
+    "no_factor_return_ic_rank_or_variant_outcome_was_computed_released_or_human_inspected_through_attested_at": false,
     "registered_publication_exposure_diagnostic_values_not_inspected_through_attested_at": false
   },
-  "statement": "I have reviewed the prior-exposure log and the complete machine-readable specification inventory through the stated cutoff. I attest that no factor IC, forward-return, portfolio-return, variant-ranking, test-statistic outcome, or registered publication-exposure diagnostic value for the fixed 2010-2022 Stage-2 panel has been inspected by the research team through attested_at. I understand that known pilot exposure and unknown historical execution status remain disclosed. If this statement cannot be made truthfully, the plan core must not be frozen and the study must stop.",
+  "statement": "I have reviewed the prior-exposure log and the complete machine-readable specification inventory through the stated cutoff. I attest that no factor IC, forward-return, portfolio-return, signal ranking, variant ranking, test-statistic outcome, or registered publication-exposure diagnostic value for the fixed 2010-2022 Stage-2 panel has been computed, released to the research team, or human-inspected through attested_at. Automated custodial validators may have parsed numeric bytes solely to check schema, finiteness, dates, identifiers, exact endpoint presence, and permitted aggregate coverage; they did not emit or retain the prohibited research outcomes. I understand that known pilot exposure and unknown historical execution status remain disclosed. If this statement cannot be made truthfully, the plan core must not be frozen and the study must stop.",
   "signature": {
     "type": null,
     "allowed_types": [
@@ -50,5 +50,5 @@
     "verification_uri": null,
     "trust_boundary": "Identity and evidence authenticity require independent human verification."
   },
-  "completion_gate": "stage2_factor_outcomes_previously_inspected must be false; all registered artifact hashes and the code commit must match the plan core; prior_exposure_log_sha256 must match the actual log bytes and the design manifest; every chronology assertion must be true; and status must become attested_outcome_blind before design_frozen_at."
+  "completion_gate": "stage2_factor_outcomes_previously_inspected must be false; the attestor must distinguish permitted automated structural/numeric validation from prohibited computation, release, retention, or human inspection of factor returns, ICs, rankings, portfolio outcomes, and test statistics; the inventory must already be manifest_eligible_outcome_blind and byte-identical to the file hash bound by the externally timestamped probe package; repository_snapshot.head_commit is its audited pre-inventory base commit and must be an ancestor of the probe commit and plan code commit, not a self-referential equal-to-containing-commit field; all registered artifact hashes and the code commit must match the plan core; prior_exposure_log_sha256 must match the actual log bytes and the design manifest; every chronology assertion must be true; and status must become attested_outcome_blind before design_frozen_at."
 }

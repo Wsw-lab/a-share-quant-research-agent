@@ -1,0 +1,39 @@
+{
+  "schema_version": "stage2_provider_delivery_acceptance_receipt_v1",
+  "study_id": "a-share-factor-timing-bias-decomposition-v2",
+  "status": "draft_template_not_reviewed",
+  "allowed_statuses": [
+    "draft_template_not_reviewed",
+    "completed"
+  ],
+  "authorization_granted": false,
+  "delivery_manifest_sha256": null,
+  "delivery_manifest_closed_at": null,
+  "metadata_audit_sha256": null,
+  "metadata_audit_completed_at": null,
+  "data_review_attestation_sha256": null,
+  "data_review_attestation_completed_at": null,
+  "coverage_report_sha256": null,
+  "coverage_report_completed_at": null,
+  "canonical_amount_unit_verified": false,
+  "amount_normalization_evidence_sha256": null,
+  "price_adjustment_contract_verified": false,
+  "provider_close_raw_definition_sha256": null,
+  "provider_adjustment_factor_definition_sha256": null,
+  "price_adjustment_normalization_evidence_sha256": null,
+  "decision": null,
+  "allowed_decisions": [
+    "OPERATIONAL_CHECKLIST_COMPLETE",
+    "BLOCKED"
+  ],
+  "blocking_reason_codes": [],
+  "reviewer": {
+    "identity": null,
+    "role": null,
+    "organization": null,
+    "recorded_at": null,
+    "signature_or_approval_reference": null
+  },
+  "chronology_assertion": "Reviewer-recorded operational order: delivery_manifest_closed_at <= metadata_audit_completed_at <= data_review_attestation_completed_at <= coverage_report_completed_at <= reviewer.recorded_at. These timestamps are not a cryptographic proof of order.",
+  "completion_rule": "The reviewer sets status to completed; checks the immutable closed delivery manifest and exact hashes of the later metadata audit, data-review attestation, and coverage report; verifies exact canonical amount_unit=CNY plus the provider-unit normalization evidence hash; verifies every quote row carries the fixed price-adjustment tokens and satisfies close=close_raw*adjustment_factor within the registered tolerance, with valid hashes for the provider close_raw definition, factor convention, and normalization/adapter evidence; records the reviewer-verified operational chronology without claiming that its timestamps are cryptographically established; records exactly one allowed decision; and signs or cites an institutionally auditable approval. OPERATIONAL_CHECKLIST_COMPLETE requires canonical_amount_unit_verified=true, price_adjustment_contract_verified=true, all four normalization/definition evidence hashes valid, every checklist item in provider_delivery_acceptance_protocol.md to pass, and an empty blocking_reason_codes list. BLOCKED requires at least one non-identifying reason code. This optional private custody record is non-authoritative, is created after and never written into the closed delivery manifest, and is not a design-manifest input, formal data acceptance, external registration, or execution authorization; authorization_granted must remain false."
+}

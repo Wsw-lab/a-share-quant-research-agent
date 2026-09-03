@@ -20,10 +20,15 @@
   "target_contract": {
     "quotes": {
       "interval": ["2009-01-01", "2023-01-31"],
-      "required_fields": ["date", "symbol", "close", "amount", "is_st", "is_suspended"],
+      "required_fields": ["date", "symbol", "close_raw", "adjustment_factor", "close", "price_adjustment_method", "price_adjustment_convention", "close_observation_type", "amount", "amount_unit", "is_st", "is_suspended"],
       "semantic_requirements": [
-        "close is an explicitly documented adjusted-close series",
-        "amount units and cutoff timing are documented",
+        "every row uses exact price_adjustment_method=close_equals_close_raw_times_adjustment_factor and price_adjustment_convention=provider_cumulative_backward_adjusted_hfq_no_rebasing; close equals close_raw multiplied by a finite positive adjustment_factor within fixed 1e-12 relative and absolute tolerances",
+        "close_raw is the supplier-recorded same-session traded close or suspension valuation named by close_observation_type; adjustment_factor is the supplier cumulative corporate-action factor aligned on the exact symbol and official session with no fill, and the canonical adapter applies no rebasing",
+        "the provider close_raw definition, adjustment-factor convention, and exact normalization or adapter record each have a distinct human-reviewed evidence SHA-256; row tokens and arithmetic do not substitute for that semantic evidence",
+        "multiplying one symbol's full factor history by a positive constant leaves its return ratios unchanged, and cross-sectional price levels are not estimands",
+        "close_observation_type is traded_close exactly when is_suspended is false and suspension_valuation exactly when is_suspended is true",
+        "every suspension_valuation is a supplier-recorded or supplier-published value for that exact official session; researcher carry-forward or synthetic filling is prohibited",
+        "the canonical bound amount is normalized to exact CNY before hashing and every quote row carries amount_unit=CNY; the provider-native unit, conversion method, cutoff timing, and provenance are documented and human-reviewed",
         "exact t, t+1, t+20, t+21 rows are available on the bound official calendar"
       ]
     },
@@ -32,7 +37,10 @@
       "required_fields": ["symbol", "listDate", "delistDate", "listStatus", "stockType"],
       "semantic_requirements": [
         "current and delisted SH/SZ A-shares are retained",
-        "list and delist dates are security lifecycle facts, not current-only status"
+        "list and delist dates are security lifecycle facts, not current-only status",
+        "A0 terminal survival is fixed at 2023-01-31: after listing by each historical signal session, delistDate is null or strictly after that cutoff, independent of acquisition date",
+        "symbol uses the same provider-stable identity semantics as quotes and fundamentals under contract token provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+        "the provider identifier definition and every historical code-change or reassignment mapping are separately human-reviewed and hash-bound before canonical input binding"
       ]
     },
     "fundamentals": {
@@ -57,27 +65,38 @@
   "providers": [
     {
       "provider_id": "tushare_pro",
-      "role": "candidate_primary_if_contract_is_explicit",
+      "role": "candidate_only_if_coverage_provenance_entitlement_and_rights_are_explicit",
       "endpoints": {
         "quotes": ["daily", "adj_factor"],
-        "stock_master": ["stock_basic", "bak_basic"],
+        "stock_master_candidates": ["stock_basic", "bak_basic (documented from 2016 only)"],
         "fundamentals": ["fina_indicator", "disclosure_date"],
-        "official_calendar": ["trade_cal(exchange=SSE)", "trade_cal(exchange=SZSE)"],
-        "tradability": ["stock_st", "suspend_d"]
+        "calendar_cross_check_candidates": ["trade_cal(exchange=SSE)", "trade_cal(exchange=SZSE)"],
+        "tradability_candidates": ["stock_st", "suspend_d (full target coverage unverified)"]
       },
       "known_constraints": [
         "token, points, and endpoint entitlements must be verified",
-        "daily amount is reported in thousand CNY and volume in lots; conversion must be recorded",
-        "actual_date, not pre_date or ann_date, is the publication-date candidate",
+        "the daily documentation states that suspended sessions have no quote row, so a separately verified complete suspend_d join is mandatory",
+        "daily amount is reported in thousand CNY and volume in lots; a private provider adapter would have to normalize amount to CNY and retain conversion provenance before binding, but no production Stage-2 Tushare delivery conversion is claimed as implemented",
+        "the component adapter can materialize close_raw, adjustment_factor, the fixed method/convention tokens, and close=daily.close*adj_factor for hfq rows, but this does not implement or prove a complete production Stage-2 quote delivery or the required suspended-session valuation join",
+        "disclosure_date.actual_date is preferred over that endpoint's pre_date and ann_date, but its first-publication versus current-record semantics require written confirmation and it is not revision/vintage evidence",
+        "the stock_st documentation currently states daily history begins on 2000-01-01, but target coverage and entitlement still require supplier documentary confirmation and provider-specific delivery acceptance; the fixed AKShare/QData v2 probe does not test Tushare",
+        "bak_basic is documented from 2016 and cannot reconstruct 2009-2015 membership by itself; suspend_d documentation does not promise complete 2009-2023 coverage",
+        "trade_cal documentation proves SSE/SZSE parameters but not authoritative exchange provenance or upstream publication rights",
+        "the exact provider field or derivation accepted as roeDiluted requires documented semantic review before extraction",
         "stock_basic alone does not prove historical point-in-time membership",
         "the current service agreement describes a personal, non-transferable, non-commercial licence; written permission for local retention, aggregate publication, and reviewer access is required"
       ],
       "references": [
         "https://tushare.pro/document/2?doc_id=27",
         "https://tushare.pro/document/2?doc_id=28",
+        "https://tushare.pro/document/2?doc_id=146",
+        "https://tushare.pro/document/2?doc_id=25",
+        "https://tushare.pro/document/2?doc_id=26",
+        "https://tushare.pro/document/2?doc_id=79",
         "https://tushare.pro/document/2?doc_id=162",
-        "https://tushare.pro/document/2?doc_id=183",
         "https://tushare.pro/document/2?doc_id=214",
+        "https://tushare.pro/document/2?doc_id=397",
+        "https://tushare.pro/document/1?doc_id=262",
         "https://tushare.pro/document/1?doc_id=405"
       ]
     },
@@ -126,31 +145,64 @@
       "known_constraints": [
         "historical bulk extraction and machine-readable availability must be demonstrated",
         "retain exact source documents and terms evidence",
+        "public non-commercial browsing or download language does not by itself establish automated bulk extraction, raw-row redistribution, or reviewer-copy rights",
         "official pages do not replace a complete adjusted-close and tradability panel"
       ],
       "references": [
+        "https://www.sse.com.cn/market/publicdata/",
         "https://www.sse.com.cn/disclosure/dealinstruc/calendar/index.shtml",
         "https://english.sse.com.cn/start/trading/schedule/",
-        "https://www.szse.cn/",
-        "https://www.cninfo.com.cn/"
+        "https://www.szse.cn/application/laws/",
+        "https://www.cninfo.com.cn/",
+        "https://www.cninfo.com.cn/new/commonUrl?url=data%2Fyuyuepilu"
+      ]
+    },
+    {
+      "provider_id": "resset_institutional",
+      "role": "candidate_primary_if_institutional_entitlement_and_supplemental_rights_are_explicit",
+      "endpoints": {
+        "quotes": ["contracted A-share daily price and trading data"],
+        "stock_master": ["contracted security lifecycle data"],
+        "fundamentals": ["contracted accounting and announcement data"],
+        "official_calendar": ["contracted market calendar data"],
+        "tradability": ["contracted historical ST and suspension data"]
+      },
+      "known_constraints": [
+        "public terms allow licensed research use and require citation, but prohibit unauthorized copying, dissemination, network display, and account sharing",
+        "the actual institutional product entitlement, 2009-2023 field coverage, upstream rights, aggregate publication, private retention, and controlled reviewer rerun must be confirmed in writing",
+        "public product descriptions are not evidence that the required subscription is held",
+        "no public product description is treated as evidence of revision/vintage history or first-release accounting values"
+      ],
+      "references": [
+        "https://db.resset.com/db/main/termofuseIn_en.jsp",
+        "https://manual.resset.com/RESSETDB4.0.pdf"
       ]
     },
     {
       "provider_id": "licensed_vendor_wind_csmar_choice_or_equivalent",
-      "role": "preferred_primary_if_rights_are_explicit",
+      "role": "preferred_procurement_route_with_all_capabilities_unverified_until_contract_and_field_dictionary_review",
       "endpoints": {
-        "quotes": ["adjusted daily bars", "corporate-action factors", "amount"],
-        "stock_master": ["point-in-time listing/delisting master"],
-        "fundamentals": ["point-in-time ROE and actual filing publication dates"],
-        "official_calendar": ["exchange calendars"],
-        "tradability": ["historical ST and suspension states"]
+        "requirements_to_verify_contractually": [
+          "same-session close_raw, a finite positive cumulative adjustment_factor, exact fixed price-adjustment method/convention tokens, mechanically verified close=close_raw*adjustment_factor, and separately hash-evidenced provider raw definitions and normalization; plus provider-native amount unit, documented normalization to CNY before binding, and normalization provenance",
+          "historically effective listing and delisting lifecycle",
+          "diluted ROE and actual filing publication dates",
+          "authoritative SSE and SZSE calendars",
+          "historical ST and suspension states",
+          "supplier-recorded same-session suspension valuations and their provenance"
+        ]
       },
       "known_constraints": [
-        "this is a procurement option, not evidence that a contract is held",
+        "this is a procurement route, not evidence that a contract is held or that any listed product includes the required fields",
+        "public product pages describe broad databases or terminals but do not verify the required table-level fields, semantic definitions, complete 2009-2023 delivery, or exchange-source provenance",
+        "public product pages do not establish the permissions contained in the institution's actual subscription agreement",
         "contract must allow local analysis, hash binding, controlled reviewer reruns, and aggregate reporting",
         "a current snapshot must not be called revision history without versioned values and as-of timestamps"
       ],
-      "references": []
+      "references": [
+        "https://www.wind.com.cn/portal/zh/WFT/index.html",
+        "https://www.csmar.com/channels/31.html",
+        "https://choice.eastmoney.com/terminal"
+      ]
     }
   ],
   "decision_rule": "Select a primary source only after every required role has a documented endpoint, complete target coverage, semantic review, and written rights for local analysis plus the intended aggregate/publication and controlled-review outputs. Otherwise retain BLOCKED_FOR_STAGE2."

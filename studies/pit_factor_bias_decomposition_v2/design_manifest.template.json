@@ -23,7 +23,27 @@
     "fundamentals": null,
     "official_calendar": null
   },
+  "public_receipt_projection_sha256": {
+    "data_declaration": null,
+    "official_calendar_session_dates": null
+  },
   "code_commit": null,
+  "public_receipt_embedding": {
+    "schema_version": "stage2_public_receipt_embedding_consent_v1",
+    "approved": false,
+    "artifact_type": "design_manifest",
+    "scope": "full_artifact",
+    "receipt_schema_version": "confirmatory_study_receipt_v2",
+    "public_fields": [
+      "*"
+    ],
+    "privacy_assertions": {
+      "sensitive_material_excluded": false,
+      "local_filesystem_locations_excluded": false,
+      "identities_and_verification_uris_approved_for_publication": false
+    },
+    "statement": "The specified artifact scope is approved for embedding in the public Stage-2 receipt."
+  },
   "registered_design_assertions": {
     "variant_count": 18,
     "factor_variant_cell_count": 72,
@@ -32,7 +52,13 @@
     "total_inferential_estimand_count": 29,
     "roe_common_support_component_count": 3,
     "timing_decomposition_tolerance_source": "execution_plan.inference.timing_decomposition.efficiency_absolute_tolerance",
-    "endpoint_resolution_method": "exact_official_session_adjusted_close_only",
+    "endpoint_resolution_method": "exact_official_session_provider_recorded_traded_close_or_supplier_recorded_published_suspension_valuation",
+    "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+    "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+    "terminal_survivor_cutoff": "2023-01-31",
+    "security_identifier_contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+    "top_quintile_rule": "percentile_rank_strictly_greater_than_0.8",
+    "bottom_quintile_rule": "percentile_rank_less_than_or_equal_to_0.2",
     "result_receipt_binds_complete_endpoint_reason_ledger": true,
     "single_version_claim_boundary": "recorded_publication_date_specification_effect_only"
   },
@@ -50,5 +76,5 @@
     ],
     "later_artifacts": "registration_receipt_v1 and execution_authorization are created only after this exact manifest is frozen; neither may be inserted into or used to rewrite it."
   },
-  "completion_gate": "Every null must be replaced with the exact frozen value, status must become frozen_outcome_blind, and the manifest must be independently reviewed before external submission."
+  "completion_gate": "Every null must be replaced with the exact frozen value, status must become frozen_outcome_blind, all public_receipt_embedding approval and privacy assertions must become true after review, and the manifest must be independently reviewed before external submission."
 }

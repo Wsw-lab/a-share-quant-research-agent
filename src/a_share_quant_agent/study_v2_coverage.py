@@ -1,24 +1,36 @@
-"""Privacy-preserving coverage audit for the Stage-2 factor study.
+"""Private authoritative coverage audit for the Stage-2 factor study.
 
 The audit reports field availability, time span, coverage rates, and file
-identity without publishing local paths or row-level licensed data.  It is a
-precondition check, not a replacement for the study runner's strict input
-validation.
+identity without publishing local paths or row-level licensed data.  Its exact
+hashes, byte sizes, and coverage metadata remain rights-controlled private
+evidence.  A separately reviewed public-export command is not implemented.
+This is a precondition check, not a replacement for the study runner's strict
+input validation.
 """
 
 from __future__ import annotations
 
 import argparse
 from calendar import monthrange
+from collections.abc import Mapping as MappingABC, Set as SetABC
 import csv
 from datetime import date, datetime
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import re
-from typing import Any, Iterable, Mapping, Sequence
+import sqlite3
+import tempfile
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 from urllib.parse import urlparse
+
+from .private_artifact_paths import (
+    PrivateArtifactPathError,
+    require_new_private_file_target,
+    write_private_bytes_atomic_exclusive,
+)
 
 
 SCHEMA_VERSION = "study_v2_data_coverage_audit_v1"
@@ -38,19 +50,71 @@ FIXED_DESIGN_PARAMETERS: dict[str, Any] = {
     "required_official_calendar_last_month": "2023-01",
     "required_quote_end": "2023-01-31",
     "required_quote_start": "2009-01-01",
+    "terminal_survivor_cutoff": "2023-01-31",
+    "security_identifier_contract_id": (
+        "provider_stable_exchange_qualified_security_identifier_with_"
+        "reviewed_code_change_mapping_v1"
+    ),
 }
 CSV_NORMALIZATION: dict[str, str] = {
     "blank_values": "strip_surrounding_whitespace_then_empty_is_null",
     "column_names": "case_sensitive_exact_header_names",
     "csv_dialect": "excel",
-    "date_values": "ISO-8601_calendar_date_from_first_10_characters",
+    "date_values": (
+        "exact_YYYY-MM-DD_valid_calendar_date_and_pandas_nanosecond_safe_"
+        "1677-09-22_through_2262-04-11"
+    ),
     "encoding": "utf-8-sig",
+    "logical_key_symbols": "strip_surrounding_whitespace_then_uppercase",
+    "numeric_values": (
+        "exact_ASCII_decimal_with_optional_sign_fraction_and_base10_exponent"
+    ),
 }
 INPUT_ROLES = ("quotes", "stock_master", "fundamentals", "official_calendar")
+PUBLIC_INPUT_FILE_NAMES = {
+    "quotes": "quotes.csv",
+    "stock_master": "stock_master.csv",
+    "fundamentals": "fundamentals.csv",
+    "official_calendar": "official_calendar.csv",
+}
+INPUT_ROLE_REASON_LABELS = {
+    "quotes": "QUOTES",
+    "stock_master": "STOCK_MASTER",
+    "fundamentals": "FUNDAMENTALS",
+    "official_calendar": "OFFICIAL_CALENDAR",
+}
 
 QUOTE_REQUIRED = {
-    "date", "symbol", "close", "amount", "is_st", "is_suspended",
+    "date",
+    "symbol",
+    "close_raw",
+    "adjustment_factor",
+    "close",
+    "price_adjustment_method",
+    "price_adjustment_convention",
+    "close_observation_type",
+    "amount",
+    "amount_unit",
+    "is_st",
+    "is_suspended",
 }
+STAGE2_CANONICAL_AMOUNT_UNIT = "CNY"
+STAGE2_PRICE_ADJUSTMENT_METHOD = (
+    "close_equals_close_raw_times_adjustment_factor"
+)
+STAGE2_PRICE_ADJUSTMENT_CONVENTION = (
+    "provider_cumulative_backward_adjusted_hfq_no_rebasing"
+)
+STAGE2_PRICE_ADJUSTMENT_REL_TOLERANCE = 1e-12
+STAGE2_PRICE_ADJUSTMENT_ABS_TOLERANCE = 1e-12
+STAGE2_CLOSE_OBSERVATION_TYPES = frozenset(
+    {"traded_close", "suspension_valuation"}
+)
+STAGE2_TERMINAL_SURVIVOR_CUTOFF = date(2023, 1, 31)
+STAGE2_SECURITY_IDENTIFIER_CONTRACT_TOKEN = (
+    "provider_stable_exchange_qualified_security_identifier_with_"
+    "reviewed_code_change_mapping_v1"
+)
 MASTER_REQUIRED = {"symbol", "listDate", "delistDate", "listStatus", "stockType"}
 FUNDAMENTAL_REQUIRED = {"symbol", "roeDiluted", "publishDate", "reportPeriodEnd"}
 CALENDAR_REQUIRED = {"date"}
@@ -66,10 +130,186 @@ VINTAGE_ID_COLUMNS = {
     "versionid", "version_id", "revisionid", "revision_id", "vintageid",
     "vintage_id", "version_or_revision_identifier",
 }
+NA_LIKE_TOKENS = frozenset(
+    {
+        "#n/a", "#n/a n/a", "#na", "-1.#ind", "-1.#qnan", "-nan", "1.#ind",
+        "1.#qnan", "<na>", "n/a", "na", "nan", "none", "null",
+    }
+)
+CANONICAL_DECIMAL_PATTERN = re.compile(
+    r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
+)
+CANONICAL_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+CANONICAL_SYMBOL_PATTERN = re.compile(r"[0-9]{6}\.(?:SH|SZ)")
+CANONICAL_DATE_MIN = date(1677, 9, 22)
+CANONICAL_DATE_MAX = date(2262, 4, 11)
+LOGICAL_KEY_IN_MEMORY_LIMIT = 100_000
 
 
 class StudyV2CoverageError(RuntimeError):
     """Raised when an input cannot be audited safely."""
+
+
+class _ExactLogicalKeyTracker:
+    """Count exact duplicate keys with a bounded in-memory fast path.
+
+    Once the fixed unique-key limit is reached, keys move to a temporary
+    SQLite table with a BLOB primary key.  The length-prefixed encoding is
+    collision-free for tuples of UTF-8 strings.  Temporary storage is always
+    closed and removed by the context manager and its path is never reported.
+    """
+
+    def __init__(self, max_in_memory_keys: int = LOGICAL_KEY_IN_MEMORY_LIMIT) -> None:
+        if not isinstance(max_in_memory_keys, int) or max_in_memory_keys < 1:
+            raise StudyV2CoverageError("logical-key memory limit must be positive")
+        self._max_in_memory_keys = max_in_memory_keys
+        self._memory_keys: set[tuple[str, ...]] = set()
+        self._temporary_directory: tempfile.TemporaryDirectory[str] | None = None
+        self._connection: sqlite3.Connection | None = None
+
+    @property
+    def storage_backend(self) -> str:
+        return "sqlite_spill" if self._connection is not None else "memory"
+
+    def __enter__(self) -> _ExactLogicalKeyTracker:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
+        if self._temporary_directory is not None:
+            self._temporary_directory.cleanup()
+            self._temporary_directory = None
+        self._memory_keys.clear()
+
+    def add(self, key: tuple[str, ...]) -> bool:
+        """Add ``key`` and return true exactly when it was already present."""
+
+        if self._connection is None:
+            if key in self._memory_keys:
+                return True
+            self._memory_keys.add(key)
+            if len(self._memory_keys) >= self._max_in_memory_keys:
+                self._spill_to_sqlite()
+            return False
+        encoded = _encode_logical_key(key)
+        try:
+            before = self._connection.total_changes
+            self._connection.execute(
+                "INSERT OR IGNORE INTO logical_keys(encoded_key) VALUES (?)",
+                (sqlite3.Binary(encoded),),
+            )
+            return self._connection.total_changes == before
+        except sqlite3.Error:
+            raise StudyV2CoverageError(
+                "temporary exact logical-key index failed"
+            ) from None
+
+    def _spill_to_sqlite(self) -> None:
+        try:
+            self._temporary_directory = tempfile.TemporaryDirectory(
+                prefix="stage2-coverage-logical-keys-"
+            )
+            database_path = Path(self._temporary_directory.name) / "keys.sqlite3"
+            self._connection = sqlite3.connect(database_path)
+            self._connection.execute("PRAGMA journal_mode=OFF")
+            self._connection.execute("PRAGMA synchronous=OFF")
+            self._connection.execute(
+                "CREATE TABLE logical_keys "
+                "(encoded_key BLOB PRIMARY KEY) WITHOUT ROWID"
+            )
+            self._connection.executemany(
+                "INSERT INTO logical_keys(encoded_key) VALUES (?)",
+                (
+                    (sqlite3.Binary(_encode_logical_key(key)),)
+                    for key in self._memory_keys
+                ),
+            )
+            self._memory_keys.clear()
+        except (OSError, sqlite3.Error):
+            self.close()
+            raise StudyV2CoverageError(
+                "temporary exact logical-key index failed"
+            ) from None
+
+
+def _encode_logical_key(key: tuple[str, ...]) -> bytes:
+    encoded = bytearray()
+    for component in key:
+        payload = component.encode("utf-8")
+        encoded.extend(len(payload).to_bytes(8, byteorder="big", signed=False))
+        encoded.extend(payload)
+    return bytes(encoded)
+
+
+class _SymbolBitmapView(SetABC[str]):
+    """Read-only set view over one date's compact symbol bitmap."""
+
+    def __init__(
+        self,
+        *,
+        mask: int,
+        symbol_to_bit: Mapping[str, int],
+        symbols_by_bit: Sequence[str],
+    ) -> None:
+        self._mask = mask
+        self._symbol_to_bit = symbol_to_bit
+        self._symbols_by_bit = symbols_by_bit
+
+    def __contains__(self, value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        bit = self._symbol_to_bit.get(value)
+        return bit is not None and bool(self._mask & (1 << bit))
+
+    def __iter__(self) -> Iterator[str]:
+        remaining = self._mask
+        while remaining:
+            least_significant_bit = remaining & -remaining
+            position = least_significant_bit.bit_length() - 1
+            yield self._symbols_by_bit[position]
+            remaining ^= least_significant_bit
+
+    def __len__(self) -> int:
+        return self._mask.bit_count()
+
+    def __and__(self, other: Iterable[str]) -> set[str]:
+        return {symbol for symbol in other if symbol in self}
+
+    def __rand__(self, other: Iterable[str]) -> set[str]:
+        return self.__and__(other)
+
+
+class _SymbolBitmapIndex(MappingABC[date, SetABC[str]]):
+    """Map dates to lazy set views backed by one integer bitmap per date."""
+
+    def __init__(
+        self,
+        *,
+        symbol_to_bit: Mapping[str, int],
+        symbols_by_bit: Sequence[str],
+        date_masks: Mapping[date, int],
+    ) -> None:
+        self._symbol_to_bit = dict(symbol_to_bit)
+        self._symbols_by_bit = tuple(symbols_by_bit)
+        self._date_masks = dict(date_masks)
+
+    def __getitem__(self, key: date) -> SetABC[str]:
+        return _SymbolBitmapView(
+            mask=self._date_masks[key],
+            symbol_to_bit=self._symbol_to_bit,
+            symbols_by_bit=self._symbols_by_bit,
+        )
+
+    def __iter__(self) -> Iterator[date]:
+        return iter(self._date_masks)
+
+    def __len__(self) -> int:
+        return len(self._date_masks)
 
 
 def audit_study_inputs(
@@ -119,12 +359,6 @@ def audit_study_inputs(
         stock_master_csv=master_file.read_bytes(),
         fundamentals_csv=fundamental_file.read_bytes(),
         official_calendar_csv=calendar_file.read_bytes(),
-        input_names={
-            "quotes": quote_file.name,
-            "stock_master": master_file.name,
-            "fundamentals": fundamental_file.name,
-            "official_calendar": calendar_file.name,
-        },
         review_attestation=review_attestation,
     )
 
@@ -142,6 +376,9 @@ def recompute_coverage_report(
 
     No report field is accepted as an input.  Hashes cover the exact bytes;
     coverage statistics are derived from deterministic UTF-8 CSV parsing.
+    Operator-supplied basenames are never persisted: ``input_names`` remains
+    accepted only for compatibility and structure validation, while the
+    report always uses fixed public logical names.
     """
 
     raw_inputs = {
@@ -217,6 +454,17 @@ def recompute_coverage_report(
         expected_input_identity=expected_input_identity,
     )
     parameters = dict(FIXED_DESIGN_PARAMETERS)
+    if (
+        parameters["terminal_survivor_cutoff"]
+        != parameters["required_quote_end"]
+        or parameters["terminal_survivor_cutoff"]
+        != STAGE2_TERMINAL_SURVIVOR_CUTOFF.isoformat()
+        or parameters["security_identifier_contract_id"]
+        != STAGE2_SECURITY_IDENTIFIER_CONTRACT_TOKEN
+    ):
+        raise StudyV2CoverageError(
+            "fixed terminal-survivor or security-identifier contract drifted"
+        )
     analysis_start_date = _required_date(parameters["analysis_start"], "analysis_start")
     analysis_end_date = _required_date(parameters["analysis_end"], "analysis_end")
     required_quote_start_date = _required_date(
@@ -259,6 +507,25 @@ def recompute_coverage_report(
         raise StudyV2CoverageError(
             "fixed design contract month count does not match the analysis interval"
         )
+    signal_session_candidates: dict[date, set[str]] = {}
+    for month in expected_months:
+        signal_session = rebalance_date_by_month.get(month)
+        if signal_session is None:
+            continue
+        signal_session_candidates[signal_session] = (
+            _active_strict_a_share_symbols(
+                strict_a_share_master_lifecycles, signal_session
+            )
+            & dated_quote_symbols.get(signal_session, set())
+        )
+    quotes.update(
+        _signal_session_close_observation_coverage(
+            raw_inputs["quotes"],
+            signal_session_candidates=signal_session_candidates,
+            source_name=str(identities["quotes"]["file_name"]),
+        )
+    )
+    complete_quote_contract_symbols_by_month: dict[str, set[str]] = {}
     quote_contract_coverage = _quote_contract_monthly_coverage(
         dated_quote_symbols=dated_quote_symbols,
         official_sessions=tuple(official_session_dates),
@@ -266,6 +533,7 @@ def recompute_coverage_report(
         eligible_master_symbols=strict_a_share_master_symbols,
         master_lifecycles=strict_a_share_master_lifecycles,
         minimum_symbols=parameters["minimum_symbols_per_month"],
+        complete_symbols_by_month=complete_quote_contract_symbols_by_month,
     )
     quotes["per_symbol_quote_contract_monthly_coverage"] = (
         quote_contract_coverage["monthly_coverage"]
@@ -300,6 +568,7 @@ def recompute_coverage_report(
         official_calendar["required_columns_present"]
         and official_calendar["row_count"] > 0
         and official_calendar["non_null_date_rate"] == 1.0
+        and official_calendar["invalid_date_format_counts"].get("date", 0) == 0
         and official_calendar["duplicate_session_count"] == 0
         and official_calendar["strictly_increasing"]
         and not official_calendar["additional_columns"]
@@ -311,7 +580,7 @@ def recompute_coverage_report(
         and calendar_end.strftime("%Y-%m") >= required_calendar_last_month
     )
     calendar_dates = official_session_dates
-    quote_dates = set(_date_column_values(raw_inputs["quotes"], "date"))
+    quote_dates = set(dated_quote_symbols)
     non_calendar_quote_dates = quote_dates - calendar_dates
     quote_dates_are_official_sessions = not non_calendar_quote_dates
     official_quote_dates = quote_dates & calendar_dates
@@ -389,6 +658,9 @@ def recompute_coverage_report(
         monthly_quote_symbols=monthly_rebalance_quote_symbols,
         eligible_master_symbols=strict_a_share_master_symbols,
         eligible_universe_symbols=eligible_a_share_symbols,
+        complete_quote_contract_symbols_by_month=(
+            complete_quote_contract_symbols_by_month
+        ),
         master_lifecycles=strict_a_share_master_lifecycles,
         required_start=required_fundamental_start_date,
         required_end=required_fundamental_end_date,
@@ -396,13 +668,38 @@ def recompute_coverage_report(
             "maximum_fundamental_staleness_months"
         ],
     )
+    complete_quote_contract_symbols_by_month.clear()
     fundamentals.update(fundamental_coverage)
     publication_coverage_met = (
         fundamentals["eligible_interval_publish_date_non_null_rate"]
         >= parameters["minimum_publish_date_rate"]
     )
+    quote_numeric_integrity_met = bool(quotes["numeric_integrity_verified"])
+    quote_boolean_integrity_met = bool(quotes["boolean_integrity_verified"])
+    close_observation_contract_met = bool(
+        quotes["close_observation_contract_verified"]
+    )
+    price_adjustment_contract_met = bool(
+        quotes["price_adjustment_contract_verified"]
+    )
+    canonical_amount_unit_met = bool(quotes["canonical_amount_unit_verified"])
+    signal_session_close_observation_types_non_degenerate = bool(
+        quotes["signal_session_close_observation_types_non_degenerate"]
+    )
     fundamental_publication_order_integrity_met = (
-        fundamentals["invalid_publication_order_row_count"] == 0
+        fundamentals[
+            "eligible_scope_publication_before_report_period_end_row_count"
+        ]
+        == 0
+    )
+    global_fundamental_publication_order_integrity_met = (
+        fundamentals[
+            "global_publication_before_report_period_end_row_count"
+        ]
+        == 0
+    )
+    fundamental_roe_numeric_integrity_met = (
+        fundamentals["invalid_roe_diluted_numeric_row_count"] == 0
     )
     fundamental_target_month_continuity_met = (
         fundamentals["covered_target_month_count"] == len(expected_months)
@@ -417,13 +714,20 @@ def recompute_coverage_report(
         >= parameters["minimum_symbols_per_month"]
         for row in fundamentals["monthly_coverage"]
     )
+    fundamental_complete_quote_contract_support_met = all(
+        row["nonstale_complete_contract_fundamental_symbol_count"]
+        >= parameters["minimum_symbols_per_month"]
+        for row in fundamentals["monthly_coverage"]
+    )
     target_fundamental_interval_available = bool(
         fundamentals["required_columns_present"]
         and publication_coverage_met
         and fundamental_target_month_continuity_met
         and fundamental_eligible_symbol_intersection_met
         and fundamental_staleness_coverage_met
+        and fundamental_complete_quote_contract_support_met
         and fundamental_publication_order_integrity_met
+        and fundamental_roe_numeric_integrity_met
     )
     membership_available = bool(master["membership_integrity_verified"])
     execution_columns_present = quotes["required_columns_present"]
@@ -437,8 +741,30 @@ def recompute_coverage_report(
         execution_columns_present
         and attestation["exact_endpoint_resolution_semantics_verified"]
     )
+    suspension_valuation_semantics_verified = bool(
+        execution_columns_present
+        and attestation["suspension_valuation_semantics_verified"]
+    )
+    price_adjustment_semantics_verified = bool(
+        price_adjustment_contract_met
+        and attestation["price_adjustment_semantics_verified"]
+    )
+    amount_unit_normalization_semantics_verified = bool(
+        canonical_amount_unit_met
+        and attestation["amount_unit_normalization_semantics_verified"]
+    )
     endpoint_reason_ledger_rights_verified = bool(
         attestation["endpoint_reason_ledger_rights_verified"]
+    )
+    historical_membership_completeness_verified = bool(
+        attestation["historical_membership_completeness_verified"]
+    )
+    terminal_survivor_comparator_verified = bool(
+        membership_available
+        and attestation["terminal_survivor_comparator_verified"]
+    )
+    fundamental_publication_semantics_verified = bool(
+        attestation["fundamental_publication_semantics_verified"]
     )
     data_rights_verified = bool(attestation["data_rights_verified"])
     official_calendar_review_verified = bool(
@@ -448,6 +774,52 @@ def recompute_coverage_report(
         section["row_count"] > 0
         for section in (quotes, master, fundamentals, official_calendar)
     )
+    sections_by_role = {
+        "quotes": quotes,
+        "stock_master": master,
+        "fundamentals": fundamentals,
+        "official_calendar": official_calendar,
+    }
+    csv_row_width_integrity_met = all(
+        section["malformed_csv_row_width_count"] == 0
+        for section in sections_by_role.values()
+    )
+    logical_key_uniqueness_met = all(
+        section["duplicate_logical_key_row_count"] == 0
+        for section in sections_by_role.values()
+    )
+    input_structural_integrity_met = (
+        csv_row_width_integrity_met and logical_key_uniqueness_met
+    )
+    required_non_null_fields = {
+        "quotes": (
+            "date", "symbol", "close_raw", "adjustment_factor", "close",
+            "price_adjustment_method", "price_adjustment_convention",
+            "close_observation_type", "amount", "amount_unit", "is_st",
+            "is_suspended",
+        ),
+        "stock_master": ("symbol", "listDate", "listStatus", "stockType"),
+        "fundamentals": ("symbol", "roeDiluted", "reportPeriodEnd"),
+        "official_calendar": ("date",),
+    }
+    required_field_non_null_integrity_met = all(
+        section["missing_value_counts"].get(field, section["row_count"]) == 0
+        for role, section in sections_by_role.items()
+        for field in required_non_null_fields[role]
+    )
+    canonical_symbol_integrity_met = all(
+        sections_by_role[role]["canonical_symbol_integrity_verified"]
+        for role in ("quotes", "stock_master", "fundamentals")
+    )
+    security_identifier_contract_verified = bool(
+        attestation["security_identifier_semantics_verified"]
+        and canonical_symbol_integrity_met
+    )
+    canonical_date_format_integrity_met = all(
+        invalid_count == 0
+        for section in sections_by_role.values()
+        for invalid_count in section["invalid_date_format_counts"].values()
+    )
     ready = all(
         (
             minimum_history_met,
@@ -455,6 +827,12 @@ def recompute_coverage_report(
             calendar_integrity_verified,
             target_calendar_interval_available,
             quote_dates_are_official_sessions,
+            quote_numeric_integrity_met,
+            quote_boolean_integrity_met,
+            close_observation_contract_met,
+            price_adjustment_contract_met,
+            canonical_amount_unit_met,
+            signal_session_close_observation_types_non_degenerate,
             target_fundamental_interval_available,
             minimum_monthly_observations_met,
             minimum_sessions_per_month_met,
@@ -464,19 +842,36 @@ def recompute_coverage_report(
             quote_contract_coverage["low_volatility_20d_history_coverage_met"],
             quote_contract_coverage["amount_20d_history_coverage_met"],
             quote_contract_coverage["exact_endpoint_coverage_met"],
+            quote_contract_coverage[
+                "all_signal_session_candidates_have_exact_endpoints"
+            ],
             quote_contract_coverage["complete_quote_contract_coverage_met"],
             publication_coverage_met,
             fundamental_publication_order_integrity_met,
+            global_fundamental_publication_order_integrity_met,
+            fundamental_roe_numeric_integrity_met,
+            fundamental_complete_quote_contract_support_met,
             membership_available,
+            terminal_survivor_comparator_verified,
+            security_identifier_contract_verified,
             execution_columns_present,
             execution_semantics_verified,
             tradability_fields_verified,
             exact_endpoint_resolution_semantics_verified,
+            suspension_valuation_semantics_verified,
+            price_adjustment_semantics_verified,
+            amount_unit_normalization_semantics_verified,
             endpoint_reason_ledger_rights_verified,
+            historical_membership_completeness_verified,
+            fundamental_publication_semantics_verified,
             data_rights_verified,
             official_calendar_review_verified,
             fundamentals["required_columns_present"],
             no_empty_inputs,
+            input_structural_integrity_met,
+            required_field_non_null_integrity_met,
+            canonical_date_format_integrity_met,
+            canonical_symbol_integrity_met,
         )
     )
 
@@ -492,6 +887,76 @@ def recompute_coverage_report(
         reasons.append("OFFICIAL_CALENDAR_INTERVAL_UNAVAILABLE")
     if not quote_dates_are_official_sessions:
         reasons.append("QUOTE_DATES_OUTSIDE_OFFICIAL_CALENDAR")
+    if quotes["close_blank_row_count"]:
+        reasons.append("QUOTE_CLOSE_BLANK")
+    if quotes["close_non_numeric_or_non_finite_row_count"]:
+        reasons.append("QUOTE_CLOSE_NON_NUMERIC_OR_NON_FINITE")
+    if quotes["close_invalid_canonical_numeric_format_row_count"]:
+        reasons.append("QUOTE_CLOSE_INVALID_CANONICAL_NUMERIC_FORMAT")
+    if quotes["close_non_finite_row_count"]:
+        reasons.append("QUOTE_CLOSE_NON_FINITE")
+    if quotes["close_non_positive_row_count"]:
+        reasons.append("QUOTE_CLOSE_NON_POSITIVE")
+    if quotes["amount_blank_row_count"]:
+        reasons.append("QUOTE_AMOUNT_BLANK")
+    if quotes["amount_non_numeric_or_non_finite_row_count"]:
+        reasons.append("QUOTE_AMOUNT_NON_NUMERIC_OR_NON_FINITE")
+    if quotes["amount_invalid_canonical_numeric_format_row_count"]:
+        reasons.append("QUOTE_AMOUNT_INVALID_CANONICAL_NUMERIC_FORMAT")
+    if quotes["amount_non_finite_row_count"]:
+        reasons.append("QUOTE_AMOUNT_NON_FINITE")
+    if quotes["amount_negative_row_count"]:
+        reasons.append("QUOTE_AMOUNT_NEGATIVE")
+    if quotes["amount_unit_blank_row_count"]:
+        reasons.append("QUOTE_AMOUNT_UNIT_BLANK")
+    if quotes["amount_unit_non_cny_row_count"]:
+        reasons.append("QUOTE_AMOUNT_UNIT_NOT_EXACT_CNY")
+    if not canonical_amount_unit_met:
+        reasons.append("QUOTE_AMOUNT_NOT_CANONICAL_CNY")
+    for field, label in (
+        ("is_st", "QUOTE_IS_ST"),
+        ("is_suspended", "QUOTE_IS_SUSPENDED"),
+    ):
+        if quotes[f"{field}_blank_row_count"]:
+            reasons.append(f"{label}_BLANK")
+        if quotes[f"{field}_invalid_boolean_row_count"]:
+            reasons.append(f"{label}_INVALID_BOOLEAN")
+        if not quotes[f"{field}_non_degenerate"]:
+            reasons.append(f"{label}_DEGENERATE")
+    if quotes["close_observation_type_blank_row_count"]:
+        reasons.append("QUOTE_CLOSE_OBSERVATION_TYPE_BLANK")
+    if quotes["close_observation_type_invalid_row_count"]:
+        reasons.append("QUOTE_CLOSE_OBSERVATION_TYPE_INVALID")
+    if quotes["close_observation_type_suspension_mismatch_row_count"]:
+        reasons.append("QUOTE_CLOSE_OBSERVATION_SUSPENSION_MISMATCH")
+    if not close_observation_contract_met:
+        reasons.append("CLOSE_OBSERVATION_CONTRACT_NOT_MET")
+    for field, label in (
+        ("close_raw", "QUOTE_CLOSE_RAW"),
+        ("adjustment_factor", "QUOTE_ADJUSTMENT_FACTOR"),
+    ):
+        if quotes[f"{field}_blank_row_count"]:
+            reasons.append(f"{label}_BLANK")
+        if quotes[f"{field}_invalid_row_count"]:
+            reasons.append(f"{label}_INVALID")
+        if quotes[f"{field}_non_positive_row_count"]:
+            reasons.append(f"{label}_NON_POSITIVE")
+    if quotes["price_adjustment_method_blank_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_METHOD_BLANK")
+    if quotes["price_adjustment_method_invalid_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_METHOD_INVALID")
+    if quotes["price_adjustment_convention_blank_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_CONVENTION_BLANK")
+    if quotes["price_adjustment_convention_invalid_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_CONVENTION_INVALID")
+    if quotes["price_adjustment_formula_uncheckable_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_FORMULA_UNCHECKABLE")
+    if quotes["price_adjustment_formula_mismatch_row_count"]:
+        reasons.append("QUOTE_PRICE_ADJUSTMENT_FORMULA_MISMATCH")
+    if not price_adjustment_contract_met:
+        reasons.append("PRICE_ADJUSTMENT_CONTRACT_NOT_MET")
+    if not signal_session_close_observation_types_non_degenerate:
+        reasons.append("SIGNAL_SESSION_CLOSE_OBSERVATION_TYPES_DEGENERATE")
     if not target_fundamental_interval_available:
         reasons.append("TARGET_FUNDAMENTAL_INTERVAL_UNAVAILABLE")
     if not fundamental_target_month_continuity_met:
@@ -500,8 +965,20 @@ def recompute_coverage_report(
         reasons.append("INSUFFICIENT_FUNDAMENTAL_ELIGIBLE_SYMBOL_COVERAGE")
     if not fundamental_staleness_coverage_met:
         reasons.append("INSUFFICIENT_NONSTALE_FUNDAMENTAL_COVERAGE")
+    if not fundamental_complete_quote_contract_support_met:
+        reasons.append("INSUFFICIENT_COMPLETE_QUOTE_FUNDAMENTAL_JOINT_SUPPORT")
     if not fundamental_publication_order_integrity_met:
         reasons.append("FUNDAMENTAL_PUBLICATION_BEFORE_REPORT_PERIOD_END")
+    if not global_fundamental_publication_order_integrity_met:
+        reasons.append(
+            "GLOBAL_FUNDAMENTAL_PUBLICATION_BEFORE_REPORT_PERIOD_END"
+        )
+    if not fundamental_roe_numeric_integrity_met:
+        reasons.append("FUNDAMENTAL_ROE_DILUTED_NON_NUMERIC_OR_NON_FINITE")
+    if fundamentals["invalid_roe_diluted_numeric_format_row_count"]:
+        reasons.append("FUNDAMENTAL_ROE_DILUTED_INVALID_CANONICAL_NUMERIC_FORMAT")
+    if fundamentals["non_finite_roe_diluted_row_count"]:
+        reasons.append("FUNDAMENTAL_ROE_DILUTED_NON_FINITE")
     if not minimum_monthly_observations_met:
         reasons.append("INSUFFICIENT_MONTHLY_COVERAGE")
     if not minimum_sessions_per_month_met:
@@ -518,6 +995,12 @@ def recompute_coverage_report(
         reasons.append("INSUFFICIENT_AMOUNT_20D_HISTORY_COVERAGE")
     if not quote_contract_coverage["exact_endpoint_coverage_met"]:
         reasons.append("INSUFFICIENT_EXACT_ENDPOINT_QUOTE_COVERAGE")
+    if not quote_contract_coverage[
+        "all_signal_session_candidates_have_exact_endpoints"
+    ]:
+        reasons.append(
+            "INCOMPLETE_EXACT_ENDPOINT_COVERAGE_FOR_SIGNAL_CANDIDATES"
+        )
     if not quote_contract_coverage["complete_quote_contract_coverage_met"]:
         reasons.append("INSUFFICIENT_COMPLETE_PER_SYMBOL_QUOTE_COVERAGE")
     if not publication_coverage_met:
@@ -532,8 +1015,22 @@ def recompute_coverage_report(
         reasons.append("TRADABILITY_FIELDS_NOT_VERIFIED")
     if not exact_endpoint_resolution_semantics_verified:
         reasons.append("EXACT_ENDPOINT_SEMANTICS_NOT_VERIFIED")
+    if not suspension_valuation_semantics_verified:
+        reasons.append("SUSPENSION_VALUATION_SEMANTICS_NOT_VERIFIED")
+    if not price_adjustment_semantics_verified:
+        reasons.append("PRICE_ADJUSTMENT_SEMANTICS_NOT_VERIFIED")
+    if not amount_unit_normalization_semantics_verified:
+        reasons.append("AMOUNT_UNIT_NORMALIZATION_SEMANTICS_NOT_VERIFIED")
     if not endpoint_reason_ledger_rights_verified:
         reasons.append("ENDPOINT_LEDGER_RIGHTS_NOT_VERIFIED")
+    if not historical_membership_completeness_verified:
+        reasons.append("HISTORICAL_MEMBERSHIP_COMPLETENESS_NOT_VERIFIED")
+    if not terminal_survivor_comparator_verified:
+        reasons.append("TERMINAL_SURVIVOR_COMPARATOR_NOT_VERIFIED")
+    if not security_identifier_contract_verified:
+        reasons.append("SECURITY_IDENTIFIER_CONTRACT_NOT_VERIFIED")
+    if not fundamental_publication_semantics_verified:
+        reasons.append("FUNDAMENTAL_PUBLICATION_SEMANTICS_NOT_VERIFIED")
     if not data_rights_verified:
         reasons.append("DATA_RIGHTS_NOT_VERIFIED")
     if not official_calendar_review_verified:
@@ -542,6 +1039,60 @@ def recompute_coverage_report(
         reasons.append("MISSING_FUNDAMENTAL_FIELDS")
     if not no_empty_inputs:
         reasons.append("EMPTY_INPUT")
+    completeness_reason_fields = {
+        "quotes": {"date": "QUOTE_DATE", "symbol": "QUOTE_SYMBOL"},
+        "stock_master": {
+            "symbol": "STOCK_MASTER_SYMBOL",
+            "listDate": "STOCK_MASTER_LIST_DATE",
+            "listStatus": "STOCK_MASTER_LIST_STATUS",
+            "stockType": "STOCK_MASTER_STOCK_TYPE",
+        },
+        "fundamentals": {
+            "symbol": "FUNDAMENTAL_SYMBOL",
+            "roeDiluted": "FUNDAMENTAL_ROE_DILUTED",
+            "reportPeriodEnd": "FUNDAMENTAL_REPORT_PERIOD_END",
+        },
+        "official_calendar": {"date": "OFFICIAL_CALENDAR_DATE"},
+    }
+    for role, fields in completeness_reason_fields.items():
+        section = sections_by_role[role]
+        for field, label in fields.items():
+            if section["blank_value_counts"].get(field, section["row_count"]):
+                reasons.append(f"{label}_BLANK")
+            if section["na_like_value_counts"].get(field, 0):
+                reasons.append(f"{label}_NA_LIKE")
+    for role, reason_label in (
+        ("quotes", "QUOTE_SYMBOL"),
+        ("stock_master", "STOCK_MASTER_SYMBOL"),
+        ("fundamentals", "FUNDAMENTAL_SYMBOL"),
+    ):
+        section = sections_by_role[role]
+        if section["symbol_invalid_canonical_format_row_count"]:
+            reasons.append(f"{reason_label}_INVALID_CANONICAL_FORMAT")
+    canonical_date_reason_fields = {
+        "quotes": {"date": "QUOTE_DATE"},
+        "stock_master": {
+            "listDate": "STOCK_MASTER_LIST_DATE",
+            "delistDate": "STOCK_MASTER_DELIST_DATE",
+        },
+        "fundamentals": {
+            "publishDate": "FUNDAMENTAL_PUBLISH_DATE",
+            "reportPeriodEnd": "FUNDAMENTAL_REPORT_PERIOD_END",
+        },
+        "official_calendar": {"date": "OFFICIAL_CALENDAR_DATE"},
+    }
+    for role, fields in canonical_date_reason_fields.items():
+        section = sections_by_role[role]
+        for field, label in fields.items():
+            if section["invalid_date_format_counts"].get(field, 0):
+                reasons.append(f"{label}_INVALID_CANONICAL_DATE")
+    for role in INPUT_ROLES:
+        section = sections_by_role[role]
+        reason_label = INPUT_ROLE_REASON_LABELS[role]
+        if section["malformed_csv_row_width_count"]:
+            reasons.append(f"MALFORMED_{reason_label}_CSV_ROW_WIDTH")
+        if section["duplicate_logical_key_row_count"]:
+            reasons.append(f"DUPLICATE_{reason_label}_LOGICAL_KEY")
 
     input_manifest = {
         "files": identities,
@@ -580,11 +1131,20 @@ def recompute_coverage_report(
             ),
             "quote_dates_are_official_sessions": quote_dates_are_official_sessions,
             "non_calendar_quote_date_count": len(non_calendar_quote_dates),
+            "quote_numeric_integrity_met": quote_numeric_integrity_met,
+            "quote_boolean_integrity_met": quote_boolean_integrity_met,
+            "close_observation_contract_met": close_observation_contract_met,
+            "price_adjustment_contract_met": price_adjustment_contract_met,
+            "canonical_amount_unit_met": canonical_amount_unit_met,
+            "signal_session_close_observation_types_non_degenerate": (
+                signal_session_close_observation_types_non_degenerate
+            ),
             "target_fundamental_interval_available": target_fundamental_interval_available,
             "fundamental_interval_basis": (
                 "first official session per target month; publishDate strictly before "
-                "that session; quote/master intersection restricted to the closed "
-                "listDate-to-delistDate interval (delistDate inclusive); "
+                "that session; the same identifiers must satisfy the complete quote "
+                "contract and the closed listDate-to-delistDate interval "
+                "(delistDate inclusive); "
                 "reportPeriodEnd no more than 18 calendar months stale; publication "
                 "dates before reportPeriodEnd block readiness"
             ),
@@ -597,8 +1157,17 @@ def recompute_coverage_report(
             "fundamental_staleness_coverage_met": (
                 fundamental_staleness_coverage_met
             ),
+            "fundamental_complete_quote_contract_support_met": (
+                fundamental_complete_quote_contract_support_met
+            ),
             "fundamental_publication_order_integrity_met": (
                 fundamental_publication_order_integrity_met
+            ),
+            "global_fundamental_publication_order_integrity_met": (
+                global_fundamental_publication_order_integrity_met
+            ),
+            "fundamental_roe_numeric_integrity_met": (
+                fundamental_roe_numeric_integrity_met
             ),
             "expected_analysis_month_count": len(expected_months),
             "target_observed_month_count": len(target_months),
@@ -643,6 +1212,11 @@ def recompute_coverage_report(
             "exact_endpoint_coverage_met": quote_contract_coverage[
                 "exact_endpoint_coverage_met"
             ],
+            "all_signal_session_candidates_have_exact_endpoints": (
+                quote_contract_coverage[
+                    "all_signal_session_candidates_have_exact_endpoints"
+                ]
+            ),
             "complete_quote_contract_coverage_met": quote_contract_coverage[
                 "complete_quote_contract_coverage_met"
             ],
@@ -672,17 +1246,54 @@ def recompute_coverage_report(
             ),
             "publication_date_coverage_met": publication_coverage_met,
             "point_in_time_membership_available": membership_available,
+            "terminal_survivor_cutoff": parameters[
+                "terminal_survivor_cutoff"
+            ],
+            "terminal_survivor_comparator_verified": (
+                terminal_survivor_comparator_verified
+            ),
+            "security_identifier_contract_id": parameters[
+                "security_identifier_contract_id"
+            ],
+            "security_identifier_contract_verified": (
+                security_identifier_contract_verified
+            ),
             "execution_columns_present": execution_columns_present,
             "execution_semantics_verified": execution_semantics_verified,
             "tradability_fields_verified": tradability_fields_verified,
             "exact_endpoint_resolution_semantics_verified": (
                 exact_endpoint_resolution_semantics_verified
             ),
+            "suspension_valuation_semantics_verified": (
+                suspension_valuation_semantics_verified
+            ),
+            "price_adjustment_semantics_verified": (
+                price_adjustment_semantics_verified
+            ),
+            "amount_unit_normalization_semantics_verified": (
+                amount_unit_normalization_semantics_verified
+            ),
             "endpoint_reason_ledger_rights_verified": (
                 endpoint_reason_ledger_rights_verified
             ),
+            "historical_membership_completeness_verified": (
+                historical_membership_completeness_verified
+            ),
+            "fundamental_publication_semantics_verified": (
+                fundamental_publication_semantics_verified
+            ),
             "data_rights_verified": data_rights_verified,
             "official_calendar_review_verified": official_calendar_review_verified,
+            "csv_row_width_integrity_met": csv_row_width_integrity_met,
+            "logical_key_uniqueness_met": logical_key_uniqueness_met,
+            "input_structural_integrity_met": input_structural_integrity_met,
+            "required_field_non_null_integrity_met": (
+                required_field_non_null_integrity_met
+            ),
+            "canonical_date_format_integrity_met": (
+                canonical_date_format_integrity_met
+            ),
+            "canonical_symbol_integrity_met": canonical_symbol_integrity_met,
             "complete_revision_vintage_available": vintage_available,
             "revision_history_claim_allowed": vintage_available,
             "ready_to_lock_stage2_plan": ready,
@@ -691,7 +1302,46 @@ def recompute_coverage_report(
         "scope": {
             "purpose": "data-feasibility precondition for a Stage-2 registered study",
             "contract_mutability": "fixed; caller overrides are rejected",
-            "duplicate_key_validation": "deferred to the strict study runner",
+            "duplicate_key_validation": (
+                "enforced here on normalized logical keys for every input role; "
+                "an exact bounded-memory index spills to private temporary SQLite "
+                "storage when needed; only aggregate duplicate-row counts are "
+                "reported and temporary paths are never disclosed"
+            ),
+            "csv_row_width_validation": (
+                "enforced here for short and over-wide records; only aggregate "
+                "malformed-row counts are reported"
+            ),
+            "canonical_date_validation": (
+                "every non-blank canonical CSV date field must be an exact, valid "
+                "YYYY-MM-DD value within the pandas-nanosecond-safe midnight range "
+                "1677-09-22 through 2262-04-11; provider-native formats must be "
+                "normalized by the private adapter before this audit"
+            ),
+            "canonical_symbol_validation": (
+                "quotes, stock_master, and fundamentals require one canonical "
+                "six-digit uppercase .SH/.SZ symbol on every row; only aggregate "
+                "blank, NA-like, and invalid-format counts are reported"
+            ),
+            "canonical_numeric_validation": (
+                "quote close/amount and fundamental roeDiluted must use ASCII decimal "
+                "syntax with an optional sign, fraction, and base-10 exponent; "
+                "underscores, locale separators, hexadecimal forms, NaN, and infinity "
+                "are rejected before finite and economic-domain checks"
+            ),
+            "canonical_amount_unit_validation": (
+                "every bound Stage-2 quote row must carry the exact case-sensitive "
+                "amount_unit token CNY; provider-native thousand-CNY or other units "
+                "must be normalized by a documented private adapter before hashing, "
+                "coverage audit, registration, and execution"
+            ),
+            "canonical_price_adjustment_validation": (
+                "every row must carry close_raw, a finite positive adjustment_factor, "
+                "the exact fixed method and hfq convention tokens, and a close equal "
+                "to close_raw multiplied by adjustment_factor within fixed 1e-12 "
+                "relative and absolute tolerances; provider definitions and no-rebasing "
+                "normalization remain hash-bound human-review evidence"
+            ),
             "raw_rows_disclosed": False,
             "local_paths_disclosed": False,
             "revision_history_boundary": (
@@ -699,13 +1349,19 @@ def recompute_coverage_report(
                 "observed vintage-like columns are diagnostic only"
             ),
             "column_presence_boundary": (
-                "open and tradability columns do not establish execution semantics, "
-                "field informativeness, or publication rights"
+                "presence alone does not establish execution semantics or publication "
+                "rights; this audit separately enforces runner-compatible ST and "
+                "suspension boolean encodings, exact close-observation-type mapping, "
+                "and signal-session non-degeneracy, while supplier-recorded same-session "
+                "suspension-valuation semantics remain subject to the bound human "
+                "review attestation"
             ),
             "symbol_eligibility_boundary": (
                 "each target month constructs its strict SH/SZ A-share universe from "
                 "listDate <= signal_date <= delistDate (delistDate inclusive), then "
-                "requires at least 1,000 identifiers with quote rows on every exact "
+                "requires every active master identifier with a signal-session quote "
+                "to have quote rows at t, t+1, t+20, and t+21, and separately requires "
+                "at least 1,000 identifiers with quote rows on every exact "
                 "official session needed "
                 "from t-60 through t for momentum, for the 20-session volatility "
                 "and amount histories, "
@@ -729,8 +1385,23 @@ def recompute_coverage_report(
             "exact_endpoint_resolution_semantics_verified": attestation[
                 "exact_endpoint_resolution_semantics_verified"
             ],
+            "suspension_valuation_semantics_verified": attestation[
+                "suspension_valuation_semantics_verified"
+            ],
+            "price_adjustment_semantics_verified": attestation[
+                "price_adjustment_semantics_verified"
+            ],
+            "amount_unit_normalization_semantics_verified": attestation[
+                "amount_unit_normalization_semantics_verified"
+            ],
             "endpoint_reason_ledger_rights_verified": attestation[
                 "endpoint_reason_ledger_rights_verified"
+            ],
+            "terminal_survivor_comparator_verified": attestation[
+                "terminal_survivor_comparator_verified"
+            ],
+            "security_identifier_semantics_verified": attestation[
+                "security_identifier_semantics_verified"
             ],
             "reviewed_at": attestation["reviewed_at"],
             "reviewer_recorded": attestation["reviewer_recorded"],
@@ -773,10 +1444,15 @@ def validate_coverage_report(
 
 
 def write_coverage_report(report: Mapping[str, Any], output_path: str | Path) -> None:
-    destination = Path(output_path).expanduser().resolve(strict=False)
-    destination.parent.mkdir(parents=True, exist_ok=True)
     payload = _canonical_json_bytes(report) + b"\n"
-    destination.write_bytes(payload)
+    try:
+        write_private_bytes_atomic_exclusive(
+            output_path,
+            payload,
+            label="authoritative coverage report target",
+        )
+    except PrivateArtifactPathError as exc:
+        raise StudyV2CoverageError(str(exc)) from exc
 
 
 def _scan_quotes(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
@@ -785,8 +1461,29 @@ def _scan_quotes(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
         source_name=str(identity["file_name"]),
         required=QUOTE_REQUIRED,
         date_columns=("date",),
-        non_null_columns=("date", "symbol", "open", "close", "volume", "amount"),
+        non_null_columns=(
+            "date", "symbol", "open", "close_raw", "adjustment_factor",
+            "close", "price_adjustment_method", "price_adjustment_convention",
+            "volume", "amount",
+            "amount_unit", "close_observation_type", "is_st", "is_suspended",
+        ),
+        logical_key_columns=("symbol", "date"),
         monthly_date_column="date",
+    )
+    numeric_integrity = _quote_numeric_integrity(
+        raw_csv, source_name=str(identity["file_name"])
+    )
+    boolean_integrity = _quote_boolean_integrity(
+        raw_csv, source_name=str(identity["file_name"])
+    )
+    amount_unit_integrity = _quote_amount_unit_integrity(
+        raw_csv, source_name=str(identity["file_name"])
+    )
+    price_adjustment_integrity = _quote_price_adjustment_integrity(
+        raw_csv, source_name=str(identity["file_name"])
+    )
+    symbol_integrity = _canonical_symbol_integrity(
+        raw_csv, source_name=str(identity["file_name"])
     )
     return {
         **identity,
@@ -797,6 +1494,16 @@ def _scan_quotes(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
         "required_columns_present": scan["required_columns_present"],
         "missing_required_columns": scan["missing_required_columns"],
         "non_null_rates": scan["non_null_rates"],
+        "blank_value_counts": scan["blank_value_counts"],
+        "na_like_value_counts": scan["na_like_value_counts"],
+        "missing_value_counts": scan["missing_value_counts"],
+        "invalid_date_format_counts": scan["invalid_date_format_counts"],
+        **_structural_integrity_fields(scan),
+        **numeric_integrity,
+        **boolean_integrity,
+        **amount_unit_integrity,
+        **price_adjustment_integrity,
+        **symbol_integrity,
         "observed_month_count": len(scan["monthly_coverage"]),
         "minimum_monthly_symbol_count": min(
             (row["symbol_count"] for row in scan["monthly_coverage"]), default=0
@@ -808,14 +1515,452 @@ def _scan_quotes(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _quote_numeric_integrity(
+    raw_csv: bytes, *, source_name: str
+) -> dict[str, Any]:
+    """Return aggregate-only integrity counts for outcome-bearing quote fields."""
+
+    counts = {
+        "close_blank_row_count": 0,
+        "close_non_numeric_or_non_finite_row_count": 0,
+        "close_invalid_canonical_numeric_format_row_count": 0,
+        "close_non_finite_row_count": 0,
+        "close_non_positive_row_count": 0,
+        "amount_blank_row_count": 0,
+        "amount_non_numeric_or_non_finite_row_count": 0,
+        "amount_invalid_canonical_numeric_format_row_count": 0,
+        "amount_non_finite_row_count": 0,
+        "amount_negative_row_count": 0,
+    }
+    row_count = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                row_count += 1
+                close_value, close_status = _canonical_numeric_value(
+                    row.get("close")
+                )
+                if close_status == "blank":
+                    counts["close_blank_row_count"] += 1
+                elif close_status == "invalid_format":
+                    counts["close_non_numeric_or_non_finite_row_count"] += 1
+                    counts[
+                        "close_invalid_canonical_numeric_format_row_count"
+                    ] += 1
+                elif close_status == "non_finite":
+                    counts["close_non_numeric_or_non_finite_row_count"] += 1
+                    counts["close_non_finite_row_count"] += 1
+                elif close_value is not None and close_value <= 0:
+                    counts["close_non_positive_row_count"] += 1
+
+                amount_value, amount_status = _canonical_numeric_value(
+                    row.get("amount")
+                )
+                if amount_status == "blank":
+                    counts["amount_blank_row_count"] += 1
+                elif amount_status == "invalid_format":
+                    counts["amount_non_numeric_or_non_finite_row_count"] += 1
+                    counts[
+                        "amount_invalid_canonical_numeric_format_row_count"
+                    ] += 1
+                elif amount_status == "non_finite":
+                    counts["amount_non_numeric_or_non_finite_row_count"] += 1
+                    counts["amount_non_finite_row_count"] += 1
+                elif amount_value is not None and amount_value < 0:
+                    counts["amount_negative_row_count"] += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+
+    close_invalid = sum(
+        counts[key]
+        for key in (
+            "close_blank_row_count",
+            "close_non_numeric_or_non_finite_row_count",
+            "close_non_positive_row_count",
+        )
+    )
+    amount_invalid = sum(
+        counts[key]
+        for key in (
+            "amount_blank_row_count",
+            "amount_non_numeric_or_non_finite_row_count",
+            "amount_negative_row_count",
+        )
+    )
+    return {
+        **counts,
+        "close_invalid_row_count": close_invalid,
+        "close_invalid_rate": round(close_invalid / row_count, 10)
+        if row_count
+        else 0.0,
+        "amount_invalid_row_count": amount_invalid,
+        "amount_invalid_rate": round(amount_invalid / row_count, 10)
+        if row_count
+        else 0.0,
+        "numeric_integrity_verified": close_invalid == 0 and amount_invalid == 0,
+        "numeric_integrity_basis": (
+            "aggregate row counts only; values must match the exact canonical ASCII "
+            "decimal grammar with optional sign, fraction, and base-10 exponent, "
+            "then be finite; close must be strictly positive and amount non-negative"
+        ),
+    }
+
+
+def _quote_boolean_integrity(
+    raw_csv: bytes, *, source_name: str
+) -> dict[str, Any]:
+    """Audit runner-compatible flags without retaining raw field values."""
+
+    true_tokens = {"true", "1", "yes"}
+    false_tokens = {"false", "0", "no"}
+    states: dict[str, set[str]] = {
+        "is_st": set(),
+        "is_suspended": set(),
+    }
+    blank_counts = {"is_st": 0, "is_suspended": 0}
+    invalid_counts = {"is_st": 0, "is_suspended": 0}
+    observation_types: set[str] = set()
+    observation_type_blank_count = 0
+    observation_type_invalid_count = 0
+    observation_type_suspension_mismatch_count = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                canonical_suspension_state: str | None = None
+                for field in states:
+                    text = str(row.get(field) or "").strip().lower()
+                    if not text:
+                        blank_counts[field] += 1
+                    elif text in true_tokens:
+                        states[field].add("true")
+                        if field == "is_suspended":
+                            canonical_suspension_state = "true"
+                    elif text in false_tokens:
+                        states[field].add("false")
+                        if field == "is_suspended":
+                            canonical_suspension_state = "false"
+                    else:
+                        invalid_counts[field] += 1
+                raw_observation_type = str(
+                    row.get("close_observation_type") or ""
+                )
+                observation_type = raw_observation_type.strip()
+                if not observation_type:
+                    observation_type_blank_count += 1
+                elif (
+                    raw_observation_type != observation_type
+                    or observation_type not in STAGE2_CLOSE_OBSERVATION_TYPES
+                ):
+                    observation_type_invalid_count += 1
+                else:
+                    observation_types.add(observation_type)
+                    if canonical_suspension_state is not None:
+                        expected_type = (
+                            "suspension_valuation"
+                            if canonical_suspension_state == "true"
+                            else "traded_close"
+                        )
+                        if observation_type != expected_type:
+                            observation_type_suspension_mismatch_count += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+
+    result: dict[str, Any] = {}
+    for field in ("is_st", "is_suspended"):
+        result[f"{field}_blank_row_count"] = blank_counts[field]
+        result[f"{field}_invalid_boolean_row_count"] = invalid_counts[field]
+        result[f"{field}_distinct_canonical_states"] = sorted(states[field])
+        result[f"{field}_non_degenerate"] = states[field] == {"true", "false"}
+    result["boolean_integrity_verified"] = all(
+        blank_counts[field] == 0
+        and invalid_counts[field] == 0
+        and states[field] == {"true", "false"}
+        for field in states
+    )
+    result["boolean_integrity_basis"] = (
+        "aggregate-only runner-compatible normalization: true/1/yes -> true; "
+        "false/0/no -> false; case and surrounding whitespace ignored; each "
+        "required field must contain both canonical states"
+    )
+    result.update(
+        {
+            "close_observation_type_blank_row_count": (
+                observation_type_blank_count
+            ),
+            "close_observation_type_invalid_row_count": (
+                observation_type_invalid_count
+            ),
+            "close_observation_type_suspension_mismatch_row_count": (
+                observation_type_suspension_mismatch_count
+            ),
+            "close_observation_type_distinct_states": sorted(
+                observation_types
+            ),
+            "close_observation_type_non_degenerate": observation_types
+            == STAGE2_CLOSE_OBSERVATION_TYPES,
+            "close_observation_contract_verified": bool(
+                observation_type_blank_count == 0
+                and observation_type_invalid_count == 0
+                and observation_type_suspension_mismatch_count == 0
+            ),
+            "close_observation_contract_basis": (
+                "exact canonical traded_close iff is_suspended is false; exact "
+                "canonical suspension_valuation iff is_suspended is true; "
+                "supplier-recorded same-session valuation semantics require the "
+                "separate human review attestation"
+            ),
+        }
+    )
+    return result
+
+
+def _quote_amount_unit_integrity(
+    raw_csv: bytes, *, source_name: str
+) -> dict[str, Any]:
+    """Require the bound canonical amount field to be expressed in exact CNY."""
+
+    blank_count = 0
+    non_cny_count = 0
+    row_count = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                row_count += 1
+                raw_unit = row.get("amount_unit")
+                if raw_unit is None or raw_unit == "":
+                    blank_count += 1
+                elif raw_unit != STAGE2_CANONICAL_AMOUNT_UNIT:
+                    non_cny_count += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+    return {
+        "amount_unit_blank_row_count": blank_count,
+        "amount_unit_non_cny_row_count": non_cny_count,
+        "canonical_amount_unit_verified": bool(
+            row_count > 0 and blank_count == 0 and non_cny_count == 0
+        ),
+        "canonical_amount_unit_basis": (
+            "exact case-sensitive CNY token on every bound quote row; provider-native "
+            "units must be normalized before input hashing and coverage audit"
+        ),
+    }
+
+
+def _quote_price_adjustment_integrity(
+    raw_csv: bytes, *, source_name: str
+) -> dict[str, Any]:
+    """Mechanically verify the fixed adjusted-close construction row by row.
+
+    The audit retains only aggregate failure counts. Provider definitions and
+    the meaning of its cumulative factor remain a separately hash-bound human
+    review; exact tokens cannot prove a vendor's documentation by themselves.
+    """
+
+    counts = {
+        "close_raw_blank_row_count": 0,
+        "close_raw_invalid_row_count": 0,
+        "close_raw_non_positive_row_count": 0,
+        "adjustment_factor_blank_row_count": 0,
+        "adjustment_factor_invalid_row_count": 0,
+        "adjustment_factor_non_positive_row_count": 0,
+        "price_adjustment_method_blank_row_count": 0,
+        "price_adjustment_method_invalid_row_count": 0,
+        "price_adjustment_convention_blank_row_count": 0,
+        "price_adjustment_convention_invalid_row_count": 0,
+        "price_adjustment_formula_uncheckable_row_count": 0,
+        "price_adjustment_formula_mismatch_row_count": 0,
+    }
+    row_count = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                row_count += 1
+                numeric: dict[str, float] = {}
+                for field in ("close_raw", "adjustment_factor", "close"):
+                    value, status = _canonical_numeric_value(row.get(field))
+                    if field == "close":
+                        if status != "valid" or value is None or value <= 0:
+                            counts[
+                                "price_adjustment_formula_uncheckable_row_count"
+                            ] += 1
+                        else:
+                            numeric[field] = value
+                        continue
+                    if status == "blank":
+                        counts[f"{field}_blank_row_count"] += 1
+                    elif status != "valid" or value is None:
+                        counts[f"{field}_invalid_row_count"] += 1
+                    elif value <= 0:
+                        counts[f"{field}_non_positive_row_count"] += 1
+                    else:
+                        numeric[field] = value
+                for field, expected in (
+                    ("price_adjustment_method", STAGE2_PRICE_ADJUSTMENT_METHOD),
+                    (
+                        "price_adjustment_convention",
+                        STAGE2_PRICE_ADJUSTMENT_CONVENTION,
+                    ),
+                ):
+                    raw_value = row.get(field)
+                    if raw_value is None or raw_value == "":
+                        counts[f"{field}_blank_row_count"] += 1
+                    elif raw_value != expected:
+                        counts[f"{field}_invalid_row_count"] += 1
+                if len(numeric) != 3:
+                    if "close" in numeric:
+                        counts[
+                            "price_adjustment_formula_uncheckable_row_count"
+                        ] += 1
+                    continue
+                expected_close = numeric["close_raw"] * numeric["adjustment_factor"]
+                if not math.isclose(
+                    numeric["close"],
+                    expected_close,
+                    rel_tol=STAGE2_PRICE_ADJUSTMENT_REL_TOLERANCE,
+                    abs_tol=STAGE2_PRICE_ADJUSTMENT_ABS_TOLERANCE,
+                ):
+                    counts["price_adjustment_formula_mismatch_row_count"] += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+
+    invalid_count = sum(counts.values())
+    return {
+        **counts,
+        "price_adjustment_contract_verified": bool(
+            row_count > 0 and invalid_count == 0
+        ),
+        "price_adjustment_contract": {
+            "method": STAGE2_PRICE_ADJUSTMENT_METHOD,
+            "convention": STAGE2_PRICE_ADJUSTMENT_CONVENTION,
+            "formula": "close=close_raw*adjustment_factor",
+            "relative_tolerance": STAGE2_PRICE_ADJUSTMENT_REL_TOLERANCE,
+            "absolute_tolerance": STAGE2_PRICE_ADJUSTMENT_ABS_TOLERANCE,
+            "normalization_base_rule": (
+                "provider_cumulative_factor_as_delivered_no_rebasing"
+            ),
+            "return_invariance_rule": (
+                "per_symbol_positive_constant_factor_rescaling_leaves_return_ratios_unchanged"
+            ),
+        },
+        "price_adjustment_contract_basis": (
+            "aggregate-only verification that every row carries the exact method and "
+            "convention tokens and that close equals close_raw times a finite positive "
+            "adjustment_factor within fixed 1e-12 relative and absolute tolerances"
+        ),
+    }
+
+
+def _signal_session_close_observation_coverage(
+    raw_csv: bytes,
+    *,
+    signal_session_candidates: Mapping[date, SetABC[str]],
+    source_name: str,
+) -> dict[str, Any]:
+    """Count close-observation types for fixed signal-session candidates only."""
+
+    counts = {value: 0 for value in STAGE2_CLOSE_OBSERVATION_TYPES}
+    scoped_rows = 0
+    invalid_rows = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                row_date, date_has_invalid_format = _optional_canonical_date(
+                    row.get("date")
+                )
+                symbol = str(row.get("symbol") or "").strip().upper()
+                candidates = (
+                    signal_session_candidates.get(row_date, set())
+                    if row_date is not None and not date_has_invalid_format
+                    else set()
+                )
+                if not symbol or symbol not in candidates:
+                    continue
+                scoped_rows += 1
+                raw_type = str(row.get("close_observation_type") or "")
+                observation_type = raw_type.strip()
+                if (
+                    raw_type != observation_type
+                    or observation_type not in STAGE2_CLOSE_OBSERVATION_TYPES
+                ):
+                    invalid_rows += 1
+                    continue
+                counts[observation_type] += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+    return {
+        "signal_session_close_observation_row_count": scoped_rows,
+        "signal_session_close_observation_type_counts": dict(sorted(counts.items())),
+        "signal_session_close_observation_invalid_row_count": invalid_rows,
+        "signal_session_close_observation_types_non_degenerate": bool(
+            invalid_rows == 0 and all(counts[value] > 0 for value in counts)
+        ),
+        "signal_session_close_observation_scope": (
+            "aggregate counts over active strict A-share master identifiers with a "
+            "quote on the first common official session in each of the 156 fixed "
+            "target months; no price, return, factor, rank, or security identifier "
+            "is reported"
+        ),
+    }
+
+
+def _canonical_symbol_integrity(
+    raw_csv: bytes, *, source_name: str
+) -> dict[str, Any]:
+    blank_rows = 0
+    na_like_rows = 0
+    invalid_format_rows = 0
+    try:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle:
+            for row in csv.DictReader(handle):
+                raw_text = str(row.get("symbol") or "")
+                text = raw_text.strip()
+                if not text:
+                    blank_rows += 1
+                elif _is_na_like_token(text):
+                    na_like_rows += 1
+                elif raw_text != text or CANONICAL_SYMBOL_PATTERN.fullmatch(text) is None:
+                    invalid_format_rows += 1
+    except csv.Error as exc:
+        raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
+    return {
+        "symbol_blank_row_count": blank_rows,
+        "symbol_na_like_row_count": na_like_rows,
+        "symbol_invalid_canonical_format_row_count": invalid_format_rows,
+        "canonical_symbol_integrity_verified": (
+            blank_rows == 0 and na_like_rows == 0 and invalid_format_rows == 0
+        ),
+        "canonical_symbol_integrity_basis": (
+            "every row must contain exactly six ASCII digits followed by uppercase "
+            ".SH or .SZ; blank and pandas-default-NA-like tokens are invalid; "
+            "aggregate counts only"
+        ),
+    }
+
+
 def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
     scan = _scan_csv(
         raw_csv,
         source_name=str(identity["file_name"]),
         required=MASTER_REQUIRED,
-        date_columns=(),
-        non_null_columns=("symbol",),
+        date_columns=("listDate", "delistDate"),
+        non_null_columns=("symbol", "listDate", "listStatus", "stockType"),
+        logical_key_columns=("symbol",),
         collect_columns=("listStatus",),
+    )
+    symbol_integrity = _canonical_symbol_integrity(
+        raw_csv, source_name=str(identity["file_name"])
     )
     scoped_rows = 0
     scoped_symbols: set[str] = set()
@@ -829,6 +1974,7 @@ def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
     active_with_delist_dates = 0
     unrecognized_statuses = 0
     delisted_symbols: set[str] = set()
+    terminal_survivor_symbols: set[str] = set()
     with io.TextIOWrapper(
         io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
     ) as handle:
@@ -852,6 +1998,15 @@ def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
                 invalid_delist_dates += 1
             if delist_date is not None:
                 valid_delist_dates.append(delist_date)
+            if (
+                list_date is not None
+                and list_date <= STAGE2_TERMINAL_SURVIVOR_CUTOFF
+                and (
+                    delist_date is None
+                    or delist_date > STAGE2_TERMINAL_SURVIVOR_CUTOFF
+                )
+            ):
+                terminal_survivor_symbols.add(symbol)
 
             status = (row.get("listStatus") or "").strip().upper()
             if status in DELISTED_LIST_STATUSES:
@@ -904,6 +2059,13 @@ def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
         if valid_delist_dates
         else None,
         "delisted_symbol_count": len(delisted_symbols),
+        "terminal_survivor_cutoff": STAGE2_TERMINAL_SURVIVOR_CUTOFF.isoformat(),
+        "terminal_survivor_symbol_count": len(terminal_survivor_symbols),
+        "terminal_survivor_rule": (
+            "listDate_on_or_before_signal_session_and_delistDate_is_null_or_"
+            "strictly_after_2023-01-31;_listStatus_and_acquisition_date_do_not_"
+            "redefine_membership"
+        ),
         "non_null_list_date_rate": round(
             nonblank_list_dates / scoped_rows, 10
         )
@@ -927,6 +2089,13 @@ def _scan_master(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str, Any]:
         "membership_blocking_reason_codes": membership_reasons,
         "required_columns_present": scan["required_columns_present"],
         "missing_required_columns": scan["missing_required_columns"],
+        "non_null_rates": scan["non_null_rates"],
+        "blank_value_counts": scan["blank_value_counts"],
+        "na_like_value_counts": scan["na_like_value_counts"],
+        "missing_value_counts": scan["missing_value_counts"],
+        "invalid_date_format_counts": scan["invalid_date_format_counts"],
+        **_structural_integrity_fields(scan),
+        **symbol_integrity,
     }
 
 
@@ -937,8 +2106,14 @@ def _scan_fundamentals(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str,
         required=FUNDAMENTAL_REQUIRED,
         date_columns=("publishDate", "reportPeriodEnd"),
         non_null_columns=("symbol", "roeDiluted", "publishDate", "reportPeriodEnd"),
+        finite_numeric_columns=("roeDiluted",),
+        logical_key_columns=("symbol", "reportPeriodEnd"),
     )
     vintage = _audit_vintage_rows(raw_csv, scan["fieldnames"])
+    global_publication_order = _global_fundamental_publication_order(raw_csv)
+    symbol_integrity = _canonical_symbol_integrity(
+        raw_csv, source_name=str(identity["file_name"])
+    )
     return {
         **identity,
         "row_count": scan["row_count"],
@@ -948,13 +2123,59 @@ def _scan_fundamentals(raw_csv: bytes, identity: Mapping[str, Any]) -> dict[str,
         "publication_start": scan["date_ranges"]["publishDate"][0],
         "publication_end": scan["date_ranges"]["publishDate"][1],
         "publish_date_non_null_rate": scan["non_null_rates"].get("publishDate", 0.0),
+        "roe_diluted_finite_numeric_rate": scan["finite_numeric_rates"].get(
+            "roeDiluted", 0.0
+        ),
+        "invalid_roe_diluted_numeric_row_count": scan[
+            "invalid_finite_numeric_counts"
+        ].get("roeDiluted", 0),
+        "invalid_roe_diluted_numeric_format_row_count": scan[
+            "invalid_numeric_format_counts"
+        ].get("roeDiluted", 0),
+        "non_finite_roe_diluted_row_count": scan[
+            "non_finite_numeric_counts"
+        ].get("roeDiluted", 0),
+        **global_publication_order,
         "required_columns_present": scan["required_columns_present"],
         "missing_required_columns": scan["missing_required_columns"],
+        "non_null_rates": scan["non_null_rates"],
+        "blank_value_counts": scan["blank_value_counts"],
+        "na_like_value_counts": scan["na_like_value_counts"],
+        "missing_value_counts": scan["missing_value_counts"],
+        "invalid_date_format_counts": scan["invalid_date_format_counts"],
+        **_structural_integrity_fields(scan),
+        **symbol_integrity,
         "revision_vintage_fields_observed": vintage["fields_present"],
         "validated_revision_adapter_implemented": False,
         "complete_revision_vintage_fields_present": False,
         "revision_vintage_complete_row_rate": vintage["complete_row_rate"],
         "revision_versioned_symbol_period_count": vintage["versioned_symbol_period_count"],
+    }
+
+
+def _global_fundamental_publication_order(raw_csv: bytes) -> dict[str, Any]:
+    comparable_rows = 0
+    publication_before_report_rows = 0
+    with io.TextIOWrapper(
+        io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            publish_date, _ = _optional_canonical_date(row.get("publishDate"))
+            report_end, _ = _optional_canonical_date(row.get("reportPeriodEnd"))
+            if publish_date is None or report_end is None:
+                continue
+            comparable_rows += 1
+            if publish_date < report_end:
+                publication_before_report_rows += 1
+    return {
+        "global_publication_order_comparable_row_count": comparable_rows,
+        "global_publication_before_report_period_end_row_count": (
+            publication_before_report_rows
+        ),
+        "global_publication_order_check_scope": (
+            "all input rows with non-blank, valid publishDate and reportPeriodEnd; "
+            "aggregate counts only"
+        ),
     }
 
 
@@ -967,6 +2188,7 @@ def _scan_official_calendar(
         required=CALENDAR_REQUIRED,
         date_columns=("date",),
         non_null_columns=("date",),
+        logical_key_columns=("date",),
         monthly_date_column="date",
     )
     dates = _date_column_values(raw_csv, "date") if "date" in scan["fieldnames"] else []
@@ -982,10 +2204,15 @@ def _scan_official_calendar(
         "missing_required_columns": scan["missing_required_columns"],
         "additional_columns": sorted(set(scan["fieldnames"]) - CALENDAR_REQUIRED),
         "non_null_date_rate": scan["non_null_rates"].get("date", 0.0),
-        "duplicate_session_count": len(dates) - len(set(dates)),
+        "blank_value_counts": scan["blank_value_counts"],
+        "na_like_value_counts": scan["na_like_value_counts"],
+        "missing_value_counts": scan["missing_value_counts"],
+        "invalid_date_format_counts": scan["invalid_date_format_counts"],
+        "duplicate_session_count": scan["duplicate_logical_key_row_count"],
         "strictly_increasing": bool(dates) and all(
             earlier < later for earlier, later in zip(dates, dates[1:])
         ),
+        **_structural_integrity_fields(scan),
         "observed_month_count": len(scan["monthly_coverage"]),
         "monthly_coverage": scan["monthly_coverage"],
     }
@@ -998,15 +2225,17 @@ def _scan_csv(
     required: Iterable[str],
     date_columns: Sequence[str],
     non_null_columns: Sequence[str],
+    finite_numeric_columns: Sequence[str] = (),
+    logical_key_columns: Sequence[str] = (),
     collect_columns: Sequence[str] = (),
     monthly_date_column: str | None = None,
 ) -> dict[str, Any]:
     try:
-        text = raw_csv.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise StudyV2CoverageError(f"CSV is not valid UTF-8: {source_name}") from exc
-    try:
-        with io.StringIO(text, newline="") as handle:
+        with io.TextIOWrapper(
+            io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
+        ) as handle, _ExactLogicalKeyTracker(
+            LOGICAL_KEY_IN_MEMORY_LIMIT
+        ) as seen_logical_keys:
             reader = csv.DictReader(handle)
             fieldnames = list(reader.fieldnames or ())
             if not fieldnames:
@@ -1015,7 +2244,24 @@ def _scan_csv(
                 raise StudyV2CoverageError(f"CSV has duplicate headers: {source_name}")
             missing = sorted(set(required) - set(fieldnames))
             dates: dict[str, list[date | None]] = {name: [None, None] for name in date_columns}
+            invalid_date_formats = {name: 0 for name in date_columns}
             non_null = {name: 0 for name in non_null_columns}
+            blank_values = {name: 0 for name in non_null_columns}
+            na_like_values = {name: 0 for name in non_null_columns}
+            finite_numeric = set(finite_numeric_columns)
+            if not finite_numeric.issubset(non_null):
+                raise StudyV2CoverageError(
+                    "finite numeric columns must also be non-null columns: "
+                    f"{source_name}"
+                )
+            invalid_finite_numeric = {name: 0 for name in finite_numeric}
+            invalid_numeric_formats = {name: 0 for name in finite_numeric}
+            non_finite_numeric = {name: 0 for name in finite_numeric}
+            valid_finite_numeric = {name: 0 for name in finite_numeric}
+            duplicate_logical_key_rows = 0
+            extra_field_rows = 0
+            missing_field_rows = 0
+            malformed_width_rows = 0
             collected: dict[str, dict[str, int]] = {name: {} for name in collect_columns}
             symbols: set[str] = set()
             monthly_symbols: dict[str, set[str]] = {}
@@ -1023,14 +2269,53 @@ def _scan_csv(
             rows = 0
             for row in reader:
                 rows += 1
+                has_extra_fields = None in row
+                has_missing_fields = any(row.get(name) is None for name in fieldnames)
+                if has_extra_fields:
+                    extra_field_rows += 1
+                if has_missing_fields:
+                    missing_field_rows += 1
+                if has_extra_fields or has_missing_fields:
+                    malformed_width_rows += 1
+                logical_key = _normalized_logical_key(
+                    row,
+                    columns=logical_key_columns,
+                    date_columns=date_columns,
+                )
+                if logical_key is not None:
+                    if seen_logical_keys.add(logical_key):
+                        duplicate_logical_key_rows += 1
                 symbol = (row.get("symbol") or "").strip()
                 if symbol:
                     symbols.add(symbol)
                 for name in non_null_columns:
-                    if (row.get(name) or "").strip():
-                        non_null[name] += 1
+                    raw_value = str(row.get(name) or "")
+                    value = raw_value.strip()
+                    if not value:
+                        blank_values[name] += 1
+                        continue
+                    if _is_na_like_token(value):
+                        na_like_values[name] += 1
+                        if name in finite_numeric:
+                            invalid_finite_numeric[name] += 1
+                            invalid_numeric_formats[name] += 1
+                        continue
+                    non_null[name] += 1
+                    if name in finite_numeric:
+                        _, numeric_status = _canonical_numeric_value(raw_value)
+                        if numeric_status != "valid":
+                            invalid_finite_numeric[name] += 1
+                        else:
+                            valid_finite_numeric[name] += 1
+                        if numeric_status == "invalid_format":
+                            invalid_numeric_formats[name] += 1
+                        elif numeric_status == "non_finite":
+                            non_finite_numeric[name] += 1
                 for name in date_columns:
-                    parsed = _parse_date(row.get(name))
+                    parsed, invalid_format = _optional_canonical_date(row.get(name))
+                    if invalid_format:
+                        invalid_date_formats[name] += 1
+                        continue
                     if parsed is None:
                         continue
                     if dates[name][0] is None or parsed < dates[name][0]:
@@ -1038,7 +2323,9 @@ def _scan_csv(
                     if dates[name][1] is None or parsed > dates[name][1]:
                         dates[name][1] = parsed
                 if monthly_date_column is not None:
-                    parsed_month_date = _parse_date(row.get(monthly_date_column))
+                    parsed_month_date, _ = _optional_canonical_date(
+                        row.get(monthly_date_column)
+                    )
                     if parsed_month_date is not None:
                         month = parsed_month_date.strftime("%Y-%m")
                         monthly_sessions.setdefault(month, set()).add(parsed_month_date.isoformat())
@@ -1047,6 +2334,8 @@ def _scan_csv(
                 for name in collect_columns:
                     value = (row.get(name) or "").strip()
                     collected[name][value] = collected[name].get(value, 0) + 1
+    except UnicodeDecodeError as exc:
+        raise StudyV2CoverageError(f"CSV is not valid UTF-8: {source_name}") from exc
     except csv.Error as exc:
         raise StudyV2CoverageError(f"CSV cannot be parsed: {source_name}") from exc
 
@@ -1067,6 +2356,39 @@ def _scan_csv(
             name: round(non_null[name] / rows, 10) if rows else 0.0
             for name in non_null_columns
         },
+        "blank_value_counts": {
+            name: blank_values[name] for name in non_null_columns
+        },
+        "na_like_value_counts": {
+            name: na_like_values[name] for name in non_null_columns
+        },
+        "missing_value_counts": {
+            name: blank_values[name] + na_like_values[name]
+            for name in non_null_columns
+        },
+        "finite_numeric_rates": {
+            name: round(valid_finite_numeric[name] / rows, 10)
+            if rows
+            else 0.0
+            for name in finite_numeric
+        },
+        "invalid_finite_numeric_counts": invalid_finite_numeric,
+        "invalid_numeric_format_counts": invalid_numeric_formats,
+        "non_finite_numeric_counts": non_finite_numeric,
+        "invalid_date_format_counts": invalid_date_formats,
+        "malformed_csv_row_width_count": malformed_width_rows,
+        "extra_field_row_count": extra_field_rows,
+        "missing_field_row_count": missing_field_rows,
+        "malformed_csv_row_width_rate": round(malformed_width_rows / rows, 10)
+        if rows
+        else 0.0,
+        "duplicate_logical_key_row_count": duplicate_logical_key_rows,
+        "duplicate_logical_key_row_rate": round(
+            duplicate_logical_key_rows / rows, 10
+        )
+        if rows
+        else 0.0,
+        "logical_key_columns": list(logical_key_columns),
         "collected_values": collected,
         "monthly_coverage": [
             {
@@ -1079,6 +2401,48 @@ def _scan_csv(
     }
 
 
+def _structural_integrity_fields(scan: Mapping[str, Any]) -> dict[str, Any]:
+    malformed = int(scan["malformed_csv_row_width_count"])
+    duplicates = int(scan["duplicate_logical_key_row_count"])
+    return {
+        "malformed_csv_row_width_count": malformed,
+        "extra_field_row_count": int(scan["extra_field_row_count"]),
+        "missing_field_row_count": int(scan["missing_field_row_count"]),
+        "malformed_csv_row_width_rate": scan["malformed_csv_row_width_rate"],
+        "duplicate_logical_key_row_count": duplicates,
+        "duplicate_logical_key_row_rate": scan["duplicate_logical_key_row_rate"],
+        "logical_key_columns": list(scan["logical_key_columns"]),
+        "structural_integrity_verified": malformed == 0 and duplicates == 0,
+    }
+
+
+def _normalized_logical_key(
+    row: Mapping[str | None, Any],
+    *,
+    columns: Sequence[str],
+    date_columns: Sequence[str],
+) -> tuple[str, ...] | None:
+    if not columns:
+        return None
+    normalized: list[str] = []
+    for name in columns:
+        raw_value = row.get(name)
+        text = str(raw_value or "").strip()
+        if not text:
+            return None
+        if name in date_columns:
+            parsed, invalid_format = _optional_canonical_date(raw_value)
+            if invalid_format:
+                return None
+            if parsed is None:
+                return None
+            text = parsed.isoformat()
+        elif name == "symbol":
+            text = text.upper()
+        normalized.append(text)
+    return tuple(normalized)
+
+
 def _date_column_values(raw_csv: bytes, column: str) -> list[date]:
     values: list[date] = []
     with io.TextIOWrapper(
@@ -1088,7 +2452,7 @@ def _date_column_values(raw_csv: bytes, column: str) -> list[date]:
         if column not in (reader.fieldnames or ()):
             return values
         for row in reader:
-            parsed = _parse_date(row.get(column))
+            parsed, _ = _optional_canonical_date(row.get(column))
             if parsed is not None:
                 values.append(parsed)
     return values
@@ -1096,30 +2460,46 @@ def _date_column_values(raw_csv: bytes, column: str) -> list[date]:
 
 def _quote_symbol_index(
     raw_csv: bytes,
-) -> tuple[set[str], dict[date, set[str]]]:
-    symbols: set[str] = set()
-    dated_symbols: dict[date, set[str]] = {}
+) -> tuple[set[str], Mapping[date, SetABC[str]]]:
+    symbol_to_bit: dict[str, int] = {}
+    symbols_by_bit: list[str] = []
+    date_masks: dict[date, int] = {}
     with io.TextIOWrapper(
         io.BytesIO(raw_csv), encoding="utf-8-sig", newline=""
     ) as handle:
         for row in csv.DictReader(handle):
             symbol = (row.get("symbol") or "").strip()
-            trade_date = _parse_date(row.get("date"))
-            if not symbol or trade_date is None:
+            trade_date, _ = _optional_canonical_date(row.get("date"))
+            if trade_date is None:
                 continue
-            symbols.add(symbol)
-            dated_symbols.setdefault(trade_date, set()).add(symbol)
-    return symbols, dated_symbols
+            # Preserve every valid observed quote date even when a malformed
+            # row has no symbol.  Structural gates still block that row, while
+            # date-level aggregates retain their pre-bitmap semantics.
+            date_masks.setdefault(trade_date, 0)
+            if not symbol:
+                continue
+            bit = symbol_to_bit.get(symbol)
+            if bit is None:
+                bit = len(symbols_by_bit)
+                symbol_to_bit[symbol] = bit
+                symbols_by_bit.append(symbol)
+            date_masks[trade_date] = date_masks.get(trade_date, 0) | (1 << bit)
+    return set(symbol_to_bit), _SymbolBitmapIndex(
+        symbol_to_bit=symbol_to_bit,
+        symbols_by_bit=symbols_by_bit,
+        date_masks=date_masks,
+    )
 
 
 def _quote_contract_monthly_coverage(
     *,
-    dated_quote_symbols: Mapping[date, set[str]],
+    dated_quote_symbols: Mapping[date, SetABC[str]],
     official_sessions: Sequence[date],
     expected_months: Sequence[str],
     eligible_master_symbols: set[str],
     minimum_symbols: int,
     master_lifecycles: Mapping[str, tuple[date, date | None]] | None = None,
+    complete_symbols_by_month: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
     """Count per-symbol quote availability for every fixed signal session.
 
@@ -1214,6 +2594,10 @@ def _quote_contract_monthly_coverage(
             amount_symbols = set()
             endpoint_symbols = set()
             complete_symbols = set()
+        if complete_symbols_by_month is not None:
+            # Private in-memory bridge to the fundamental support audit.  Only
+            # aggregate intersection counts enter the public report.
+            complete_symbols_by_month[month] = complete_symbols
         rows.append(
             {
                 "month": month,
@@ -1233,10 +2617,17 @@ def _quote_contract_monthly_coverage(
                 "required_session_geometry_available": geometry_available,
                 "active_strict_a_share_symbol_count": len(active_symbols),
                 "rebalance_symbol_count": len(rebalance_symbols),
+                "signal_session_candidate_symbol_count": len(rebalance_symbols),
                 "momentum_60d_symbol_count": len(momentum_symbols),
                 "low_volatility_20d_symbol_count": len(volatility_symbols),
                 "amount_20d_symbol_count": len(amount_symbols),
                 "exact_endpoint_symbol_count": len(endpoint_symbols),
+                "missing_exact_endpoint_candidate_count": len(
+                    rebalance_symbols - endpoint_symbols
+                ),
+                "all_signal_session_candidates_have_exact_endpoints": (
+                    endpoint_symbols == rebalance_symbols
+                ),
                 "complete_quote_contract_symbol_count": len(complete_symbols),
             }
         )
@@ -1262,6 +2653,26 @@ def _quote_contract_monthly_coverage(
         )
     result["required_session_geometry_coverage_met"] = all(
         row["required_session_geometry_available"] for row in rows
+    )
+    incomplete_candidate_months = [
+        {
+            "month": row["month"],
+            "signal_session_candidate_symbol_count": row[
+                "signal_session_candidate_symbol_count"
+            ],
+            "exact_endpoint_symbol_count": row["exact_endpoint_symbol_count"],
+            "missing_exact_endpoint_candidate_count": row[
+                "missing_exact_endpoint_candidate_count"
+            ],
+        }
+        for row in rows
+        if not row["all_signal_session_candidates_have_exact_endpoints"]
+    ]
+    result["all_signal_session_candidates_have_exact_endpoints"] = not (
+        incomplete_candidate_months
+    )
+    result["incomplete_signal_session_candidate_endpoint_months"] = (
+        incomplete_candidate_months
     )
     return result
 
@@ -1344,12 +2755,7 @@ def _is_strict_a_share_master_row(row: Mapping[str, Any]) -> bool:
 
 
 def _optional_master_date(value: Any) -> tuple[date | None, bool]:
-    if not str(value or "").strip():
-        return None, False
-    try:
-        return _parse_date(value), False
-    except StudyV2CoverageError:
-        return None, True
+    return _optional_canonical_date(value)
 
 
 def _fundamental_monthly_coverage(
@@ -1357,9 +2763,10 @@ def _fundamental_monthly_coverage(
     raw_csv: bytes,
     expected_months: Sequence[str],
     official_sessions: set[date],
-    monthly_quote_symbols: Mapping[str, set[str]],
+    monthly_quote_symbols: Mapping[str, SetABC[str]],
     eligible_master_symbols: set[str],
     eligible_universe_symbols: set[str],
+    complete_quote_contract_symbols_by_month: Mapping[str, set[str]],
     required_start: date,
     required_end: date,
     maximum_staleness_months: int,
@@ -1369,6 +2776,7 @@ def _fundamental_monthly_coverage(
     for session in official_sessions:
         sessions_by_month.setdefault(session.strftime("%Y-%m"), []).append(session)
     active_quote_symbols_by_month: dict[str, set[str]] = {}
+    complete_contract_symbols_by_month: dict[str, set[str]] = {}
     for month in expected_months:
         sessions = sessions_by_month.get(month, [])
         signal_date = min(sessions) if sessions else None
@@ -1379,6 +2787,11 @@ def _fundamental_monthly_coverage(
         )
         active_quote_symbols_by_month[month] = (
             monthly_quote_symbols.get(month, set()) & active_symbols
+        )
+        complete_contract_symbols_by_month[month] = (
+            set(complete_quote_contract_symbols_by_month.get(month, set()))
+            & active_quote_symbols_by_month[month]
+            & eligible_universe_symbols
         )
     scoped_signal_symbols = set().union(*active_quote_symbols_by_month.values())
     scoped_signal_symbols.intersection_update(eligible_universe_symbols)
@@ -1393,9 +2806,9 @@ def _fundamental_monthly_coverage(
             symbol = (row.get("symbol") or "").strip()
             if symbol not in scoped_signal_symbols:
                 continue
-            report_end = _parse_date(row.get("reportPeriodEnd"))
-            publish_date = _parse_date(row.get("publishDate"))
-            roe_present = bool((row.get("roeDiluted") or "").strip())
+            report_end, _ = _optional_canonical_date(row.get("reportPeriodEnd"))
+            publish_date, _ = _optional_canonical_date(row.get("publishDate"))
+            roe_present = _is_finite_numeric(row.get("roeDiluted"))
             if report_end is not None and required_start <= report_end <= required_end:
                 eligible_interval_rows += 1
                 if publish_date is not None:
@@ -1423,6 +2836,12 @@ def _fundamental_monthly_coverage(
         available = 0
         nonstale = 0
         stale = 0
+        available_complete_contract = 0
+        nonstale_complete_contract = 0
+        stale_complete_contract = 0
+        complete_contract_symbols = complete_contract_symbols_by_month.get(
+            month, set()
+        )
         if signal_date is not None:
             for symbol in eligible_quote_symbols:
                 known = [
@@ -1436,18 +2855,28 @@ def _fundamental_monthly_coverage(
                     continue
                 report_end, _, _ = max(known, key=lambda item: (item[0], item[1]))
                 available += 1
+                is_complete_contract_symbol = symbol in complete_contract_symbols
+                if is_complete_contract_symbol:
+                    available_complete_contract += 1
                 staleness_cutoff = _subtract_calendar_months(
                     signal_date, maximum_staleness_months
                 )
                 if report_end >= staleness_cutoff:
                     nonstale += 1
+                    if is_complete_contract_symbol:
+                        nonstale_complete_contract += 1
                 else:
                     stale += 1
+                    if is_complete_contract_symbol:
+                        stale_complete_contract += 1
         rows.append(
             {
                 "month": month,
                 "rebalance_date": signal_date.isoformat() if signal_date else None,
                 "eligible_quote_symbol_count": len(eligible_quote_symbols),
+                "complete_quote_contract_symbol_count": len(
+                    complete_contract_symbols
+                ),
                 "active_strict_a_share_symbol_count": len(
                     _active_strict_a_share_symbols(master_lifecycles, signal_date)
                     if master_lifecycles is not None
@@ -1456,6 +2885,15 @@ def _fundamental_monthly_coverage(
                 "available_fundamental_symbol_count": available,
                 "nonstale_fundamental_symbol_count": nonstale,
                 "stale_fundamental_symbol_count": stale,
+                "available_complete_contract_fundamental_symbol_count": (
+                    available_complete_contract
+                ),
+                "nonstale_complete_contract_fundamental_symbol_count": (
+                    nonstale_complete_contract
+                ),
+                "stale_complete_contract_fundamental_symbol_count": (
+                    stale_complete_contract
+                ),
             }
         )
     return {
@@ -1466,12 +2904,25 @@ def _fundamental_monthly_coverage(
         if eligible_interval_rows
         else 0.0,
         "invalid_publication_order_row_count": invalid_publication_order_rows,
+        "eligible_scope_publication_before_report_period_end_row_count": (
+            invalid_publication_order_rows
+        ),
         "publication_order_check_scope": (
             "strict SH/SZ A-share symbols quoted on at least one target rebalance; "
-            "roeDiluted present; reportPeriodEnd within the required fundamental "
+            "roeDiluted finite numeric; reportPeriodEnd within the required fundamental "
             "interval"
         ),
+        "eligible_scope_publication_order_check_scope": (
+            "strict SH/SZ A-share symbols quoted on at least one target rebalance; "
+            "roeDiluted finite numeric; reportPeriodEnd within the required fundamental "
+            "interval; aggregate counts only"
+        ),
         "maximum_staleness_months": maximum_staleness_months,
+        "complete_quote_fundamental_joint_support_basis": (
+            "nonstale fundamental availability intersected with the same private "
+            "identifier set that satisfies the full per-symbol quote contract; "
+            "only aggregate counts are reported"
+        ),
         "target_month_count": len(rows),
         "covered_target_month_count": sum(
             row["nonstale_fundamental_symbol_count"] > 0 for row in rows
@@ -1487,6 +2938,22 @@ def _subtract_calendar_months(value: date, months: int) -> date:
     return date(year, month, min(value.day, monthrange(year, month)[1]))
 
 
+def _optional_canonical_date(value: Any) -> tuple[date | None, bool]:
+    raw_text = str(value or "")
+    text = raw_text.strip()
+    if not text:
+        return None, False
+    if raw_text != text or CANONICAL_DATE_PATTERN.fullmatch(text) is None:
+        return None, True
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        return None, True
+    if parsed < CANONICAL_DATE_MIN or parsed > CANONICAL_DATE_MAX:
+        return None, True
+    return parsed, False
+
+
 def _parse_date(value: Any) -> date | None:
     text = str(value or "").strip()
     if not text:
@@ -1495,6 +2962,31 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(text[:10])
     except ValueError as exc:
         raise StudyV2CoverageError(f"invalid ISO date: {text!r}") from exc
+
+
+def _is_finite_numeric(value: Any) -> bool:
+    _, status = _canonical_numeric_value(value)
+    return status == "valid"
+
+
+def _canonical_numeric_value(value: Any) -> tuple[float | None, str]:
+    raw_text = str(value or "")
+    text = raw_text.strip()
+    if not text or _is_na_like_token(text):
+        return None, "blank" if not text else "invalid_format"
+    if raw_text != text or CANONICAL_DECIMAL_PATTERN.fullmatch(text) is None:
+        return None, "invalid_format"
+    try:
+        number = float(text)
+    except (OverflowError, ValueError):
+        return None, "invalid_format"
+    if not math.isfinite(number):
+        return None, "non_finite"
+    return number, "valid"
+
+
+def _is_na_like_token(value: Any) -> bool:
+    return str(value or "").strip().casefold() in NA_LIKE_TOKENS
 
 
 def _required_date(value: Any, label: str) -> date:
@@ -1585,7 +3077,14 @@ def _validate_review_attestation(
             "execution_semantics_verified": False,
             "tradability_fields_verified": False,
             "exact_endpoint_resolution_semantics_verified": False,
+            "suspension_valuation_semantics_verified": False,
+            "price_adjustment_semantics_verified": False,
+            "amount_unit_normalization_semantics_verified": False,
             "endpoint_reason_ledger_rights_verified": False,
+            "historical_membership_completeness_verified": False,
+            "terminal_survivor_comparator_verified": False,
+            "security_identifier_semantics_verified": False,
+            "fundamental_publication_semantics_verified": False,
             "data_rights_verified": False,
             "official_calendar_verified": False,
             "reviewed_at": None,
@@ -1607,7 +3106,14 @@ def _validate_review_attestation(
         "execution_semantics_verified",
         "tradability_fields_verified",
         "exact_endpoint_resolution_semantics_verified",
+        "suspension_valuation_semantics_verified",
+        "price_adjustment_semantics_verified",
+        "amount_unit_normalization_semantics_verified",
         "endpoint_reason_ledger_rights_verified",
+        "historical_membership_completeness_verified",
+        "terminal_survivor_comparator_verified",
+        "security_identifier_semantics_verified",
+        "fundamental_publication_semantics_verified",
         "data_rights_verified",
         "official_calendar_verified",
     ):
@@ -1752,7 +3258,17 @@ def _validate_review_attestation(
         "execution_semantics",
         "tradability_fields",
         "exact_endpoint_resolution",
+        "suspension_valuation_semantics",
+        "provider_close_raw_definition",
+        "provider_adjustment_factor_convention",
+        "price_adjustment_normalization",
+        "amount_unit_normalization",
         "endpoint_reason_ledger_rights",
+        "historical_membership_completeness",
+        "terminal_survivor_comparator",
+        "security_identifier_semantics",
+        "code_change_mapping",
+        "fundamental_publication_semantics",
         "data_rights",
         "official_calendar",
     ):
@@ -1762,12 +3278,24 @@ def _validate_review_attestation(
         "adjusted_close_return_semantics_and_corporate_action_handling_are_documented",
         "unadjusted_open_and_nonfill_semantics_are_not_claimed_by_the_ic_core",
         "amount_units_and_cutoff_timing_are_documented",
+        "provider_raw_amount_unit_and_normalization_to_exact_cny_before_input_binding_are_documented",
         "st_and_suspension_fields_are_non_degenerate_and_historically_effective",
         "signal_eligible_denominator_is_fixed_before_outcome_lookup",
-        "current_ic_core_resolves_only_exact_adjusted_close_quotes_on_required_official_sessions",
+        "current_ic_core_resolves_only_exact_provider_recorded_close_observations_on_required_official_sessions",
+        "close_observation_type_matches_suspension_state_on_every_quote_row",
+        "suspension_valuation_is_provider_recorded_or_published_for_the_exact_official_session_and_never_researcher_forward_filled",
+        "price_adjustment_method_and_convention_tokens_match_the_fixed_contract_on_every_quote_row",
+        "close_equals_close_raw_times_adjustment_factor_within_the_fixed_tolerance_on_every_quote_row",
+        "provider_close_raw_adjustment_factor_and_no_rebasing_definitions_are_hash_evidenced",
+        "all_signal_session_candidates_have_exact_t_t1_t20_t21_endpoints_before_design_freeze",
         "unresolved_endpoints_cannot_be_dropped_shifted_carried_forward_or_assigned_default_recovery",
-        "suspension_valuation_and_delisting_terminal_wealth_adapters_are_not_claimed_by_the_current_ic_core",
+        "delisting_terminal_wealth_adapter_is_not_claimed_by_the_current_ic_core",
         "private_endpoint_reason_ledger_hash_and_public_aggregate_counts_are_permitted",
+        "stock_master_covers_every_strict_sh_sz_a_share_active_at_any_time_from_2009_01_through_2023_01_and_is_not_latest_only",
+        "terminal_survivor_comparator_uses_delist_date_null_or_strictly_after_2023_01_31_independent_of_acquisition_date",
+        "provider_stable_security_identifier_semantics_are_identical_across_quotes_stock_master_and_fundamentals",
+        "historical_security_code_changes_and_reassignments_have_a_documented_reviewed_mapping_before_input_hash_binding",
+        "roe_diluted_mapping_is_one_to_one_decimal_and_publish_date_is_actual_recorded_disclosure_date_not_scheduled_or_update_date",
         "licensed_local_analysis_is_permitted",
         "public_aggregate_outputs_metadata_and_hashes_are_permitted",
         "public_official_calendar_session_dates_are_permitted",
@@ -1818,8 +3346,29 @@ def _validate_review_attestation(
         "exact_endpoint_resolution_semantics_verified": value[
             "exact_endpoint_resolution_semantics_verified"
         ],
+        "suspension_valuation_semantics_verified": value[
+            "suspension_valuation_semantics_verified"
+        ],
+        "price_adjustment_semantics_verified": value[
+            "price_adjustment_semantics_verified"
+        ],
+        "amount_unit_normalization_semantics_verified": value[
+            "amount_unit_normalization_semantics_verified"
+        ],
         "endpoint_reason_ledger_rights_verified": value[
             "endpoint_reason_ledger_rights_verified"
+        ],
+        "historical_membership_completeness_verified": value[
+            "historical_membership_completeness_verified"
+        ],
+        "terminal_survivor_comparator_verified": value[
+            "terminal_survivor_comparator_verified"
+        ],
+        "security_identifier_semantics_verified": value[
+            "security_identifier_semantics_verified"
+        ],
+        "fundamental_publication_semantics_verified": value[
+            "fundamental_publication_semantics_verified"
         ],
         "data_rights_verified": value["data_rights_verified"],
         "official_calendar_verified": value["official_calendar_verified"],
@@ -1894,31 +3443,17 @@ def _raw_csv_bytes(value: Any, label: str) -> bytes:
 
 
 def _normalized_input_names(value: Mapping[str, str] | None) -> dict[str, str]:
-    supplied: Mapping[str, str] = (
-        {
-            "quotes": "quotes.csv",
-            "stock_master": "stock_master.csv",
-            "fundamentals": "fundamentals.csv",
-            "official_calendar": "official_calendar.csv",
-        }
-        if value is None
-        else value
-    )
+    supplied: Mapping[str, str] = PUBLIC_INPUT_FILE_NAMES if value is None else value
     if not isinstance(supplied, Mapping) or set(supplied) != set(INPUT_ROLES):
         raise StudyV2CoverageError(
             "input_names must contain exactly quotes, stock_master, fundamentals, "
             "and official_calendar"
         )
-    normalized: dict[str, str] = {}
     for role in INPUT_ROLES:
         raw_name = supplied[role]
         if not isinstance(raw_name, str) or not raw_name.strip():
             raise StudyV2CoverageError(f"input_names {role} must be a non-empty string")
-        file_name = raw_name.strip().replace("\\", "/").rsplit("/", 1)[-1]
-        if file_name in {"", ".", ".."}:
-            raise StudyV2CoverageError(f"input_names {role} has no file name")
-        normalized[role] = file_name
-    return normalized
+    return dict(PUBLIC_INPUT_FILE_NAMES)
 
 
 def _raw_file_identity(raw_csv: bytes, file_name: str) -> dict[str, Any]:
@@ -2007,6 +3542,8 @@ def _validate_fixed_design_arguments(
         "maximum_fundamental_staleness_months",
         "required_official_calendar_first_month",
         "required_official_calendar_last_month",
+        "terminal_survivor_cutoff",
+        "security_identifier_contract_id",
     ):
         normalized[key] = FIXED_DESIGN_PARAMETERS[key]
     changed = sorted(
@@ -2021,9 +3558,12 @@ def _validate_fixed_design_arguments(
 
 
 def _regular_file(value: str | Path, label: str) -> Path:
-    path = Path(value).expanduser().resolve(strict=False)
+    candidate = Path(value).expanduser()
+    if candidate.is_symlink():
+        raise StudyV2CoverageError(f"{label} is not a regular file")
+    path = candidate.resolve(strict=False)
     if not path.is_file() or path.is_symlink():
-        raise StudyV2CoverageError(f"{label} is not a regular file: {path}")
+        raise StudyV2CoverageError(f"{label} is not a regular file")
     return path
 
 
@@ -2047,6 +3587,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--review-attestation")
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
+    try:
+        output = require_new_private_file_target(
+            args.output,
+            label="authoritative coverage report target",
+        )
+    except PrivateArtifactPathError as exc:
+        raise StudyV2CoverageError(str(exc)) from exc
     attestation = None
     if args.review_attestation:
         attestation_path = _regular_file(args.review_attestation, "review attestation")
@@ -2072,12 +3619,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         required_fundamental_end=args.required_fundamental_end,
         review_attestation=attestation,
     )
-    write_coverage_report(report, args.output)
+    write_coverage_report(report, output)
     print(
         "READY" if report["gates"]["ready_to_lock_stage2_plan"] else "BLOCKED",
-        args.output,
+        output,
     )
-    return 0
+    return 0 if report["gates"]["ready_to_lock_stage2_plan"] else 1
 
 
 if __name__ == "__main__":

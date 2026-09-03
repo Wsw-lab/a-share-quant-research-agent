@@ -28,6 +28,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 TOOLCHAIN = ROOT / ".github" / "ci-toolchain.txt"
 RUNTIME = ROOT / ".github" / "ci-runtime.txt"
 PACKAGE = ROOT / "src" / "a_share_quant_agent"
+STAGE2_README = ROOT / "studies" / "pit_factor_bias_decomposition_v2" / "README.md"
 # The green path intentionally reruns the complete offline suite in a clean
 # checkout.  Keep enough headroom for the slower hosted runners while staying
 # below the dedicated job's 20-minute timeout (which also leaves the required
@@ -293,6 +294,45 @@ class ReadmeContractTest(unittest.TestCase):
             self.assertEqual(status.stdout, "")
             self.assertEqual(list(checkout.rglob("__pycache__")), [])
             self.assertEqual(list(checkout.rglob("*.egg-info")), [])
+
+    def test_stage2_supported_invocation_cannot_create_bytecode_before_clean_check(
+        self,
+    ) -> None:
+        prefix = (
+            "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -B -m "
+            "a_share_quant_agent.confirmatory_study run-stage2"
+        )
+        self.assertIn(prefix, README.read_text(encoding="utf-8"))
+        self.assertIn(prefix, STAGE2_README.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            copied_package = root / "src" / "a_share_quant_agent"
+            shutil.copytree(
+                PACKAGE,
+                copied_package,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+            environment = os.environ.copy()
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            environment["PYTHONPATH"] = str(root / "src")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    "-m",
+                    "a_share_quant_agent.confirmatory_study",
+                    "run-stage2",
+                ],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("required", completed.stderr)
+            self.assertEqual(list(root.rglob("__pycache__")), [])
+            self.assertEqual(list(root.rglob("*.pyc")), [])
 
     def test_readme_origin_guard_accepts_canonical_https_and_ssh_forms_only(self) -> None:
         commands = _readme_green_path_commands(README.read_text(encoding="utf-8"))
@@ -577,6 +617,12 @@ class RepositoryHygieneContractTest(unittest.TestCase):
             "src/example.egg-info/PKG-INFO",
             ".env.local",
             "local-panel.parquet",
+            "studies/pit_factor_bias_decomposition_v2/data_declaration.json",
+            "studies/pit_factor_bias_decomposition_v2/stage2_data_declaration.json",
+            "studies/pit_factor_bias_decomposition_v2/prior_exposure_attestation.json",
+            "studies/pit_factor_bias_decomposition_v2/coverage_probe_rights_review.json",
+            "studies/pit_factor_bias_decomposition_v2/coverage_probe_timestamp_proof.json",
+            "studies/pit_factor_bias_decomposition_v2/external_registration_handoff.json",
         )
         for relative in runtime_outputs:
             with self.subTest(runtime=relative):

@@ -1,44 +1,79 @@
-# Current licensed bundle: Stage-2 gap assessment
+# Private local sources: Stage-2 gap assessment
 
 **Decision:** `BLOCKED_FOR_STAGE2`<br>
-**Assessment date:** 1 September 2026
+**Assessment date:** 2 September 2026
 
-The retained `current_bundle_coverage.json` is a legacy three-file diagnostic hash-bound to the local pilot inputs. It predates the mandatory official-calendar input and the strict `roeDiluted` adapter, so the current four-input validator will reject it rather than treat it as an executable Stage-2 gate. Its descriptive counts confirm that the bundle can support the disclosed short pilot but cannot support the journal protocol.
+The local source audit did not identify a single delivery that satisfies the
+fixed proposed Stage-2 data, semantics, provenance, and publication-rights
+contract. No additional or previously unpublished provider names, file hashes,
+byte and row counts, security counts, date extrema, or monthly coverage may be
+released until a signed rights packet explicitly permits their disclosure.
 
-## Verified coverage
+An earlier real-data coverage report exposed some of those details. It has
+been removed from the current public tree and is ignored by the current
+four-input validator. The tracked legacy v1 receipt also already publishes a
+pilot source label, input hashes and sizes, aggregate row/symbol counts, and
+pilot results. Those are pre-existing public pilot materials; the new Stage-2
+rights packet does not establish their publication basis. Continued hosting,
+licensor notification, redaction, or Git-history remediation therefore
+requires a separate decision with the data licensor or authorized
+institutional administrator and must not be improvised by the research code.
 
-| Dataset | Coverage | Scale | Stage-2 interpretation |
-|---|---|---:|---|
-| Daily quotes | 3 Jan 2023-24 Jul 2026 | 3,894,242 rows; 4,735 symbols | No quote coverage for the fixed 2009 warm-up or 2010-2022 primary interval |
-| Stock master | Listing dates from 1 Dec 1990; delist dates through 17 Jul 2026 | 4,924 symbols; 333 marked delisted | Supports SH/SZ membership reconstruction; no Beijing Stock Exchange |
-| Fundamentals | Report periods 2020Q1-2026Q2; publication dates 8 Apr 2020-24 Jul 2026 | 99,628 rows; 4,795 symbols | Supports only a single-version recorded-publication-date diagnostic; history is too short for the target panel |
+## Unresolved gates
 
-The legacy coverage audit reports complete column presence under its older three-file schema and a 100% non-null publication-date rate in the normalized fundamental file. Those facts do not establish revision vintages, historical data correctness, adjusted-close return semantics, or any future portfolio execution semantics. In particular, the old diagnostic's inspection of `open` and `volume` does not make either field an IC-core requirement.
+1. No reviewed delivery establishes the complete 2009 warm-up, all 156 fixed
+   monthly rebalances from 2010 through 2022, and the January 2023 endpoint
+   window under the same adjusted-price contract.
+2. No reviewed delivery establishes complete historically effective listing,
+   delisting, ST, suspension, and amount fields for that interval.
+3. No separately sourced and rights-cleared common SSE/SZSE official calendar
+   has been bound to the study.
+4. The provider's diluted-ROE definition and actual recorded publication-date
+   semantics have not been mapped, evidenced, and approved for the full target
+   history. A single-version snapshot cannot support revision/vintage claims.
+5. Written rights for private retention, local analysis, public aggregate
+   coverage/results, hashes, exact calendar dates, the private endpoint ledger,
+   and a controlled reviewer rerun have not all been confirmed.
+6. The fixed 24-cell source probe's canonical package manifest has not received
+   its required external timestamp and independent pre-request verification,
+   and the probe has not been run. It cannot substitute for the full coverage
+   audit even after it passes.
+7. The authoritative coverage report and bound human `reviewed_pass`
+   attestation do not yet exist. Consequently the plan cannot be frozen,
+   externally registered, independently verified, or authorized for execution.
 
-## Hard blockers
+## Fixed next sequence
 
-1. **The fixed primary quote interval is absent.** The design requires a 2009 warm-up, all 156 monthly rebalances from January 2010 through December 2022, and forward prices through January 2023. The current quote file starts on 3 January 2023, so it cannot contribute Stage-2 return outcomes.
-2. **The fixed fundamental interval is incomplete.** The fundamental file begins at the 2020Q1 report period. It contains outcome-blind feasibility information for the final part of the target interval but not publication-dated fundamentals from 2009 onward.
-3. **No bound official exchange calendar.** The current bundle has no separately sourced, authoritative common SSE/SZSE calendar covering January 2009 through January 2023. Quote dates therefore cannot yet be proved to be official sessions, and monthly rebalance and t+20 endpoints cannot be authorized.
-4. **The retained fundamental diagnostic is not a runner input.** It uses a normalized `roe` column, whereas the strict Stage-2 adapter requires the provider's raw `roeDiluted` field, decimal-unit documentation, and a hash-bound mapping to normalized `roe`.
-5. **IC-return semantics are not independently attested.** The current declaration permits vendor-adjusted prices for factor-return research but does not independently document adjusted-close construction, corporate-action handling, or the fixed official-session endpoints. The quote file's `open` and `volume` columns are not IC-core requirements; their unadjusted execution meaning would matter only for the planned portfolio extension.
-6. **The registered suspension field may be uninformative.** ST has positive observations, but the suspension flag contains no positive observations. Roughly 10,054 symbol-days are missing inside observed listing lifecycles, but no field definition proves that missing rows encode suspension. The suspension component may therefore be degenerate on this bundle. Price-limit levels and nonfill semantics belong to the planned portfolio extension and do not form an IC-core gate.
-7. **Upstream historical retrieval is unproven.** Existing cache manifests show only a 43-symbol quote probe from 2021 and financial requests from 2020. The data-source code also floors financial retrieval at 2020. The immutable `coverage_probe_spec.v1.json` is retained byte-for-byte; the prospective `coverage_probe_spec.v2.json` carries the current outcome-blind 2016/2018 price-probe boundary and must not run until it is included in a committed, externally timestamped revision. Even a successful probe would establish only price-row availability, not fundamentals, per-security endpoint resolution, execution semantics, or data rights.
-8. **No completed review attestation.** The current diagnostic has no hash-bound approval of adjusted-close return semantics, ST/suspension-field informativeness, official-calendar provenance, rights to publish aggregate results, or rights to embed exact official-calendar session dates in a receipt. Those IC-core gates remain false even though some column names are present.
-9. **Per-security endpoint completeness is unverified.** The legacy audit counts monthly quote coverage but does not start from each registered factor's signal-eligible denominator, resolve exact `t`, `t+20`, `t+1`, and `t+21` prices, or produce a complete endpoint-reason ledger. Under the current core only exact adjusted-close quotes on those official sessions are supported. A missing suspension or delisting endpoint cannot be dropped, moved, carried forward, or assigned a default recovery; it keeps Stage 2 blocked or later yields `INSUFFICIENT_EVIDENCE`.
+1. Send `stage2_data_procurement_request.md`,
+   `provider_rights_confirmation_form.md`, and a private completed copy of
+   `provider_capability_and_field_mapping.template.xlsx` to the provider or
+   authorized institutional data administrator.
+2. Select no source until all required fields, target coverage, provenance,
+   semantic mappings, and publication/reviewer rights are confirmed in writing.
+3. Commit the exact `coverage_probe_spec.v2.json` and prior-specification
+   inventory, create a canonical package manifest binding both hashes and that
+   Agent commit, externally timestamp and independently verify the package, then
+   execute only the fixed 12-security by two-date exact-route probe. Do not
+   change dates, symbols, endpoint, raw mode, or route after seeing a response.
+4. Receive the complete licensed delivery into approved private storage, close
+   and hash the immutable delivery manifest, and keep result-bearing access
+   sealed.
+5. Run the metadata diagnostic, then the human data review, and then the
+   authoritative recomputable coverage audit using that completed attestation.
+   These checks may expose only permitted
+   aggregate integrity and coverage facts, never factor values, forward-return
+   summaries, ICs, or variant rankings.
+6. Only after both formal pre-lock gates pass, complete the prior-exposure
+   attestation, materialize the fixed plan core, create the design manifest,
+   obtain and independently verify an external registration receipt, and issue
+   one execution authorization.
+7. The runner must atomically consume that authorization after validating the
+   registered control-artifact chain but before reading, hashing, or parsing
+   the raw quote and fundamental inputs. A raw-input identity or coverage
+   mismatch therefore remains consumed and requires a new authorization; no
+   target period, threshold, or registered cell may be changed after outcomes
+   are seen.
 
-## Claim boundary, not an IC-core blocker
-
-The raw and normalized fundamental schemas contain no `revision_id`, `first_seen_at`, `available_at`, restatement flag, first-release value, or historical vintage value. Each symbol-report-period has one stored row. The narrower IC core may estimate only a recorded-publication-date specification effect in that single-version snapshot. It cannot identify the value investors observed at first release and prohibits revision, vintage-value, restatement, announcement-reaction, and return-timing claims; those absences do not themselves block the narrower specification-effect study.
-
-## Minimum acquisition sequence
-
-1. Retain `coverage_probe_spec.v1.json` unchanged, commit and externally timestamp `coverage_probe_spec.v2.json`, and only then run the v2 bounded, outcome-blind fixed-symbol probes for 2016 and 2018 without changing dates or symbols after observing responses.
-2. For the IC core, confirm adjusted-close construction, corporate-action handling, amount units and timing, publication timestamps, ST/suspension semantics, and redistribution rights. Review unadjusted open, volume, price-limit, and nonfill semantics only if the planned portfolio extension is later implemented and separately frozen.
-3. If probes pass, obtain the complete SH/SZ quote panel from January 2009 through January 2023 and publication-dated fundamentals beginning in 2009. Do not substitute the already observed January 2025-June 2026 pilot evaluation or its 2023-onward source quote file.
-4. Store an immutable request and response manifest for each extraction: query interval, retrieval timestamp, source, schema, raw hash, normalized hash, annual coverage, and failures.
-5. Cross-check a pre-specified random sample of publication dates, delisted securities, and corporate-action adjustments against a second authorized source.
-6. Re-run the outcome-blind coverage and field-informativeness audits with the fixed 2010-2022 target. For each first-session rebalance, construct the scoped universe from strict SH/SZ A-shares satisfying `listDate <= signal date <= delistDate` (or an open-ended missing `delistDate`), then require at least 1,000 of those identifiers to have the full exact official-session history required for the 60-session momentum signal, 20-return volatility signal, 20-session amount filter, and `t`, `t+1`, `t+20`, and `t+21` endpoints. Usable fundamental rows with `publishDate < reportPeriodEnd` must be zero. Verify that the exact-endpoint adapter and the rights to retain a private per-security endpoint-reason ledger and publish aggregate code counts are documented. Only then may the plan core be frozen, followed in order by the design manifest, external registration receipt, execution authorization, and final execution envelope.
-7. After authorized execution, apply the separate evidence-eligibility stop: every registered factor-variant cell in every target month must contain at least 1,000 finite signal-outcome pairs, and every signal-eligible record must have exact required official-session endpoints and exactly one endpoint-reason record. Any unresolved endpoint yields `INSUFFICIENT_EVIDENCE`; it does not reopen the design or permit dropping a security or shortening the sample.
-
-If the study is expanded to actual data-revision history, a normal backfill is insufficient. The data must contain historical `published_at`, `first_seen_at` or `available_at`, a revision identifier, restatement state, filing identifier, and the value observed at each vintage.
+An optional provider-specific second-source check is not a current gate. It may
+be added only through a separately implemented, tested, externally timestamped,
+and prospectively frozen protocol before any compared values are inspected.

@@ -5,6 +5,7 @@
   "authorized_at": null,
   "authorizer": null,
   "authorizer_role": null,
+  "authorizer_authority_basis": null,
   "design_manifest_sha256": null,
   "registration_receipt_sha256": null,
   "plan_core_sha256": null,
@@ -20,6 +21,7 @@
     "prior_specification_inventory_sha256": null,
     "prior_exposure_log_sha256": null,
     "prior_exposure_attestation_sha256": null,
+    "data_rights_attestation_sha256": null,
     "code_commit": null
   },
   "chronology": {
@@ -43,7 +45,8 @@
     "external_registration_not_after_receipt_recording": false,
     "receipt_recording_not_after_receipt_verification": false,
     "receipt_verification_not_after_authorization": false,
-    "blind_2010_2022_outcome_data_not_released_or_inspected_before_authorization": false,
+    "data_rights_active_at_authorization_and_post_expiry_publication_review_survival_confirmed": false,
+    "no_factor_return_ic_rank_or_variant_outcome_was_computed_released_or_human_inspected_before_authorization": false,
     "all_bound_hashes_recomputed_and_equal": false
   },
   "release_scope": {
@@ -54,6 +57,43 @@
     ],
     "authorized_code_commit": null,
     "outcome_data_release_permitted_after_authorized_at": false,
+    "quote_price_adjustment_contract": {
+      "canonical_close_field": "close",
+      "raw_close_field": "close_raw",
+      "adjustment_factor_field": "adjustment_factor",
+      "price_adjustment_method": "close_equals_close_raw_times_adjustment_factor",
+      "price_adjustment_convention": "provider_cumulative_backward_adjusted_hfq_no_rebasing",
+      "adjusted_price_formula": "close=close_raw*adjustment_factor",
+      "relative_tolerance": 1e-12,
+      "absolute_tolerance": 1e-12,
+      "factor_alignment_rule": "exact_symbol_and_official_session_no_fill",
+      "factor_domain_rule": "finite_strictly_positive",
+      "normalization_base_rule": "provider_cumulative_factor_as_delivered_no_rebasing",
+      "return_invariance_rule": "per_symbol_positive_constant_factor_rescaling_leaves_return_ratios_unchanged",
+      "cross_sectional_price_level_used_as_estimand": false,
+      "materialization_stage": "adjusted_close_materialized_before_raw_input_hash_binding"
+    },
+    "security_identifier_contract": {
+      "contract_id": "provider_stable_exchange_qualified_security_identifier_with_reviewed_code_change_mapping_v1",
+      "canonical_format": "six_ascii_digits_dot_uppercase_SH_or_SZ",
+      "cross_input_join_rule": "the_same_provider_stable_identifier_semantics_apply_to_quotes_stock_master_and_fundamentals",
+      "provider_stability_rule": "identifier_identity_must_not_depend_on_extraction_or_acquisition_date",
+      "code_change_rule": "every_historical_code_change_or_reassignment_is_resolved_by_a_documented_provider_mapping_before_input_hash_binding"
+    },
+    "universe_contract": {
+      "terminal_survivor_cutoff": "2023-01-31",
+      "terminal_survivor_rule": "listDate_on_or_before_signal_session_and_delistDate_is_null_or_strictly_after_terminal_survivor_cutoff",
+      "point_in_time_rule": "listDate_on_or_before_signal_session_and_delistDate_is_null_or_on_or_after_signal_session",
+      "lifecycle_consistency_rule": "active_status_requires_null_delistDate_delisted_status_requires_valid_delistDate_on_or_after_listDate",
+      "acquisition_date_rule": "must_not_affect_terminal_survivor_membership"
+    },
+    "rank_group_contract": {
+      "rank_method": "average",
+      "percentile_rank": true,
+      "bottom_quintile_rule": "percentile_rank_less_than_or_equal_to_0.2",
+      "top_quintile_rule": "percentile_rank_strictly_greater_than_0.8",
+      "tie_rule": "all_equal_signal_values_receive_the_same_average_percentile_rank_and_remain_together_so_group_sizes_may_differ_from_twenty_percent"
+    },
     "authorized_core_outputs": [
       "18_variant_72_cell_ic_lattice",
       "one_primary_and_28_secondary_inferential_estimands",
@@ -62,7 +102,7 @@
       "no_return_publication_exposure_diagnostics",
       "per_security_endpoint_reason_ledger_hash_and_aggregate_receipt_counts"
     ],
-    "endpoint_boundary": "The current core supports exact adjusted-close quotes on required official sessions only. Any unresolved endpoint makes the cell non-estimable and the study INSUFFICIENT_EVIDENCE; suspension-valuation and delisting-terminal-wealth adapters are not authorized.",
+    "endpoint_boundary": "The current core requires close=close_raw*adjustment_factor under the exact close_equals_close_raw_times_adjustment_factor method and provider_cumulative_backward_adjusted_hfq_no_rebasing convention, verified row by row within fixed 1e-12 relative and absolute tolerances. It supports exact provider-recorded traded closes and exact provider-recorded or published same-session suspension valuations on required official sessions. Research code never forward-fills a valuation. Any unresolved endpoint makes the cell non-estimable and the study INSUFFICIENT_EVIDENCE; the delisting-terminal-wealth adapter is not authorized. Outputs are valuation returns and rank ICs, not executable trade returns.",
     "claim_boundary": "The strongest authorized accounting-timing claim is a recorded-publication-date specification effect in a single-version provider snapshot. Revision, vintage-value, historical-investor-observed-value, announcement-reaction, and return-timing claims remain unauthorized.",
     "planned_excluded_modules_remain_unauthorized": [
       "full_per_security_signal_missingness_and_non_endpoint_exclusion_audit",
@@ -91,17 +131,34 @@
     "verification_uri": null,
     "trust_boundary": "Identity and evidence authenticity require independent human verification."
   },
-  "authorization_semantics": "This artifact records an externally reviewed authorized scope and chronology. It is immutable once hashed and is not itself a cryptographic nonce or revocation service. Before any outcome load, the local runner must atomically create the exclusive consumption sidecar specified below; a second claim for the same authorization and protected sidecar directory fails closed. This local marker does not prove external identity, prevent a custodian from deleting storage, or replace human registration and authorization.",
+  "public_receipt_embedding": {
+    "schema_version": "stage2_public_receipt_embedding_consent_v1",
+    "approved": false,
+    "artifact_type": "execution_authorization",
+    "scope": "full_artifact",
+    "receipt_schema_version": "confirmatory_study_receipt_v2",
+    "public_fields": [
+      "*"
+    ],
+    "privacy_assertions": {
+      "sensitive_material_excluded": false,
+      "local_filesystem_locations_excluded": false,
+      "identities_and_verification_uris_approved_for_publication": false
+    },
+    "statement": "The specified artifact scope is approved for embedding in the public Stage-2 receipt."
+  },
+  "authorization_semantics": "This artifact records a post-registration data-custody release decision and chronology. It is not a journal or editor acceptance, is immutable once hashed, and is not itself a cryptographic nonce or revocation service. Pre-authorization custodial validation may parse numeric bytes only for schema, finiteness, date, identifier, exact-endpoint, and permitted aggregate-coverage checks; it must not compute, retain, release, or expose factor returns, ICs, rankings, portfolio outcomes, or test statistics. Before any outcome load by the registered analysis runner, the runner must atomically create the exclusive consumption sidecar specified below; a second claim for the same authorization and protected sidecar directory fails closed. This local marker does not prove external identity, prevent a custodian from deleting storage, or replace human registration and authorization.",
   "consumption_contract": {
     "schema_version": "stage2_execution_authorization_consumption_v1",
-    "sidecar_directory": ".stage2-authorization-consumption/ (private custodian-controlled directory, mode 0700)",
+    "sidecar_directory": "explicit --authorization-consumption-dir outside every Git worktree, including unrelated, linked, and QData checkouts (private custodian-controlled directory, mode 0700; no default)",
+    "result_directory": "explicit fresh --output-dir outside every Git worktree, including unrelated, linked, and QData checkouts; contains the result receipt and private endpoint ledger",
     "filename_rule": "<sha256(canonical execution_authorization bytes)>.consumed.json",
     "atomic_creation": "exclusive create (O_CREAT|O_EXCL, mode 0600) before loading quotes, fundamentals, or computing outcomes",
     "single_use_scope": "one authorization hash per protected sidecar directory",
     "failure_rule": "A failed or interrupted claim remains consumed and requires a new authorization.",
     "release_boundary": "No outcome-data load or factor/outcome computation may occur before the sidecar is durably created.",
-    "operational_boundary": "The custodian must protect the sidecar directory from deletion, replacement, and concurrent writers; this implementation cannot prove that boundary against a privileged operator."
+    "operational_boundary": "Before claiming authorization, the runner must reject the result or sidecar directory if either resolves inside any Git worktree, including an unrelated repository, linked checkout, QData checkout, or ignored path. The custodian must protect the sidecar directory from deletion, replacement, and concurrent writers; this implementation cannot prove that boundary against a privileged operator."
   },
   "final_envelope_rule": "Only after this authorization is completed and hashed may its SHA-256 and authorized_at be copied into the final execution-plan envelope as execution_authorization_sha256 and locked_at. This authorization binds the frozen plan core, not the later envelope, so no hash cycle is created.",
-  "completion_gate": "Every assertion must be true, every required hash and timestamp must be populated and independently verified, status must become authorized, outcome_data_release_permitted_after_authorized_at must become true, and outcome-data release must still not have occurred when this authorization is signed."
+  "completion_gate": "Every assertion must be true, every required hash and timestamp must be populated and independently verified, any finite data contract must still be active at authorization and the separately evidenced post-expiry publication/review survival clause must be present, status must become authorized, public_receipt_embedding approval and privacy assertions must become true after review, outcome_data_release_permitted_after_authorized_at must become true, and registered analysis access must still not have occurred when this authorization is signed. The runner rechecks finite expiry at exclusive authorization consumption, before outcome preparation, at every monthly execution boundary, and before receipt publication; expiry fails closed without a receipt and requires a newly valid contract and authorization. Post-expiry survival does not permit a new analysis run after contract expiry."
 }

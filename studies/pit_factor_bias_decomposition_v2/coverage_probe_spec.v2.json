@@ -5,11 +5,11 @@
   "supersedes": {
     "path": "coverage_probe_spec.v1.json",
     "sha256": "35e63a90dacd412868345e051031af52801ea91c22e6bd181baa482364d102e8",
-    "immutability_rule": "The v1 bytes remain unchanged. This v2 prospectively adds endpoint and claim boundaries while preserving the locked symbols, dates, provider, price mode, and quality thresholds."
+    "immutability_rule": "The v1 bytes remain unchanged. This v2 prospectively preserves the fixed symbols, dates, public interface, raw price mode, and quality thresholds while replacing the unsafe QData fallback path with a dedicated exact-date, observed-route adapter."
   },
   "status": "specified_not_executed",
   "purpose": "Outcome-blind feasibility testing of whether a bounded set of Shanghai and Shenzhen A-share raw daily bars can be retrieved for two pre-specified historical dates. This probe is not a factor test, endpoint-resolution test, portfolio test, event study, trading simulation, or study outcome analysis.",
-  "field_scope_boundary": "This source-retrieval probe deliberately requests a complete raw-bar payload including open and volume. Those two fields are probe-specific diagnostics and possible future portfolio inputs; they are not required inputs or readiness gates for the current Stage-2 IC core, which uses date, symbol, adjusted close, amount, ST state, and suspension state plus separate master, fundamental, and official-calendar inputs. Two isolated dates cannot verify the current core's per-security exact-endpoint rule, endpoint-reason ledger, common-support decomposition, or publication-exposure diagnostics.",
+  "field_scope_boundary": "This source-retrieval probe deliberately requests a complete raw-bar payload including open and volume. Those two fields are probe-specific diagnostics and possible future portfolio inputs; they are not required inputs or readiness gates for the current Stage-2 IC core, which uses date, symbol, provider close observation, close_observation_type, amount, ST state, and suspension state plus separate master, fundamental, and official-calendar inputs. For the current core, close_observation_type must be traded_close iff is_suspended is false and suspension_valuation iff is_suspended is true; every suspension valuation must be provider-recorded or published for that exact official session and must never be researcher-forward-filled. The resulting returns and ICs are valuation diagnostics, not executable trade returns. Two isolated raw-bar dates cannot verify that close-observation contract, suspension-valuation provenance, the current core's per-security exact-endpoint rule, endpoint-reason ledger, common-support decomposition, or publication-exposure diagnostics.",
   "stage2_design_boundary": {
     "variants": 18,
     "factor_variant_cells": 72,
@@ -18,7 +18,7 @@
     "total_inferential_estimands": 29,
     "roe_common_support_components": 3,
     "timing_decomposition_tolerance_source": "execution_plan.inference.timing_decomposition.efficiency_absolute_tolerance",
-    "endpoint_adapter": "exact_official_session_adjusted_close_only",
+    "endpoint_adapter": "exact_official_session_provider_recorded_traded_close_or_supplier_recorded_published_suspension_valuation",
     "single_version_claim": "recorded_publication_date_specification_effect_only"
   },
   "execution_boundary": {
@@ -28,7 +28,14 @@
       "studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json"
     ],
     "external_timestamp_required_before_execution": true,
-    "authoring_assertion": "This v2 probe was not executed while these files were authored and MUST NOT be executed before the first repository commit containing this exact v2 file and the prior-specification inventory has been externally timestamped.",
+    "timestamp_package_manifest_required": true,
+    "timestamp_package_manifest_contents": [
+      "spec_sha256",
+      "prior_specification_inventory_sha256",
+      "agent_commit"
+    ],
+    "timestamp_chronology": "timestamped_at_utc <= verified_at_utc <= executed_at_utc, where executed_at_utc is recorded before adapter construction and the first provider request",
+    "authoring_assertion": "This v2 probe was not executed while these files were authored and MUST NOT be executed before a canonical package manifest binding the exact v2 specification hash, prior-specification inventory hash, and containing Agent commit has been externally timestamped and independently verified.",
     "prohibited_pre_lock_actions": [
       "requesting any date or symbol outside this specification",
       "inspecting or computing factor values, forward returns, information coefficients, portfolio returns, costs, t-statistics, or rankings",
@@ -39,17 +46,11 @@
   "selection_protocol": {
     "selection_is_outcome_blind": true,
     "selection_input": {
-      "logical_source": "current licensed historical stock-master export",
-      "sha256": "29b75f0de74c96395bb5d2e311d424cf45a9600a712903c4a96dc9d3d3d26b8b",
-      "permitted_selection_fields": [
-        "symbol",
-        "exchangeCode",
-        "listDate",
-        "delistDate",
-        "listStatus",
-        "stockType"
-      ],
-      "forbidden_selection_fields": "All prices, returns, factors, accounting values, portfolio results, and test statistics."
+      "logical_source": "fixed symbol identifiers inherited unchanged from the immutable superseded v1 specification",
+      "v2_runtime_dependency": "none; v2 neither reads nor hashes the earlier restricted stock-master export",
+      "legacy_boundary": "The descriptive strata were originally constructed before probe outcomes using a restricted local stock-master whose publication rights are not established. Its hash and contents are not part of v2. Reproduction of that historical construction is not claimed; v2 outcome blindness rests only on the pre-response fixed twelve-symbol list.",
+      "permitted_v2_selection_input": "Only the twelve literal exchange-qualified symbol identifiers embedded below.",
+      "forbidden_selection_fields": "All prices, returns, factors, accounting values, portfolio results, test statistics, and every legacy stock-master file or hash."
     },
     "seed": "stage2-coverage-probe-v1",
     "hash_function": "SHA-256",
@@ -141,7 +142,7 @@
       "2018-06-29"
     ],
     "expected_symbol_date_cells": 24,
-    "provider_adapter": "qdata.sources.providers.akshare_provider.AkShareProvider",
+    "provider_adapter": "a_share_quant_agent.coverage_probe.ExactDateAkShareProbeAdapter",
     "provider_interface": "akshare.stock_zh_a_hist",
     "price_mode": "raw_unadjusted",
     "akshare_adjust_argument": "",
@@ -150,6 +151,16 @@
     "full_market_discovery": false,
     "database_write": false,
     "qdata_dry_run": true,
+    "qdata_execution_role": "provenance_only_no_import_no_call",
+    "exact_date_route_contract": {
+      "allowed_https_host": "push2his.eastmoney.com",
+      "allowed_endpoint_path": "/api/qt/stock/kline/get",
+      "start_date_must_equal_end_date": true,
+      "redirects_allowed": false,
+      "fallback_allowed": false,
+      "lookback_allowed": false,
+      "requests_per_symbol_date_cell": 1
+    },
     "authentication_expected": "none for the AkShare adapter",
     "network_access_when_eventually_executed": true,
     "upstream_provider_identity": "Must be recorded from the runtime response path or adapter metadata; do not infer it solely from the Python package name.",
@@ -158,6 +169,7 @@
       "agent_repository_commit_rule": "The public receipt must name an existing Git commit whose studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json blob exactly equals these timestamped bytes.",
       "python_version": "3.12.12",
       "akshare_version": "1.18.81",
+      "akshare_history_module_sha256": "749a94a192bcd79ee76867fb8dfc7c563613cf08afb1dd72ca5a97c471bcd3d8",
       "clean_worktrees_required": true
     }
   },
@@ -168,6 +180,7 @@
     "overwrite_allowed": false,
     "resume_from_existing_files_allowed": false,
     "staging_then_atomic_publish_required": true,
+    "exclusive_no_replace_directory_publish_required": true,
     "manifest_written_last": true,
     "file_set_must_be_closed_and_verified": true,
     "file_hash": "SHA-256",
@@ -182,7 +195,7 @@
     },
     {
       "id": "SPEC_EXTERNALLY_TIMESTAMPED",
-      "rule": "The commit or an identical canonical spec hash has an external timestamp before the first request."
+      "rule": "A canonical package manifest binding spec_sha256, prior_specification_inventory_sha256, and agent_commit has an external timestamp that was independently verified before execution began and before the first request."
     },
     {
       "id": "CODE_STATE_CLEAN_AND_BOUND",
@@ -192,9 +205,9 @@
       "id": "OUTPUT_TARGET_NEW",
       "rule": "The private output directory does not exist; any existing target causes a fail-closed stop."
     },
-    {
+  {
       "id": "RIGHTS_REVIEW_RECORDED",
-      "rule": "The source terms, local-storage authorization, and permission to publish aggregate coverage and cryptographic hashes have been reviewed and recorded."
+      "rule": "The exact raw timestamp-proof bytes are SHA-256 bound by a v3 rights review. The contract is effective and unexpired at review, preflight, the first provider request, and receipt publication; null expiry is accepted only with explicit no-expiry confirmation and no contradictory post-expiry claim. For a finite expiry, a separately hash-bound clause must preserve continued private retention of the probe artifacts and continued public availability of the already-published aggregate receipt and metadata after expiry. Publication permission is separately confirmed for aggregate coverage, artifact hash/name/size/row-count/symbol-count/date-range metadata, request-route metadata, timestamp provider/identifier/evidence hash, verifier identity, and verification URI."
     }
   ],
   "post_collection_quality_gates": [
@@ -215,6 +228,10 @@
       "rule": "OHLC values are finite and positive with low <= open and close <= high; volume and amount are finite and non-negative."
     },
     {
+      "id": "ROUTE_AND_UPSTREAM_VERIFIED",
+      "rule": "Every cell uses exactly one non-redirected HTTPS call to the locked endpoint with start_date=end_date, raw adjustment, no fallback and no lookback; the requested and final response hosts are observed at runtime and determine the recorded upstream identity."
+    },
+    {
       "id": "RAW_MODE_ATTESTED",
       "rule": "The runtime records an empty AkShare adjustment argument and does not merge qfq, hfq, factor, fundamental, or return fields."
     },
@@ -230,6 +247,7 @@
   "stop_rules": [
     "If any pre-execution gate fails, make no request.",
     "If any post-collection gate fails, record BLOCKED and do not alter the probe scope or thresholds.",
+    "If the proof-bound rights contract is not effective or has expired at preflight, immediately before the first provider request, or immediately before receipt publication, stop fail-closed and publish no receipt.",
     "An empty row for a delisted security is classified as source-or-adapter ambiguous and cannot establish that historical data do not exist.",
     "No full-market or multi-year acquisition may start from this probe alone.",
     "No claim about executable prices, exact per-security endpoint resolution, endpoint-ledger completeness, tradability, suspension valuation, delisting terminal wealth, price limits, fundamentals, data revisions or vintages, announcement reactions, return timing, or investment performance is allowed."
@@ -245,9 +263,11 @@
       "probe_id",
       "receipt_id",
       "spec_sha256",
+      "timestamp_package",
       "status",
       "executed_at_utc",
       "external_timestamp_proof",
+      "rights_review_sha256",
       "repository_state",
       "request",
       "artifacts",
@@ -256,6 +276,7 @@
       "failures",
       "gates",
       "rights",
+      "publication_consent",
       "claim_boundaries"
     ],
     "properties": {
@@ -275,6 +296,30 @@
       "spec_sha256": {
         "type": "string",
         "pattern": "^[0-9a-f]{64}$"
+      },
+      "timestamp_package": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schema_version",
+          "study_id",
+          "probe_id",
+          "spec_path",
+          "spec_sha256",
+          "prior_specification_inventory_path",
+          "prior_specification_inventory_sha256",
+          "agent_commit"
+        ],
+        "properties": {
+          "schema_version": {"const": "stage2_coverage_probe_timestamp_package_v1"},
+          "study_id": {"const": "a-share-factor-timing-bias-decomposition-v2"},
+          "probe_id": {"const": "stage2-akshare-raw-coverage-2016-2018-v2"},
+          "spec_path": {"const": "studies/pit_factor_bias_decomposition_v2/coverage_probe_spec.v2.json"},
+          "spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "prior_specification_inventory_path": {"const": "studies/pit_factor_bias_decomposition_v2/prior_specification_inventory.json"},
+          "prior_specification_inventory_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "agent_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+        }
       },
       "status": {
         "enum": [
@@ -331,7 +376,7 @@
             "pattern": "^[0-9a-f]{64}$"
           },
           "subject_type": {
-            "const": "coverage_probe_spec_sha256"
+            "const": "coverage_probe_package_manifest_sha256"
           },
           "subject_sha256": {
             "type": "string",
@@ -350,6 +395,10 @@
             "minLength": 4
           }
         }
+      },
+      "rights_review_sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
       },
       "repository_state": {
         "type": "object",
@@ -392,6 +441,7 @@
           "provider_adapter",
           "provider_interface",
           "upstream_provider_identity",
+          "route_evidence",
           "dates",
           "symbols",
           "price_mode",
@@ -399,13 +449,40 @@
         ],
         "properties": {
           "provider_adapter": {
-            "type": "string"
+            "const": "a_share_quant_agent.coverage_probe.ExactDateAkShareProbeAdapter"
           },
           "provider_interface": {
-            "type": "string"
+            "const": "akshare.stock_zh_a_hist"
           },
           "upstream_provider_identity": {
-            "type": "string"
+            "enum": [
+              "eastmoney.com",
+              "not_verified"
+            ]
+          },
+          "route_evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request_count",
+              "requested_https_host",
+              "final_https_host",
+              "endpoint_path",
+              "redirect_count",
+              "all_requests_exact_single_date",
+              "fallback_attempted",
+              "lookback_applied"
+            ],
+            "properties": {
+              "request_count": {"type": "integer", "minimum": 0, "maximum": 24},
+              "requested_https_host": {"enum": ["push2his.eastmoney.com", null]},
+              "final_https_host": {"enum": ["push2his.eastmoney.com", null]},
+              "endpoint_path": {"enum": ["/api/qt/stock/kline/get", null]},
+              "redirect_count": {"type": "integer", "minimum": 0},
+              "all_requests_exact_single_date": {"type": "boolean"},
+              "fallback_attempted": {"type": "boolean"},
+              "lookback_applied": {"type": "boolean"}
+            }
           },
           "dates": {
             "const": [
@@ -433,7 +510,27 @@
       },
       "artifacts": {
         "type": "array",
-        "minItems": 1,
+        "minItems": 2,
+        "allOf": [
+          {
+            "contains": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {"kind": {"const": "normalized_private"}}
+            },
+            "minContains": 1,
+            "maxContains": 1
+          },
+          {
+            "contains": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {"kind": {"const": "request_log_private"}}
+            },
+            "minContains": 1,
+            "maxContains": 1
+          }
+        ],
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -504,7 +601,7 @@
         "required": [
           "expected_symbol_date_cells",
           "observed_symbol_date_cells",
-          "missing_symbol_date_cells",
+          "missing_symbol_date_cell_count",
           "duplicate_symbol_date_cells",
           "extra_symbol_date_cells"
         ],
@@ -517,11 +614,10 @@
             "minimum": 0,
             "maximum": 24
           },
-          "missing_symbol_date_cells": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "missing_symbol_date_cell_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 24
           },
           "duplicate_symbol_date_cells": {
             "type": "integer",
@@ -535,15 +631,30 @@
       },
       "field_quality": {
         "type": "object",
-        "minProperties": 1,
-        "additionalProperties": {
-          "const": true
+        "additionalProperties": false,
+        "required": [
+          "all_required_raw_bar_fields_valid",
+          "scope_and_cell_identity_valid"
+        ],
+        "properties": {
+          "all_required_raw_bar_fields_valid": {"type": "boolean"},
+          "scope_and_cell_identity_valid": {"type": "boolean"}
         }
       },
       "failures": {
-        "type": "array",
-        "items": {
-          "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "empty_response",
+          "validation_error",
+          "provider_error",
+          "network_error"
+        ],
+        "properties": {
+          "empty_response": {"type": "integer", "minimum": 0},
+          "validation_error": {"type": "integer", "minimum": 0},
+          "provider_error": {"type": "integer", "minimum": 0},
+          "network_error": {"type": "integer", "minimum": 0}
         }
       },
       "gates": {
@@ -559,23 +670,25 @@
           "COMPLETE_CELL_COVERAGE",
           "PROBE_SPECIFIC_RAW_BAR_FIELDS",
           "BASIC_VALUE_INTEGRITY",
+          "ROUTE_AND_UPSTREAM_VERIFIED",
           "RAW_MODE_ATTESTED",
           "FAILURES_ACCOUNTED_FOR",
           "ARTIFACT_HASHES_VERIFIED"
         ],
         "properties": {
-          "SPEC_COMMITTED": {"const": true},
-          "SPEC_EXTERNALLY_TIMESTAMPED": {"const": true},
-          "CODE_STATE_CLEAN_AND_BOUND": {"const": true},
-          "OUTPUT_TARGET_NEW": {"const": true},
-          "RIGHTS_REVIEW_RECORDED": {"const": true},
-          "EXACT_REQUEST_SCOPE": {"const": true},
-          "COMPLETE_CELL_COVERAGE": {"const": true},
-          "PROBE_SPECIFIC_RAW_BAR_FIELDS": {"const": true},
-          "BASIC_VALUE_INTEGRITY": {"const": true},
-          "RAW_MODE_ATTESTED": {"const": true},
-          "FAILURES_ACCOUNTED_FOR": {"const": true},
-          "ARTIFACT_HASHES_VERIFIED": {"const": true}
+          "SPEC_COMMITTED": {"type": "boolean"},
+          "SPEC_EXTERNALLY_TIMESTAMPED": {"type": "boolean"},
+          "CODE_STATE_CLEAN_AND_BOUND": {"type": "boolean"},
+          "OUTPUT_TARGET_NEW": {"type": "boolean"},
+          "RIGHTS_REVIEW_RECORDED": {"type": "boolean"},
+          "EXACT_REQUEST_SCOPE": {"type": "boolean"},
+          "COMPLETE_CELL_COVERAGE": {"type": "boolean"},
+          "PROBE_SPECIFIC_RAW_BAR_FIELDS": {"type": "boolean"},
+          "BASIC_VALUE_INTEGRITY": {"type": "boolean"},
+          "ROUTE_AND_UPSTREAM_VERIFIED": {"type": "boolean"},
+          "RAW_MODE_ATTESTED": {"type": "boolean"},
+          "FAILURES_ACCOUNTED_FOR": {"type": "boolean"},
+          "ARTIFACT_HASHES_VERIFIED": {"type": "boolean"}
         }
       },
       "rights": {
@@ -595,11 +708,43 @@
             ]
           },
           "raw_redistribution_allowed": {
-            "type": "boolean"
+            "const": false
           },
           "aggregate_receipt_publication_allowed": {
             "type": "boolean"
           }
+        }
+      },
+      "publication_consent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_status",
+          "aggregate_coverage_publication_allowed",
+          "artifact_hash_publication_allowed",
+          "artifact_filename_publication_allowed",
+          "artifact_size_publication_allowed",
+          "artifact_row_count_publication_allowed",
+          "artifact_symbol_count_and_date_range_publication_allowed",
+          "timestamp_provider_and_identifier_publication_allowed",
+          "timestamp_evidence_hash_publication_allowed",
+          "timestamp_verifier_identity_publication_allowed",
+          "timestamp_verification_uri_publication_allowed",
+          "request_route_metadata_publication_allowed"
+        ],
+        "properties": {
+          "review_status": {"const": "verified"},
+          "aggregate_coverage_publication_allowed": {"const": true},
+          "artifact_hash_publication_allowed": {"const": true},
+          "artifact_filename_publication_allowed": {"const": true},
+          "artifact_size_publication_allowed": {"const": true},
+          "artifact_row_count_publication_allowed": {"const": true},
+          "artifact_symbol_count_and_date_range_publication_allowed": {"const": true},
+          "timestamp_provider_and_identifier_publication_allowed": {"const": true},
+          "timestamp_evidence_hash_publication_allowed": {"const": true},
+          "timestamp_verifier_identity_publication_allowed": {"const": true},
+          "timestamp_verification_uri_publication_allowed": {"const": true},
+          "request_route_metadata_publication_allowed": {"const": true}
         }
       },
       "claim_boundaries": {
@@ -662,6 +807,7 @@
   },
   "forbidden_public_receipt_content": [
     "raw or normalized OHLCV/amount values",
+    "per-symbol or per-date missing-cell and failure identities; these remain only in the hash-bound private request log",
     "API keys, headers, cookies, environment values, or credential paths",
     "absolute private filesystem paths",
     "factor values, rankings, returns, information coefficients, portfolio metrics, or test statistics",
