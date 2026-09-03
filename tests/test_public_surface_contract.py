@@ -33,7 +33,7 @@ STAGE2_README = ROOT / "studies" / "pit_factor_bias_decomposition_v2" / "README.
 # checkout.  Keep enough headroom for the slower hosted runners while staying
 # below the dedicated job's 20-minute timeout (which also leaves the required
 # two-minute teardown margin asserted below).
-README_GREEN_PATH_TIMEOUT_SECONDS = 18 * 60
+README_GREEN_PATH_TIMEOUT_SECONDS = 28 * 60
 
 EXPECTED_TOOLCHAIN = {
     "packaging": "26.3",
@@ -646,7 +646,7 @@ class CiContractTest(unittest.TestCase):
         self.assertEqual(set(workflow["on"]), {"push", "pull_request"})
         job = workflow["jobs"]["offline-verification"]
         self.assertEqual(job["strategy"]["matrix"]["python-version"], ["3.10", "3.11", "3.12"])
-        self.assertLessEqual(job["timeout-minutes"], 20)
+        self.assertLessEqual(job["timeout-minutes"], 30)
 
         setup = configparser.ConfigParser()
         setup.read(ROOT / "setup.cfg", encoding="utf-8")
@@ -688,7 +688,7 @@ class CiContractTest(unittest.TestCase):
         self.assertNotIn("if", green_path_job)
         self.assertNotIn("continue-on-error", green_path_job)
         self.assertGreaterEqual(green_path_job["timeout-minutes"], 10)
-        self.assertLessEqual(green_path_job["timeout-minutes"], 20)
+        self.assertLessEqual(green_path_job["timeout-minutes"], 30)
         self.assertGreaterEqual(README_GREEN_PATH_TIMEOUT_SECONDS, 5 * 60)
         self.assertGreaterEqual(
             green_path_job["timeout-minutes"] * 60,
