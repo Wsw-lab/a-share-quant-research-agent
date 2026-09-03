@@ -158,8 +158,30 @@
       ]
     },
     {
+      "provider_id": "csmar_institutional",
+      "role": "primary_outreach_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
+      "endpoints": {
+        "quotes": ["contracted A-share stock trading data, including raw close and adjustment-factor semantics"],
+        "stock_master": ["contracted current and delisted security lifecycle and identifier-mapping data"],
+        "fundamentals": ["contracted financial statements and actual recorded report-publication-date data"],
+        "tradability": ["contracted special-treatment and stock suspension/resumption history"],
+        "official_calendar": ["contracted calendar only if authoritative SSE/SZSE provenance is documented; otherwise separate official exchange input"]
+      },
+      "known_constraints": [
+        "public CSMAR pages describe research-oriented stock trading, financial statement, special-treatment, and suspension/resumption coverage, but do not prove the exact subscribed tables, required field semantics, or complete target delivery",
+        "the actual institutional or direct academic entitlement, 2009-2023 coverage, stable identifier mapping, same-session suspension valuation, publication-date definition, and calendar provenance require written confirmation",
+        "aggregate publication, source-name publication, field-mapping citation, private retention, and controlled reviewer rerun rights must be granted for the exact contracted products",
+        "no public description or single-version export is treated as revision/vintage history or first-release accounting values"
+      ],
+      "references": [
+        "https://www.csmar.com/channels/31.html",
+        "https://www.csmar.com/en/",
+        "https://www.csmar.com/en/channels/77.html"
+      ]
+    },
+    {
       "provider_id": "resset_institutional",
-      "role": "candidate_primary_if_institutional_entitlement_and_supplemental_rights_are_explicit",
+      "role": "parallel_backup_outreach_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
       "endpoints": {
         "quotes": ["contracted A-share daily price and trading data"],
         "stock_master": ["contracted security lifecycle data"],
@@ -179,8 +201,8 @@
       ]
     },
     {
-      "provider_id": "licensed_vendor_wind_csmar_choice_or_equivalent",
-      "role": "preferred_procurement_route_with_all_capabilities_unverified_until_contract_and_field_dictionary_review",
+      "provider_id": "wind_institutional",
+      "role": "contingency_only_if_csmar_and_resset_fail_or_existing_institutional_entitlement_is_confirmed",
       "endpoints": {
         "requirements_to_verify_contractually": [
           "same-session close_raw, a finite positive cumulative adjustment_factor, exact fixed price-adjustment method/convention tokens, mechanically verified close=close_raw*adjustment_factor, and separately hash-evidenced provider raw definitions and normalization; plus provider-native amount unit, documented normalization to CNY before binding, and normalization provenance",
@@ -192,16 +214,29 @@
         ]
       },
       "known_constraints": [
-        "this is a procurement route, not evidence that a contract is held or that any listed product includes the required fields",
-        "public product pages describe broad databases or terminals but do not verify the required table-level fields, semantic definitions, complete 2009-2023 delivery, or exchange-source provenance",
-        "public product pages do not establish the permissions contained in the institution's actual subscription agreement",
+        "the official product page describes broad market, company, Excel, and Client API coverage but does not verify the required table-level fields, semantic definitions, complete 2009-2023 delivery, or exchange-source provenance",
+        "terminal or API availability is not evidence that the required subscription is held or that bulk local research extraction is licensed",
+        "public product pages do not establish the permissions contained in the institution's actual agreement",
         "contract must allow local analysis, hash binding, controlled reviewer reruns, and aggregate reporting",
         "a current snapshot must not be called revision history without versioned values and as-of timestamps"
       ],
       "references": [
-        "https://www.wind.com.cn/portal/zh/WFT/index.html",
-        "https://www.csmar.com/channels/31.html",
-        "https://choice.eastmoney.com/terminal"
+        "https://www.wind.com.cn/portal/zh/WFT/index.html"
+      ]
+    },
+    {
+      "provider_id": "choice_institutional",
+      "role": "not_selected_for_primary_stage2_procurement_in_current_round",
+      "endpoints": {
+        "possible_coverage": ["market, company, announcement, and university-oriented data products subject to contract review"]
+      },
+      "known_constraints": [
+        "not included in the current CSMAR/RESSET first-round outreach",
+        "public product descriptions do not establish exact historical field coverage, suspended-session valuation semantics, or journal publication and controlled-review rights"
+      ],
+      "references": [
+        "https://choice.eastmoney.com/Product/ChoiceApp/",
+        "https://www.choiceinfo.cn/"
       ]
     }
   ],

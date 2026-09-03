@@ -57,6 +57,7 @@ dataset; either denial blocks Stage 2 under this design.
 - `data_review_attestation.template.json` - fail-closed human review of execution semantics, complete non-latest-only historical membership, actual recorded publication-date/ROE mapping, field informativeness, and rights.
 - `data_acquisition_plan.md` - source decision matrix, exact Tushare/official-source field mapping, procurement sequence, and external blockers.
 - `stage2_data_procurement_request.md` - provider-neutral bilingual capability, quotation, and rights request; it requests no result-bearing sample rows.
+- `provider_outreach_dispatch_checklist.md` - first-contact routing, attachment, reply-rejection, private dispatch-record, and post-response intake checklist.
 - `provider_rights_confirmation_form.md` - provider or licensed-institution yes/no confirmation for aggregate publication, hashes, calendar dates, controlled review, and private-ledger rights.
 - `provider_capability_and_field_mapping.template.xlsx` - public blank response workbook. Before filling it, save a renamed `.completed.xlsx` copy outside every Git worktree; never overwrite the tracked template.
 - `private_data_handoff_instructions.md` and `private_handoff_manifest.template.json` - encrypted delivery, immutable closed-file-set, hashing, access-separation, and private evidence controls.

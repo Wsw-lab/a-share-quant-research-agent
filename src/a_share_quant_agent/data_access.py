@@ -263,10 +263,27 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         ),
     ),
     ProviderCapability(
+        provider_id="csmar_institutional",
+        datasets=("contractual_capabilities_to_be_verified",),
+        access_mode="institutional_or_direct_academic_contract",
+        status="primary_outreach_candidate_not_verified_capability_or_entitlement",
+        limitations=(
+            "public CSMAR pages describe research-oriented stock trading, financial statement, special-treatment, and suspension/resumption coverage, but do not prove the exact subscribed tables or required semantics",
+            "the institutional or direct academic contract must confirm 2009-2023 coverage, stable identifier mapping, same-session suspension valuation, actual publication-date semantics, and calendar provenance",
+            "the contract must grant aggregate publication, source-name publication, field-mapping citation, private retention, and controlled reviewer-rerun rights for the exact products",
+            "no public product description or single-version export is treated as revision/vintage history or first-release accounting values",
+        ),
+        references=(
+            "https://www.csmar.com/channels/31.html",
+            "https://www.csmar.com/en/",
+            "https://www.csmar.com/en/channels/77.html",
+        ),
+    ),
+    ProviderCapability(
         provider_id="resset_institutional",
         datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_contract",
-        status="candidate_primary_not_verified_capability_or_entitlement",
+        status="parallel_backup_not_verified_capability_or_entitlement",
         limitations=(
             "public terms permit licensed querying, extraction, and research use with source attribution, but restrict unauthorized copying, dissemination, network display, and account sharing",
             "public product materials do not prove that this study holds an institutional entitlement or that the subscribed product contains every required field and target date",
@@ -279,20 +296,33 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         ),
     ),
     ProviderCapability(
-        provider_id="licensed_vendor_wind_csmar_choice_or_equivalent",
+        provider_id="wind_institutional",
         datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_contract",
-        status="preferred_procurement_route_not_verified_capability",
+        status="contingency_not_verified_capability_or_entitlement",
         limitations=(
-            "vendor names are alternatives, not a claim that any contract is currently held or that a named product includes the required fields",
-            "public product pages describe broad databases or terminals but do not establish table-level field semantics, complete 2009-2023 delivery, exchange-source provenance, or this study's entitlement",
+            "the official product page describes broad market, company, Excel, and Client API coverage but does not establish table-level field semantics, complete 2009-2023 delivery, exchange-source provenance, or this study's entitlement",
+            "terminal or API availability is not evidence that the required contract permits bulk local research extraction",
             "the actual institutional contract and field dictionary must identify historical coverage, point-in-time fields, adjusted-price construction, local retention, aggregate publication, and controlled reviewer-rerun rights",
             "a vendor's current snapshot cannot be relabelled as revision/vintage history without versioned values and as-of timestamps",
         ),
         references=(
             "https://www.wind.com.cn/portal/zh/WFT/index.html",
-            "https://www.csmar.com/channels/31.html",
-            "https://choice.eastmoney.com/terminal",
+        ),
+    ),
+    ProviderCapability(
+        provider_id="choice_institutional",
+        datasets=("possible_contractual_capabilities_not_selected_this_round",),
+        access_mode="institutional_contract",
+        status="not_selected_for_primary_stage2_procurement_current_round",
+        limitations=(
+            "Choice is outside the current CSMAR and RESSET first-round outreach",
+            "a future contract and field-dictionary review would still be required before using any Choice data for Stage 2",
+            "public product descriptions do not establish exact historical field coverage, suspended-session valuation semantics, or journal publication and controlled-review rights",
+        ),
+        references=(
+            "https://choice.eastmoney.com/Product/ChoiceApp/",
+            "https://www.choiceinfo.cn/",
         ),
     ),
 )

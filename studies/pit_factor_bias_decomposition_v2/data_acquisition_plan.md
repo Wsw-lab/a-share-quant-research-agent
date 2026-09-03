@@ -39,7 +39,7 @@ returns. A complete private
 per-security endpoint-reason ledger is therefore required after authorized
 execution, but its rows are never committed to GitHub.
 
-## Workspace evidence status as of 2026-09-02
+## Workspace evidence status as of 2026-09-04
 
 No qualifying entitlement, contract evidence, or complete delivery was
 available in the audited workspace.  This limited workspace finding does not
@@ -49,8 +49,14 @@ entitlement nor a data licence.
 
 This is a capability status, not a finding about factor performance.  No
 factor, return, IC, portfolio, or variant result was queried during the audit.
-The next action is to send the provider-neutral request and obtain a completed
-field/rights response before acquiring or inspecting result-bearing rows.
+The current procurement order is fixed as **CSMAR first, RESSET in parallel as
+the backup, and Wind only as a contingency**. Choice, Tushare, AKShare, and
+BaoStock are not candidates for the primary contracted Stage-2 panel in this
+round. The next action is to send the same provider-neutral request separately
+to CSMAR and RESSET and obtain completed field/rights responses before
+acquiring or inspecting result-bearing rows. This ordering is an operational
+choice based on public product positioning, not a finding that either provider
+already satisfies the study contract.
 
 ## Source decision matrix
 
@@ -58,13 +64,25 @@ The machine-readable version is
 [`source_capability_matrix.json`](source_capability_matrix.json).  The short
 decision is:
 
-1. **Preferred procurement route:** a licensed institutional vendor (for example Wind,
-   CSMAR, Choice, or an equivalent provider) whose contract explicitly covers
-   the full historical range, point-in-time lifecycle and filing fields,
-   adjusted prices, local research, aggregate publication, and controlled
-   reviewer access.  Vendor names are alternatives, not evidence that a
-   contract is held.
-2. **Candidate subject to coverage and rights verification:** Tushare Pro documents
+1. **Primary enquiry: CSMAR institutional/academic access.** Public CSMAR
+   materials position the database for empirical research and describe stock
+   trading, financial statements, and suspension/resumption coverage. These
+   descriptions justify first contact only. CSMAR must still provide the exact
+   table names, field dictionary, complete 2009--2023 coverage, identifier and
+   suspended-session valuation semantics, entitlement evidence, and every
+   publication/reviewer permission in the rights form.
+2. **Parallel backup enquiry: RESSET institutional access.** RESSET publicly
+   positions its database for empirical research and university/research users.
+   It receives the identical capability and rights request so the decision is
+   based on the pre-specified contract rather than sales claims or observed
+   research outcomes.
+3. **Contingency: Wind institutional access.** Request a Wind quotation and
+   field/rights response only if neither CSMAR nor RESSET can satisfy all gates,
+   or if an existing institutional Wind entitlement makes this route materially
+   faster. Broad terminal coverage does not substitute for table-level mapping
+   or written research-publication and controlled-review rights.
+4. **Candidate retained as a technical cross-check, not the current primary
+   procurement route:** Tushare Pro documents
    historical daily bars (`daily`), adjustment factors (`adj_factor`),
    exchange-parameter calendar rows (`trade_cal`), stock lists (`stock_basic`
    and `bak_basic`), ST records (`stock_st`), suspension records (`suspend_d`),
@@ -78,7 +96,7 @@ decision is:
    aggregate publication or reviewer right is inferred from an account; the
    provider must give written permission or the source remains unusable for the
    paper.
-3. **Probe/cross-check only:** AKShare can test bounded raw-bar reachability
+5. **Probe/cross-check only:** AKShare can test bounded raw-bar reachability
    (`stock_zh_a_hist`) and exposes a Sina-derived calendar.  That calendar is
    not accepted as the sole authoritative common SSE/SZSE calendar.  The
    AKShare MIT software licence applies to the client code, not automatically
@@ -86,7 +104,7 @@ decision is:
    but its public adapter does not establish actual filing dates, complete
    historical ST/suspension semantics, adjusted-close construction, or
    publication rights.
-4. **Authority cross-check:** official SSE/SZSE calendars and issuer/CNINFO
+6. **Authority cross-check:** official SSE/SZSE calendars and issuer/CNINFO
    filing documents should be retained for a pre-specified sample and for any
    exchange-calendar disagreement.  Public web availability does not itself
    grant bulk extraction or redistribution permission; retain the applicable

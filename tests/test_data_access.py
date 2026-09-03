@@ -254,8 +254,10 @@ class DataAccessContractTest(unittest.TestCase):
         self.assertEqual(akshare["status"], "probe_only")
         self.assertNotIn("report_publication_date", akshare["datasets"])
         for provider_id in (
+            "csmar_institutional",
             "resset_institutional",
-            "licensed_vendor_wind_csmar_choice_or_equivalent",
+            "wind_institutional",
+            "choice_institutional",
         ):
             provider = next(row for row in matrix if row["provider_id"] == provider_id)
             self.assertTrue(provider["references"])
@@ -284,8 +286,10 @@ class DataAccessContractTest(unittest.TestCase):
                 f"reference drift for {provider_id}",
             )
         for provider_id in (
+            "csmar_institutional",
             "resset_institutional",
-            "licensed_vendor_wind_csmar_choice_or_equivalent",
+            "wind_institutional",
+            "choice_institutional",
         ):
             study_provider = study_by_id[provider_id]
             self.assertTrue(study_provider["references"])
