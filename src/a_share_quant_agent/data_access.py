@@ -266,7 +266,7 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         provider_id="csmar_institutional",
         datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_or_direct_academic_contract",
-        status="primary_outreach_candidate_not_verified_capability_or_entitlement",
+        status="institutional_candidate_not_verified_capability_or_entitlement",
         limitations=(
             "public CSMAR pages describe research-oriented stock trading, financial statement, special-treatment, and suspension/resumption coverage, but do not prove the exact subscribed tables or required semantics",
             "the institutional or direct academic contract must confirm 2009-2023 coverage, stable identifier mapping, same-session suspension valuation, actual publication-date semantics, and calendar provenance",
@@ -283,7 +283,7 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         provider_id="resset_institutional",
         datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_contract",
-        status="parallel_backup_not_verified_capability_or_entitlement",
+        status="institutional_candidate_not_verified_capability_or_entitlement",
         limitations=(
             "public terms permit licensed querying, extraction, and research use with source attribution, but restrict unauthorized copying, dissemination, network display, and account sharing",
             "public product materials do not prove that this study holds an institutional entitlement or that the subscribed product contains every required field and target date",
@@ -299,7 +299,7 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
         provider_id="wind_institutional",
         datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_contract",
-        status="contingency_not_verified_capability_or_entitlement",
+        status="institutional_candidate_not_verified_capability_or_entitlement",
         limitations=(
             "the official product page describes broad market, company, Excel, and Client API coverage but does not establish table-level field semantics, complete 2009-2023 delivery, exchange-source provenance, or this study's entitlement",
             "terminal or API availability is not evidence that the required contract permits bulk local research extraction",
@@ -312,11 +312,11 @@ PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
     ),
     ProviderCapability(
         provider_id="choice_institutional",
-        datasets=("possible_contractual_capabilities_not_selected_this_round",),
+        datasets=("contractual_capabilities_to_be_verified",),
         access_mode="institutional_contract",
-        status="not_selected_for_primary_stage2_procurement_current_round",
+        status="institutional_candidate_not_verified_capability_or_entitlement",
         limitations=(
-            "Choice is outside the current CSMAR and RESSET first-round outreach",
+            "public product descriptions are capability leads and do not establish a current study entitlement",
             "a future contract and field-dictionary review would still be required before using any Choice data for Stage 2",
             "public product descriptions do not establish exact historical field coverage, suspended-session valuation semantics, or journal publication and controlled-review rights",
         ),

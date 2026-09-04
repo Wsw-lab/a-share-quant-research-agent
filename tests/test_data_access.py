@@ -260,6 +260,10 @@ class DataAccessContractTest(unittest.TestCase):
             "choice_institutional",
         ):
             provider = next(row for row in matrix if row["provider_id"] == provider_id)
+            self.assertEqual(
+                provider["status"],
+                "institutional_candidate_not_verified_capability_or_entitlement",
+            )
             self.assertTrue(provider["references"])
             self.assertTrue(any("contract" in item.lower() for item in provider["limitations"]))
         json.dumps(matrix)
@@ -292,8 +296,37 @@ class DataAccessContractTest(unittest.TestCase):
             "choice_institutional",
         ):
             study_provider = study_by_id[provider_id]
+            self.assertEqual(
+                study_provider["role"],
+                "institutional_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
+            )
             self.assertTrue(study_provider["references"])
             self.assertTrue(study_provider["known_constraints"])
+
+    def test_public_provider_materials_do_not_encode_private_outreach_priority(self) -> None:
+        public_paths = (
+            STUDY / "data_acquisition_plan.md",
+            STUDY / "provider_outreach_dispatch_checklist.md",
+            STUDY / "source_capability_matrix.json",
+        )
+        public_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in public_paths
+        ).lower()
+        for forbidden in (
+            "csmar first",
+            "resset in parallel",
+            "parallel_backup_outreach_candidate",
+            "contingency_only_if_csmar",
+            "not_selected_for_primary_stage2",
+            "not_selected_this_round",
+        ):
+            self.assertNotIn(forbidden, public_text)
+        boundary = (STUDY / "provider_information_boundary.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("## Public repository", boundary)
+        self.assertIn("## Private, outside every Git worktree", boundary)
+        self.assertIn("## Never public", boundary)
 
     def test_study_quote_target_contract_matches_runtime_and_suspension_semantics(self) -> None:
         study_matrix = json.loads(

@@ -1,26 +1,16 @@
 # Provider outreach dispatch checklist
 
-**Purpose:** send outcome-blind capability and rights enquiries before any
-Stage-2 raw data or research outcome is released. The fixed routing order for
-this round is CSMAR first, RESSET in parallel as the backup, and Wind only as a
-contingency. Completing this checklist does not authorize a coverage probe,
-historical extraction, or Stage-2 run.
+**Purpose:** send an outcome-blind capability and rights enquiry before any
+Stage-2 raw data or research outcome is released. Completing this checklist
+does not authorize a coverage probe, historical extraction, or Stage-2 run.
 
-## 0. Fixed provider routing
-
-| Priority | Provider route | Action in this round |
-|---|---|---|
-| 1 | CSMAR institutional/academic | Send the complete first-round enquiry |
-| 2 | RESSET institutional | Send the identical enquiry in parallel |
-| 3 | Wind institutional | Hold unless both earlier routes fail or an existing institutional entitlement is confirmed |
-| Not selected | Choice, Tushare, AKShare, BaoStock | Do not procure as the primary Stage-2 panel; retain only the documented cross-check/probe roles |
-
-Do not change the requirements between providers. No provider may receive a
-shorter interval, weaker field semantics, or fewer rights questions in exchange
-for a lower quotation. Select the first provider that supplies a satisfactory
-written mapping and rights package and later passes the identical outcome-blind
-coverage audit; never compare factor or return results across providers to make
-the selection.
+Every provider must receive the same interval, field semantics, and rights
+questions. Selection may use only documented capability, coverage, semantics,
+rights, delivery controls, and commercial feasibility; factor values, returns,
+ICs, portfolios, test statistics, and variant rankings must never be compared
+to choose a provider. Provider-specific outreach order, negotiation positions,
+quotations, and correspondence remain private outside every Git worktree under
+`provider_information_boundary.md`.
 
 ## 1. Identify the contracting party
 

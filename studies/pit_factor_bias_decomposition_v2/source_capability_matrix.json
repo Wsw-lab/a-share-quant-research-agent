@@ -159,7 +159,7 @@
     },
     {
       "provider_id": "csmar_institutional",
-      "role": "primary_outreach_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
+      "role": "institutional_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
       "endpoints": {
         "quotes": ["contracted A-share stock trading data, including raw close and adjustment-factor semantics"],
         "stock_master": ["contracted current and delisted security lifecycle and identifier-mapping data"],
@@ -181,7 +181,7 @@
     },
     {
       "provider_id": "resset_institutional",
-      "role": "parallel_backup_outreach_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
+      "role": "institutional_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
       "endpoints": {
         "quotes": ["contracted A-share daily price and trading data"],
         "stock_master": ["contracted security lifecycle data"],
@@ -202,7 +202,7 @@
     },
     {
       "provider_id": "wind_institutional",
-      "role": "contingency_only_if_csmar_and_resset_fail_or_existing_institutional_entitlement_is_confirmed",
+      "role": "institutional_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
       "endpoints": {
         "requirements_to_verify_contractually": [
           "same-session close_raw, a finite positive cumulative adjustment_factor, exact fixed price-adjustment method/convention tokens, mechanically verified close=close_raw*adjustment_factor, and separately hash-evidenced provider raw definitions and normalization; plus provider-native amount unit, documented normalization to CNY before binding, and normalization provenance",
@@ -226,12 +226,12 @@
     },
     {
       "provider_id": "choice_institutional",
-      "role": "not_selected_for_primary_stage2_procurement_in_current_round",
+      "role": "institutional_candidate_subject_to_exact_entitlement_field_mapping_coverage_and_rights",
       "endpoints": {
         "possible_coverage": ["market, company, announcement, and university-oriented data products subject to contract review"]
       },
       "known_constraints": [
-        "not included in the current CSMAR/RESSET first-round outreach",
+        "public product descriptions are capability leads and do not establish a current study entitlement",
         "public product descriptions do not establish exact historical field coverage, suspended-session valuation semantics, or journal publication and controlled-review rights"
       ],
       "references": [

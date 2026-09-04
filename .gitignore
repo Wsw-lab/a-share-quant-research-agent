@@ -35,6 +35,18 @@ endpoint_reason_ledger.private.json
 **/.stage2-authorization-consumption/
 
 # Completed procurement and delivery records are private. Blank templates stay tracked.
+/docs/provider-outreach/
+/studies/pit_factor_bias_decomposition_v2/build_provider_outreach_docs.py
+**/provider_outreach.private.*
+**/provider_negotiation/
+**/provider_quotes/
+**/provider_correspondence/
+**/provider_contacts.private.*
+**/provider_accounts.private.*
+**/provider_credentials.*
+**/provider_contracts/
+**/licensed_data/
+**/authorized_data/
 **/provider_capability_and_field_mapping.completed.xlsx
 **/provider_capability_and_field_mapping.filled.xlsx
 **/provider_rights_confirmation.completed.*

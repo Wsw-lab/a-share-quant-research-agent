@@ -58,7 +58,7 @@ dataset; either denial blocks Stage 2 under this design.
 - `data_acquisition_plan.md` - source decision matrix, exact Tushare/official-source field mapping, procurement sequence, and external blockers.
 - `stage2_data_procurement_request.md` - provider-neutral bilingual capability, quotation, and rights request; it requests no result-bearing sample rows.
 - `provider_outreach_dispatch_checklist.md` - first-contact routing, attachment, reply-rejection, private dispatch-record, and post-response intake checklist.
-- `build_provider_outreach_docs.py` - reproducibly builds the two one-page provider-specific sponsorship letters and the one-page English partner brief in `docs/provider-outreach/`; highlighted identity fields must be completed truthfully before dispatch.
+- `provider_information_boundary.md` - three-level disclosure rule: neutral protocols and blank forms are public; targeted outreach and negotiation records stay outside Git; contracts, contacts, accounts, credentials, and licensed data are never public.
 - `provider_rights_confirmation_form.md` - provider or licensed-institution yes/no confirmation for aggregate publication, hashes, calendar dates, controlled review, and private-ledger rights.
 - `provider_capability_and_field_mapping.template.xlsx` - public blank response workbook. Before filling it, save a renamed `.completed.xlsx` copy outside every Git worktree; never overwrite the tracked template.
 - `private_data_handoff_instructions.md` and `private_handoff_manifest.template.json` - encrypted delivery, immutable closed-file-set, hashing, access-separation, and private evidence controls.
