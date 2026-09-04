@@ -1,9 +1,7 @@
 from pathlib import Path
 import unittest
-
-from docx import Document
-from docx.oxml.ns import qn
-
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCX = (
@@ -14,6 +12,12 @@ RESULT_TABLES = (
     ROOT
     / "studies/pit_factor_bias_decomposition_v2/prespecified_results_tables.md"
 )
+WORDPROCESSINGML = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+NS = {"w": WORDPROCESSINGML}
+
+
+def w_name(local_name: str) -> str:
+    return f"{{{WORDPROCESSINGML}}}{local_name}"
 
 
 class Stage1ManuscriptArtifactTest(unittest.TestCase):
@@ -30,31 +34,36 @@ class Stage1ManuscriptArtifactTest(unittest.TestCase):
     def test_docx_contains_result_shell_and_uses_plain_black_heading_system(self) -> None:
         """Catch omission of the fixed result shell or return of decorative headings."""
 
-        doc = Document(DOCX)
-        text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
+        with ZipFile(DOCX) as archive:
+            document = ElementTree.fromstring(archive.read("word/document.xml"))
+            styles = ElementTree.fromstring(archive.read("word/styles.xml"))
+
+        text = "\n".join(
+            node.text or "" for node in document.findall(".//w:t", NS)
+        )
         self.assertIn("Pre-specified historical result shell", text)
         self.assertIn("Not yet estimated", text)
 
         title = next(
-            paragraph for paragraph in doc.paragraphs
-            if paragraph.style.name == "Title"
+            paragraph
+            for paragraph in document.findall(".//w:body/w:p", NS)
+            if (
+                paragraph.find("./w:pPr/w:pStyle", NS) is not None
+                and paragraph.find("./w:pPr/w:pStyle", NS).get(w_name("val"))
+                == "Title"
+            )
         )
-        title_borders = (
-            title._p.pPr.find(qn("w:pBdr"))
-            if title._p.pPr is not None
-            else None
-        )
-        self.assertIsNone(title_borders)
+        self.assertIsNone(title.find("./w:pPr/w:pBdr", NS))
 
-        for style_name in (
-            "Title",
-            "Subtitle",
-            "Heading 1",
-            "Heading 2",
-            "Heading 3",
-        ):
-            color = doc.styles[style_name].font.color.rgb
-            self.assertEqual(str(color), "000000")
+        for style_id in ("Title", "Subtitle", "Heading1", "Heading2", "Heading3"):
+            style = next(
+                node
+                for node in styles.findall("./w:style", NS)
+                if node.get(w_name("styleId")) == style_id
+            )
+            color = style.find("./w:rPr/w:color", NS)
+            self.assertIsNotNone(color)
+            self.assertEqual(color.get(w_name("val")).upper(), "000000")
 
 
 if __name__ == "__main__":
