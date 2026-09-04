@@ -1,8 +1,8 @@
 ---
-title: "Report Dates, Publication Dates, and the A-Share ROE Signal"
+title: "Accounting Information Timing and the A Share ROE Signal"
 subtitle: "A Pre-Specified Historical Confirmation"
 document_status: "Anonymous pre-results protocol draft — not registered; confirmatory outcomes not accessed"
-date: "1 September 2026"
+date: "4 September 2026"
 keywords: "A-shares; return on equity; accounting-data availability; publication timing; backtest specification; pre-registration"
 jel: "G12; G14; C12; M41"
 ---
@@ -210,6 +210,31 @@ The primary receives no multiplicity adjustment because it is the sole primary e
 If fewer than 120 paired months remain for an otherwise estimable contrast, the estimate and interval are shown but no statistical-significance or generalization claim is authorized. This rule does not override the exact endpoint and 72-cell completeness requirements. If any global evidence-eligibility gate fails, every estimand-level `claim_eligible` and rejection flag is forced to false even when an individual contrast has at least 120 paired months. Under a normal-approximation planning sensitivity with 156 months, monthly paired-difference standard deviation of 0.08–0.12, and HAC variance inflation of 1.0–1.5, an absolute IC effect of roughly 0.018–0.033 is expected to be detectable with 80% power. No historical outcome may be used to revise that planning range.
 
 All 72 cell-level mean ICs, Newey–West t-statistics, top-minus-universe diagnostics, mean cross-sectional counts, and endpoint-reason counts will be displayed. They are descriptive completeness outputs, not 72 discovery tests. The paper will not headline the maximum, select the better of IC and quintile spread, or conceal a null or sign-reversing cell. Dedicated outcome-free exposure diagnostics and the exact common-support accounting are mandatory outputs. Formal interactions, alternative factors, next-open portfolios, costs, turnover, capacity, and announcement-event studies are excluded unless completed, tested, and externally frozen before confirmatory outcome access under a new or amended protocol accepted by the registration authority.
+
+## 6.1 Pre-specified result tables
+
+The post-results paper will populate the fixed shell below directly from the verified Stage-2 receipt. The complete 72-cell and 28-secondary layouts are fixed in the accompanying `prespecified_results_tables.md`; they will not be assembled by hand after the estimates are known. Every empirical field remains marked **Not yet estimated** in this pre-results manuscript.
+
+**Table 4. Pre-specified historical result shell**
+
+| Output | Registered count | Estimator or rule | Stage-2 result | Claim status |
+|---|---:|---|---|---|
+| Primary P1 | 1 | Mean monthly ROE IC difference `I0000 − A1`; NW HAC lag 3; two-sided 95% CI and p-value | Not yet estimated | Ineligible before authorized execution |
+| Ordered ROE timing identity | 3 | Report-support restriction; common-support record replacement; publication-support extension | Not yet estimated | Secondary; BH-28 family |
+| Other secondary estimands | 25 | Composite timing; eight paired effects; sixteen component-factor Shapley effects | Not yet estimated | Secondary; BH-28 family |
+| Timing-isolation checks | 2 | Momentum and low-volatility `I0000 − A1`; absolute tolerance `1e−12` | Not yet estimated | Deterministic validity checks |
+| Factor-variant cells | 72 | Mean IC; NW t; top-minus-universe; mean N; exact endpoint counts | Not yet estimated | Descriptive completeness only |
+| Global evidence status | 1 | Data, rights, custody, registration, authorization, endpoint, identity, and completeness gates | Not yet estimated | No primary claim unless every gate passes |
+
+**Table 5. Pre-specified exposure and support diagnostics**
+
+| Diagnostic | Registered scope | Stage-2 result | Inference |
+|---|---|---|---|
+| Premature report-record share | Report-period-selected ROE records with `publishDate >= signal date` | Not yet estimated | Descriptive; no forward return |
+| Changed report-period share | Common-support securities selecting different report periods under the two clocks | Not yet estimated | Descriptive; no forward return |
+| Reporting-delay distribution | Count, mean, median, p25, p75, and maximum calendar days | Not yet estimated | Descriptive; no forward return |
+| Signal-support counts | Report, publication, common, report-only, and publication-only support | Not yet estimated | Descriptive support accounting |
+| Endpoint resolution | Candidate, eligible, exact-resolved, and three registered unresolved reason counts | Not yet estimated | Global completeness gate |
 
 # 7. Registration and reproducibility status
 

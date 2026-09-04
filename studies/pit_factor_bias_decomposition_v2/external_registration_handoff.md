@@ -6,6 +6,16 @@ The machine-readable checklist is
 `external_registration_handoff.template.json`; it must remain a template until
 the exact frozen design manifest exists.
 
+The field-by-field operating sequence is in
+`registration_and_authorization_runbook.md`, and the provider-neutral registry
+description is in `external_registration_submission_text.md`. As of 4 September
+2026, the official OSF instructions describe submitted registrations as
+read-only and permit public or embargoed records, with anonymous view-only
+links for blinded review. Zenodo assigns a DOI when an upload is published;
+a saved draft or reserved DOI alone is not a registration receipt. Platform
+details must be rechecked on the provider's official documentation at the time
+of submission.
+
 ## What is submitted
 
 Submit the exact bytes of `design_manifest_v1` (or its SHA-256 digest) after all
@@ -19,11 +29,14 @@ manifest after submission.
 
 The owner must choose one provider route and record it before submission:
 
-* OSF Registries: create a registration containing the manifest file or digest,
-  then retain the public registration URL and provider timestamp.
-* Zenodo: deposit the manifest (or permitted metadata package), retain the
-  version-specific DOI/record URL and timestamp, and verify that the deposited
-  artifact hash is the one registered.
+* OSF Registries: create a new registration containing the manifest file or
+  digest, then retain the public or authorized view-only registration URL and
+  provider timestamp. Do not depend on project-based registration because OSF
+  has announced changes to that workflow.
+* Zenodo: publish or embargo a deposit containing the manifest or permitted
+  metadata package, retain the version-specific DOI/record URL and timestamp,
+  and verify that the deposited artifact hash is the one registered. A saved
+  draft or DOI reservation is insufficient.
 * Journal/editorial route: ask the editor whether the journal's registered
   report, pre-registration, or hybrid protocol route can preserve the exact
   manifest and a reviewable timestamp. A sent email is not by itself a

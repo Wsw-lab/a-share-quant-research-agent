@@ -51,6 +51,8 @@ dataset; either denial blocks Stage 2 under this design.
 - `design_manifest.template.json` - non-self-referential manifest binding the frozen plan core, code, calendar, protocol, and gate artifacts.
 - `registration_receipt.template.json` - external timestamp record binding the exact design-manifest hash.
 - `external_registration_handoff.template.json` and `external_registration_handoff.md` - provider-neutral submission and independent-verification handoff; no external record is created by repository tooling.
+- `external_registration_submission_text.md` - paste-ready provider-neutral study description for a future registry record; it remains unusable until the exact frozen manifest exists.
+- `registration_and_authorization_runbook.md` - field-by-field chronology for manifest freeze, external submission, independent verification, registration receipt, execution authorization, and the final non-core envelope.
 - `execution_authorization.template.json` - final, non-circular authorization binding the manifest, registration receipt, frozen plan, and blind-data release boundary.
 - `official_calendar/README.md` and `official_calendar/calendar.schema.json` - required common SSE/SZSE session-calendar input contract; no calendar data are included in the repository.
 - `data_requirements.json` - minimum fields, coverage, rights, and vintage boundary.
@@ -67,6 +69,8 @@ dataset; either denial blocks Stage 2 under this design.
 - `source_capability_matrix.json` - machine-readable, conservative provider capabilities; it is not a licence or evidence of acquisition.
 - `data_rights_attestation.template.json` - dataset-level contract, storage, aggregate-reporting, calendar-publication, and private-ledger rights packet.
 - `a_share_quant_agent.data_access` - outcome-blind metadata scanner and pure Tushare daily/calendar/actual-disclosure frame adapters; it makes no network calls and never authorizes Stage 2.
+- `coverage_execution_and_acceptance_runbook.md` - operator procedure for the existing metadata audit and authoritative fixed-design coverage script, including the exact acceptance matrix and outcome-blind stop rules.
+- `prespecified_results_tables.md` - fixed pre-results reporting supplement containing the one primary row, all 28 secondary rows, both deterministic checks, exposure diagnostics, endpoint-completeness fields, and all 72 descriptive factor-variant cells.
 - `statistical_analysis_plan.md` - submission-grade research protocol and inference rules.
 - `current_bundle_gap_assessment.md` - non-identifying explanation of why locally available sources remain blocked for Stage 2. The earlier real-data coverage report is intentionally absent from the current public tree pending explicit aggregate/hash publication rights.
 - `prior_exposure_log.md` - record of outcomes already seen before Stage 2.

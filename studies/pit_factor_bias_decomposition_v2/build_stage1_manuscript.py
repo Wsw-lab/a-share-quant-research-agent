@@ -231,7 +231,7 @@ def configure_styles(doc: Document) -> None:
         st.font.name = "Calibri"
         st.font.size = Pt(size)
         st.font.bold = True
-        st.font.color.rgb = rgb(BLUE)
+        st.font.color.rgb = rgb("000000")
         st.paragraph_format.space_before = Pt(before)
         st.paragraph_format.space_after = Pt(after)
         st.paragraph_format.keep_with_next = True
@@ -241,14 +241,14 @@ def configure_styles(doc: Document) -> None:
     title.font.name = "Calibri"
     title.font.size = Pt(25)
     title.font.bold = True
-    title.font.color.rgb = rgb(NAVY)
+    title.font.color.rgb = rgb("000000")
     title.paragraph_format.space_after = Pt(8)
     title.paragraph_format.keep_with_next = True
 
     subtitle = styles["Subtitle"]
     subtitle.font.name = "Calibri"
     subtitle.font.size = Pt(14.2)
-    subtitle.font.color.rgb = rgb("1F4D78")
+    subtitle.font.color.rgb = rgb("000000")
     subtitle.paragraph_format.space_after = Pt(8)
     subtitle.paragraph_format.keep_with_next = True
 
@@ -256,7 +256,7 @@ def configure_styles(doc: Document) -> None:
     caption.font.name = "Calibri"
     caption.font.size = Pt(8.6)
     caption.font.bold = True
-    caption.font.color.rgb = rgb(MID_BLUE)
+    caption.font.color.rgb = rgb("000000")
     caption.paragraph_format.space_before = Pt(3)
     caption.paragraph_format.space_after = Pt(2)
     caption.paragraph_format.keep_with_next = True
@@ -275,7 +275,7 @@ def configure_styles(doc: Document) -> None:
         kicker.font.name = "Calibri"
         kicker.font.size = Pt(9.5)
         kicker.font.bold = True
-        kicker.font.color.rgb = rgb(MID_BLUE)
+        kicker.font.color.rgb = rgb("000000")
         kicker.paragraph_format.space_after = Pt(5)
 
 
@@ -299,8 +299,7 @@ def configure_section_and_headers(doc: Document) -> None:
     r.font.name = "Calibri"
     r.font.size = Pt(7.5)
     r.font.bold = True
-    r.font.color.rgb = rgb(GREY)
-    set_bottom_rule(p, color=BORDER, size="4")
+    r.font.color.rgb = rgb("000000")
 
     footer = section.footer
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
@@ -378,7 +377,6 @@ def add_cover(doc: Document, meta: dict[str, str]) -> None:
 
     p = doc.add_paragraph(style="Title")
     p.add_run(meta["title"])
-    set_bottom_rule(p, color=BLUE, size="18")
 
     p = doc.add_paragraph(style="Subtitle")
     p.add_run(meta["subtitle"])
@@ -390,28 +388,20 @@ def add_cover(doc: Document, meta: dict[str, str]) -> None:
     r.font.size = Pt(10.5)
     r.font.color.rgb = rgb(GREY)
 
-    table = doc.add_table(rows=1, cols=1)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = False
-    set_repeat_table_header(table.rows[0])
-    set_table_borders(table, color="E0B84E", size="6")
-    cell = table.cell(0, 0)
-    set_cell_width(cell, 7.0)
-    set_cell_shading(cell, PALE_GOLD)
-    set_cell_margins(cell, top=130, start=170, bottom=130, end=170)
-    p = cell.paragraphs[0]
-    p.paragraph_format.space_after = Pt(2)
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(5)
+    p.paragraph_format.space_after = Pt(3)
     r = p.add_run("EVIDENCE STATUS")
     r.bold = True
     r.font.size = Pt(9)
-    r.font.color.rgb = rgb(GOLD)
-    p = cell.add_paragraph()
-    p.paragraph_format.space_after = Pt(0)
+    r.font.color.rgb = rgb("000000")
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(7)
     add_inline(
         p,
         "The 2025–2026 pilot is observed; its aggregate results and known limitations are publicly disclosed. The 2010–2022 historical confirmation is blocked for data feasibility, has not been externally registered or authorized, and has not been executed.",
         base_size=9.6,
-        base_color=NAVY,
+        base_color="202830",
     )
 
     doc.add_paragraph()
@@ -621,6 +611,8 @@ def table_widths(headers: list[str]) -> list[float]:
         ("Group", "Count", "Definition", "Inference", "Authorized role"): [1.05, 0.52, 2.10, 1.55, 1.78],
         ("Observed condition", "Authorized interpretation", "Prohibited interpretation"): [1.55, 2.75, 2.70],
         ("ID", "Historical universe", "Accounting availability", "Enabled implementation components"): [2.35, 1.25, 1.35, 2.05],
+        ("Output", "Registered count", "Estimator or rule", "Stage-2 result", "Claim status"): [1.15, 0.75, 2.35, 1.15, 1.60],
+        ("Diagnostic", "Registered scope", "Stage-2 result", "Inference"): [1.55, 2.75, 1.20, 1.50],
     }
     if key in maps:
         return maps[key]
@@ -646,6 +638,7 @@ def add_table(doc: Document, rows: list[list[str]]) -> None:
         "Historical-universe report-end IC",
         "Recorded-publication IC",
         "Difference",
+        "Registered count",
     }
     for row_index, values in enumerate(rows):
         row = table.rows[row_index]
@@ -684,22 +677,12 @@ def add_table(doc: Document, rows: list[list[str]]) -> None:
     after.paragraph_format.space_before = Pt(0)
 
 
-def add_callout(doc: Document, text: str) -> None:
-    table = doc.add_table(rows=1, cols=1)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.autofit = False
-    set_repeat_table_header(table.rows[0])
-    set_table_borders(table, color=GOLD, size="5")
-    cell = table.cell(0, 0)
-    set_cell_width(cell, 7.0)
-    set_cell_shading(cell, PALE_GOLD)
-    set_cell_margins(cell, top=100, start=130, bottom=100, end=130)
-    paragraph = cell.paragraphs[0]
+def add_status_paragraph(doc: Document, text: str) -> None:
+    paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    paragraph.paragraph_format.space_after = Pt(0)
-    add_inline(paragraph, text, base_size=9.0, base_color=NAVY)
-    for run in paragraph.runs[:1]:
-        run.bold = True
+    paragraph.paragraph_format.space_before = Pt(2)
+    paragraph.paragraph_format.space_after = Pt(5)
+    add_inline(paragraph, text, base_size=9.0, base_color="202830")
 
 
 def add_figure(doc: Document, path: Path, width: float, alt_text: str) -> None:
@@ -771,7 +754,7 @@ def add_body(doc: Document, lines: list[str], figures: dict[str, Path]) -> None:
             continue
 
         if text.startswith("> "):
-            add_callout(doc, text[2:])
+            add_status_paragraph(doc, text[2:])
             index += 1
             continue
 
